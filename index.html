@@ -4,135 +4,189 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Local-only QPC line-item price history and quoting reference.">
+  <meta name="theme-color" content="#1f2937">
   <title>QPC Price History</title>
+  <link rel="icon" href="./qpc-badge.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body class="no-data">
-  <a class="skip-link" href="#main">Skip to results</a>
+  <a class="skip-link" href="#main">Skip to analysis</a>
+
   <header class="app-header">
-    <div>
-      <p class="eyebrow">Quality Precision Cleaning</p>
-      <h1>Line Item Price History</h1>
+    <a class="brand" href="./" aria-label="QPC Price History home">
+      <img src="./qpc-badge.svg" width="40" height="40" alt="QPC">
+      <span class="brand-copy">
+        <span>Quality Precision Cleaning</span>
+        <strong>Price History</strong>
+      </span>
+    </a>
+    <div class="header-actions">
+      <div class="source-summary" id="sourceSummary" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>Ready for a spreadsheet</span>
+      </div>
+      <label class="theme-control" for="themeMode">
+        <span class="sr-only">Color theme</span>
+        <select id="themeMode" aria-label="Color theme">
+          <option value="system">System theme</option>
+          <option value="light">Light theme</option>
+          <option value="dark">Dark theme</option>
+        </select>
+      </label>
     </div>
-    <div class="source-summary" id="sourceSummary">Load today’s spreadsheet to begin</div>
   </header>
 
   <main id="main">
     <section class="welcome" id="welcome" aria-labelledby="welcomeTitle">
-      <div class="welcome-card" id="welcomeCard">
-        <div class="upload-mark" aria-hidden="true">↓</div>
-        <p class="eyebrow">Private by design</p>
-        <h2 id="welcomeTitle">Load today’s line items</h2>
-        <p>Drop the Access export here or choose a file. Processing stays in this browser.</p>
-        <button class="button button-primary button-large" id="welcomeLoadBtn" type="button">Choose spreadsheet</button>
-        <p class="file-help">Excel or CSV · maximum 25 MB · no upload</p>
+      <div class="welcome-shell">
+        <div class="welcome-intro">
+          <img class="welcome-logo" src="./qpc-badge.svg" width="64" height="64" alt="">
+          <p class="eyebrow">Quoting intelligence</p>
+          <h1 id="welcomeTitle">A clearer price starts with your history.</h1>
+          <p>Turn QPC line-item records into a traceable reference range—without sending production data anywhere.</p>
+          <ul class="welcome-benefits" aria-label="What the tool provides">
+            <li><span aria-hidden="true">01</span> Verify the import</li>
+            <li><span aria-hidden="true">02</span> Find comparable work</li>
+            <li><span aria-hidden="true">03</span> Support the quote</li>
+          </ul>
+        </div>
+
+        <div class="welcome-card" id="welcomeCard">
+          <div class="upload-mark" aria-hidden="true">
+            <span>↑</span>
+          </div>
+          <p class="eyebrow">Prepare</p>
+          <h2>Load today’s line items</h2>
+          <p>Drop the Access export here or choose an Excel or CSV file.</p>
+          <button class="button button-primary button-large" id="welcomeLoadBtn" type="button">Choose spreadsheet</button>
+          <p class="file-help">Up to 25 MB <span aria-hidden="true">·</span> processed only in this browser</p>
+        </div>
       </div>
     </section>
 
     <section class="workspace" aria-label="Price history workspace">
-      <section class="toolbar" aria-label="Price history filters">
-        <div class="field field-wide">
-          <label for="q">Search everything</label>
-          <input id="q" type="search" placeholder="Part, description, WO, spec…" autocomplete="off">
-        </div>
-        <div class="field">
-          <label for="customer">Customer</label>
-          <select id="customer"><option value="">All customers</option></select>
-        </div>
-        <div class="field">
-          <label for="pn">Customer P/N contains</label>
-          <input id="pn" type="search" placeholder="Tagged P/N" autocomplete="off">
-        </div>
-        <div class="field">
-          <label for="process">Process or specification</label>
-          <input id="process" type="search" placeholder="AMS2700, CC1246…" autocomplete="off">
-        </div>
-        <div class="field field-date">
-          <label for="dateFrom">From</label>
-          <input id="dateFrom" type="date">
-        </div>
-        <div class="field field-date">
-          <label for="dateTo">To</label>
-          <input id="dateTo" type="date">
-        </div>
-      </section>
-
-      <section class="action-row" aria-label="Data and filter actions">
-        <label class="check-control"><input id="showZero" type="checkbox"> Include $0 and blank-price lines</label>
-        <div class="action-buttons">
-          <button class="button button-quiet" id="reloadBtn" type="button">Load new file</button>
-          <button class="button button-quiet" id="clearBtn" type="button">Clear filters</button>
-          <button class="button" id="copyBtn" type="button">Copy summary</button>
-          <button class="button" id="exportBtn" type="button">Export filtered CSV</button>
-        </div>
-      </section>
-
-      <section class="quality-panel" id="qualityPanel" aria-labelledby="qualityTitle">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Import check</p>
-            <h2 id="qualityTitle">Data quality</h2>
+      <div class="workspace-inner">
+        <section class="import-receipt" aria-labelledby="qualityTitle">
+          <div class="receipt-icon" aria-hidden="true">
+            <span>✓</span>
           </div>
-          <button class="button button-quiet" id="qualityToggle" type="button" aria-expanded="true" aria-controls="qualityDetails">Hide details</button>
-        </div>
-        <div id="qualityDetails">
-          <div class="quality-grid" id="qualityGrid"></div>
-          <ul class="warning-list" id="warningList"></ul>
-        </div>
-      </section>
+          <div class="receipt-copy">
+            <p class="eyebrow">Verify</p>
+            <h2 id="qualityTitle">Import verified</h2>
+            <p id="importReceiptSummary">The workbook passed required column checks.</p>
+          </div>
+          <button class="button button-ghost button-compact" id="qualityToggle" type="button" aria-expanded="false" aria-controls="qualityDetails">View details</button>
+          <div class="quality-details" id="qualityDetails" hidden>
+            <div class="quality-grid" id="qualityGrid"></div>
+            <ul class="warning-list" id="warningList"></ul>
+          </div>
+        </section>
 
-      <section class="analysis-grid">
-        <article class="recommendation-panel" aria-labelledby="recommendationTitle">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Quoting reference</p>
-              <h2 id="recommendationTitle">Price recommendation</h2>
+        <section class="decision-section" aria-labelledby="recommendationTitle">
+          <article class="recommendation-panel">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Decide</p>
+                <h2 id="recommendationTitle">Suggested price range</h2>
+              </div>
+              <span class="confidence" id="confidenceBadge">No sample</span>
             </div>
-            <span class="confidence" id="confidenceBadge">No sample</span>
-          </div>
-          <div class="recommendation-price" id="recommendationRange">—</div>
-          <p class="recommendation-copy" id="recommendationCopy">Apply filters to build a comparable set.</p>
-          <dl class="recommendation-facts" id="recommendationFacts"></dl>
-          <button class="text-button" id="reviewEvidenceBtn" type="button">Review contributing lines</button>
-        </article>
+            <div class="recommendation-price" id="recommendationRange">—</div>
+            <p class="recommendation-copy" id="recommendationCopy">Use the filters below to build a comparable set.</p>
+            <dl class="recommendation-facts" id="recommendationFacts"></dl>
+            <button class="text-button" id="reviewEvidenceBtn" type="button">Review contributing lines <span aria-hidden="true">↓</span></button>
+          </article>
+
+          <aside class="stats" aria-label="Filtered price statistics">
+            <div class="stat stat-primary"><span class="stat-label">Median</span><span class="stat-value" id="sMedian">—</span></div>
+            <div class="stat"><span class="stat-label">Latest</span><span class="stat-value" id="sLatest">—</span></div>
+            <div class="stat"><span class="stat-label">Priced sample</span><span class="stat-value" id="sPriced">—</span></div>
+            <div class="stat"><span class="stat-label">Matching lines</span><span class="stat-value" id="sMatches">—</span></div>
+            <div class="stat"><span class="stat-label">Average</span><span class="stat-value" id="sAverage">—</span></div>
+            <div class="stat"><span class="stat-label">P25–P75</span><span class="stat-value stat-value-small" id="sRange">—</span></div>
+          </aside>
+        </section>
 
         <article class="chart-panel" aria-labelledby="chartTitle">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">Filtered evidence</p>
-              <h2 id="chartTitle">Price history</h2>
+              <p class="eyebrow">Understand</p>
+              <h2 id="chartTitle">Price history and supporting evidence</h2>
             </div>
             <span class="chart-note" id="chartNote"></span>
           </div>
-          <canvas id="priceChart" width="760" height="290" role="img" aria-describedby="chartDescription"></canvas>
+          <canvas id="priceChart" width="1000" height="300" role="img" aria-describedby="chartDescription"></canvas>
           <p class="sr-only" id="chartDescription"></p>
         </article>
-      </section>
 
-      <section class="stats" aria-label="Filtered price statistics">
-        <div class="stat"><span class="stat-value" id="sMatches">—</span><span class="stat-label">Matching lines</span></div>
-        <div class="stat"><span class="stat-value" id="sPriced">—</span><span class="stat-label">Priced lines</span></div>
-        <div class="stat"><span class="stat-value" id="sMedian">—</span><span class="stat-label">Median</span></div>
-        <div class="stat"><span class="stat-value" id="sAverage">—</span><span class="stat-label">Average</span></div>
-        <div class="stat"><span class="stat-value" id="sLatest">—</span><span class="stat-label">Latest</span></div>
-        <div class="stat"><span class="stat-value" id="sRange">—</span><span class="stat-label">P25–P75</span></div>
-      </section>
-
-      <section class="results" id="results" aria-labelledby="resultsTitle">
-        <div class="section-heading results-heading">
-          <div>
-            <p class="eyebrow">Traceable source data</p>
-            <h2 id="resultsTitle">Contributing line items</h2>
+        <section class="filters-panel" aria-labelledby="filtersTitle">
+          <div class="filters-heading">
+            <div>
+              <p class="eyebrow">Refine</p>
+              <h2 id="filtersTitle">Find comparable work</h2>
+            </div>
+            <div class="filter-heading-actions">
+              <span class="filter-count" id="activeFilterCount" hidden></span>
+              <button class="button button-ghost button-compact" id="advancedFiltersToggle" type="button" aria-expanded="false" aria-controls="advancedFilters">More filters</button>
+              <button class="button button-ghost button-compact" id="clearBtn" type="button" disabled>Clear</button>
+            </div>
           </div>
-          <span id="resultCount"></span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr id="tableHead"></tr></thead>
-            <tbody id="tableBody"></tbody>
-          </table>
-        </div>
-      </section>
+
+          <div class="toolbar toolbar-primary" aria-label="Primary price history filters">
+            <div class="field">
+              <label for="customer">Customer</label>
+              <select id="customer"><option value="">All customers</option></select>
+            </div>
+            <div class="field">
+              <label for="pn">Customer P/N</label>
+              <input id="pn" type="search" placeholder="Contains part number" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="process">Process or specification</label>
+              <input id="process" type="search" placeholder="AMS2700, CC1246…" autocomplete="off">
+            </div>
+          </div>
+
+          <div class="advanced-filters" id="advancedFilters" hidden>
+            <div class="toolbar toolbar-secondary">
+              <div class="field field-wide">
+                <label for="q">Search all fields</label>
+                <input id="q" type="search" placeholder="Description, work order, end user…" autocomplete="off">
+              </div>
+              <div class="field field-date">
+                <label for="dateFrom">Received from</label>
+                <input id="dateFrom" type="date">
+              </div>
+              <div class="field field-date">
+                <label for="dateTo">Received to</label>
+                <input id="dateTo" type="date">
+              </div>
+            </div>
+            <label class="check-control"><input id="showZero" type="checkbox"> Include $0 and blank-price lines</label>
+          </div>
+        </section>
+
+        <section class="results" id="results" aria-labelledby="resultsTitle">
+          <div class="section-heading results-heading">
+            <div>
+              <p class="eyebrow">Act</p>
+              <h2 id="resultsTitle">Contributing line items</h2>
+              <span id="resultCount"></span>
+            </div>
+            <div class="action-buttons">
+              <button class="button button-ghost" id="reloadBtn" type="button">Load new file</button>
+              <button class="button" id="copyBtn" type="button" disabled>Copy summary</button>
+              <button class="button button-primary" id="exportBtn" type="button" disabled>Export CSV</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr id="tableHead"></tr></thead>
+              <tbody id="tableBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </section>
   </main>
 

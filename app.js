@@ -22,8 +22,10 @@ const columns = [
 ];
 
 document.addEventListener("DOMContentLoaded", () => {
+  initializeTheme();
   buildTableHead();
   bindEvents();
+  updateActionStates();
 });
 
 function bindEvents() {
@@ -47,8 +49,31 @@ function bindEvents() {
   $("copyBtn").addEventListener("click", copySummary);
   $("exportBtn").addEventListener("click", exportCsv);
   $("qualityToggle").addEventListener("click", toggleQuality);
+  $("advancedFiltersToggle").addEventListener("click", toggleAdvancedFilters);
+  $("themeMode").addEventListener("change", (event) => setTheme(event.target.value, true));
   $("reviewEvidenceBtn").addEventListener("click", () => $("results").scrollIntoView({ behavior: "smooth", block: "start" }));
   window.addEventListener("resize", debounce(renderChart, 100));
+}
+
+function initializeTheme() {
+  let saved = "system";
+  try { saved = localStorage.getItem("qpc-price-theme") || "system"; } catch { /* Preference storage is optional. */ }
+  $("themeMode").value = ["system", "light", "dark"].includes(saved) ? saved : "system";
+  setTheme($("themeMode").value, false);
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if ($("themeMode").value === "system") setTheme("system", false);
+  });
+}
+
+function setTheme(mode, persist) {
+  const resolved = mode === "system"
+    ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+    : mode;
+  document.documentElement.dataset.theme = resolved;
+  if (persist) {
+    try { localStorage.setItem("qpc-price-theme", mode); } catch { /* Keep the selected theme for this visit. */ }
+  }
+  if (state.records.length) requestAnimationFrame(renderChart);
 }
 
 function chooseFile() {
@@ -91,7 +116,7 @@ async function loadFile(file) {
     populateCustomers();
     renderQuality();
     document.body.classList.remove("no-data");
-    $("sourceSummary").textContent = `${file.name} · ${whole.format(state.records.length)} accepted lines · ${parsed.sheetName}`;
+    setSourceSummary(`${file.name} · ${whole.format(state.records.length)} accepted lines · ${parsed.sheetName}`, "success");
     applyFilters();
     showToast(`Loaded ${whole.format(state.records.length)} usable line items.`, "success");
   } catch (error) {
@@ -158,6 +183,17 @@ function applyFilters() {
   sortFiltered();
   renderAnalysis();
   renderTable();
+  updateActionStates();
+}
+
+function updateActionStates() {
+  const filterCount = activeFilterLabels().length;
+  const hasResults = state.filtered.length > 0;
+  $("clearBtn").disabled = filterCount === 0;
+  $("copyBtn").disabled = !hasResults;
+  $("exportBtn").disabled = !hasResults;
+  $("activeFilterCount").hidden = filterCount === 0;
+  $("activeFilterCount").textContent = `${filterCount} active`;
 }
 
 function sortFiltered() {
@@ -236,6 +272,9 @@ function renderQuality() {
   if (q.invalidDates) warnings.push(`${whole.format(q.invalidDates)} date value${q.invalidDates === 1 ? " was" : "s were"} invalid and excluded from date filtering.`);
   if (!warnings.length) warnings.push("Required columns, prices, and dates passed validation.");
   $("warningList").replaceChildren(...warnings.map((message) => { const li = document.createElement("li"); li.textContent = message; return li; }));
+  const exclusions = q.duplicateRows + q.invalidPrices + q.invalidDates;
+  $("importReceiptSummary").textContent = `${whole.format(q.loadedRows)} accepted · ${whole.format(q.duplicateRows)} duplicates removed · ${whole.format(q.invalidPrices + q.invalidDates)} invalid values`;
+  $("qualityTitle").textContent = exclusions ? "Import verified with notes" : "Import verified";
 }
 
 function renderChart() {
@@ -257,20 +296,27 @@ function renderChart() {
   const x = (date) => pad.left + ((new Date(`${date}T12:00:00`).getTime() - start) / Math.max(1, end - start)) * (width - pad.left - pad.right);
   const y = (price) => pad.top + (1 - Math.min(price, cap) / Math.max(1, cap)) * (height - pad.top - pad.bottom);
   ctx.clearRect(0, 0, width, height);
-  ctx.strokeStyle = "#d9e1eb"; ctx.fillStyle = "#65748b"; ctx.font = "11px system-ui";
+  const styles = getComputedStyle(document.documentElement);
+  const lineColor = styles.getPropertyValue("--line").trim();
+  const mutedColor = styles.getPropertyValue("--muted").trim();
+  const infoColor = styles.getPropertyValue("--info").trim();
+  const goldColor = styles.getPropertyValue("--gold").trim();
+  ctx.strokeStyle = lineColor; ctx.fillStyle = mutedColor; ctx.font = "12px system-ui";
   for (let i = 0; i <= 4; i += 1) {
     const py = pad.top + i * (height - pad.top - pad.bottom) / 4;
     ctx.beginPath(); ctx.moveTo(pad.left, py); ctx.lineTo(width - pad.right, py); ctx.stroke();
     ctx.fillText(formatCompactMoney(cap * (1 - i / 4)), 4, py + 4);
   }
-  ctx.fillStyle = "rgba(25, 111, 190, .42)";
+  ctx.fillStyle = infoColor;
+  ctx.globalAlpha = .48;
   sampled.forEach((record) => { ctx.beginPath(); ctx.arc(x(record.date), y(record.price), 2.4, 0, Math.PI * 2); ctx.fill(); });
+  ctx.globalAlpha = 1;
   const stats = calculateStats(state.filtered);
   if (stats.median != null) {
-    ctx.strokeStyle = "#d9862c"; ctx.lineWidth = 2; ctx.setLineDash([6, 5]);
+    ctx.strokeStyle = goldColor; ctx.lineWidth = 2; ctx.setLineDash([6, 5]);
     ctx.beginPath(); ctx.moveTo(pad.left, y(stats.median)); ctx.lineTo(width - pad.right, y(stats.median)); ctx.stroke(); ctx.setLineDash([]);
   }
-  ctx.fillStyle = "#65748b"; ctx.fillText(sampled[0].date, pad.left, height - 10);
+  ctx.fillStyle = mutedColor; ctx.fillText(sampled[0].date, pad.left, height - 10);
   const endLabel = sampled.at(-1).date; const endWidth = ctx.measureText(endLabel).width;
   ctx.fillText(endLabel, width - pad.right - endWidth, height - 10);
   $("chartNote").textContent = prices.at(-1) > cap ? `Scale capped at 95th percentile (${formatMoney(cap)})` : "Median shown in orange";
@@ -314,6 +360,17 @@ function renderTable() {
   }
   $("tableBody").replaceChildren(...showing.map((record) => {
     const tr = document.createElement("tr");
+    tr.tabIndex = 0;
+    tr.setAttribute("aria-selected", "false");
+    const selectRow = () => {
+      const selected = tr.getAttribute("aria-selected") === "true";
+      $("tableBody").querySelectorAll('tr[aria-selected="true"]').forEach((row) => row.setAttribute("aria-selected", "false"));
+      tr.setAttribute("aria-selected", String(!selected));
+    };
+    tr.addEventListener("click", selectRow);
+    tr.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectRow(); }
+    });
     columns.forEach(([field]) => {
       const td = document.createElement("td");
       let value = field === "partNumbers" ? record.partNumbers.join(" · ") : record[field];
@@ -361,7 +418,15 @@ function toggleQuality() {
   const hidden = $("qualityDetails").hidden;
   $("qualityDetails").hidden = !hidden;
   $("qualityToggle").setAttribute("aria-expanded", String(hidden));
-  $("qualityToggle").textContent = hidden ? "Hide details" : "Show details";
+  $("qualityToggle").textContent = hidden ? "Hide details" : "View details";
+}
+
+function toggleAdvancedFilters() {
+  const hidden = $("advancedFilters").hidden;
+  $("advancedFilters").hidden = !hidden;
+  $("advancedFiltersToggle").setAttribute("aria-expanded", String(hidden));
+  $("advancedFiltersToggle").textContent = hidden ? "Fewer filters" : "More filters";
+  if (hidden) $("q").focus();
 }
 
 function activeFilterLabels() {
@@ -371,7 +436,20 @@ function activeFilterLabels() {
   if ($("process").value.trim()) labels.push(`process containing ${$("process").value.trim()}`);
   if ($("q").value.trim()) labels.push(`search “${$("q").value.trim()}”`);
   if ($("dateFrom").value || $("dateTo").value) labels.push(`dates ${$("dateFrom").value || "…"} to ${$("dateTo").value || "…"}`);
+  if ($("showZero").checked) labels.push("including $0 and blank prices");
   return labels;
+}
+
+function setSourceSummary(message, tone = "") {
+  const summary = $("sourceSummary");
+  summary.replaceChildren();
+  const dot = document.createElement("span");
+  dot.className = "status-dot";
+  if (tone) dot.dataset.tone = tone;
+  dot.setAttribute("aria-hidden", "true");
+  const text = document.createElement("span");
+  text.textContent = message;
+  summary.append(dot, text);
 }
 
 function formatMoney(value) { return value == null || !Number.isFinite(value) ? "—" : money.format(value); }
