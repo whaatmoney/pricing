@@ -214,8 +214,8 @@ function renderAnalysis() {
   $("sMatches").textContent = whole.format(stats.matches);
   $("sPriced").textContent = whole.format(stats.priced);
   $("sMedian").textContent = formatMoney(stats.median);
-  $("sAverage").textContent = formatMoney(stats.average);
   $("sLatest").textContent = formatMoney(stats.latest);
+  $("sRecency").textContent = formatDate(stats.latestDate);
   $("sRange").textContent = stats.p25 == null ? "—" : `${formatMoney(stats.p25)}–${formatMoney(stats.p75)}`;
   renderRecommendation(stats);
   renderChart();
@@ -223,16 +223,30 @@ function renderAnalysis() {
 
 function renderRecommendation(stats) {
   const active = activeFilterLabels();
+  const hasComparableScope = Boolean($("customer").value || $("pn").value.trim() || $("process").value.trim());
   const ageDays = stats.latestDate ? Math.floor((Date.now() - new Date(`${stats.latestDate}T12:00:00`).getTime()) / 86400000) : Infinity;
-  let confidence = "Low";
-  if (stats.priced >= 20 && ageDays <= 730) confidence = "High";
-  else if (stats.priced >= 5 && ageDays <= 1460) confidence = "Medium";
-  $("confidenceBadge").textContent = stats.priced ? `${confidence} confidence` : "No sample";
-  $("confidenceBadge").dataset.level = confidence.toLowerCase();
+  let confidence = "Limited match";
+  let confidenceLevel = "low";
+  if (!hasComparableScope && stats.priced) {
+    confidence = "Broad baseline";
+    confidenceLevel = "baseline";
+  } else if (stats.priced >= 20 && ageDays <= 730) {
+    confidence = "Strong match";
+    confidenceLevel = "high";
+  } else if (stats.priced >= 5 && ageDays <= 1460) {
+    confidence = "Useful match";
+    confidenceLevel = "medium";
+  }
+  $("confidenceBadge").textContent = stats.priced ? confidence : "No sample";
+  $("confidenceBadge").dataset.level = stats.priced ? confidenceLevel : "low";
   $("recommendationRange").textContent = stats.p25 == null ? "—" : `${formatMoney(stats.p25)} – ${formatMoney(stats.p75)}`;
-  $("recommendationCopy").textContent = stats.priced
-    ? `Reference range from ${whole.format(stats.priced)} priced line${stats.priced === 1 ? "" : "s"}${active.length ? ` matching ${active.join(", ")}` : ""}. Use the median as the center and review the underlying work before quoting.`
-    : "No positive-priced lines match the current filters.";
+  if (!stats.priced) {
+    $("recommendationCopy").textContent = "No positive-priced lines match the current filters.";
+  } else if (!hasComparableScope) {
+    $("recommendationCopy").textContent = `Portfolio-wide baseline from ${whole.format(stats.priced)} priced lines. Define a customer, P/N, or process above before using the range to support a quote.`;
+  } else {
+    $("recommendationCopy").textContent = `Observed range from ${whole.format(stats.priced)} priced line${stats.priced === 1 ? "" : "s"}${active.length ? ` matching ${active.join(", ")}` : ""}. Use the median as the center and review the source work before quoting.`;
+  }
   const facts = [
     ["Median", formatMoney(stats.median)],
     ["Trimmed average", formatMoney(stats.trimmedAverage)],
@@ -319,7 +333,7 @@ function renderChart() {
   ctx.fillStyle = mutedColor; ctx.fillText(sampled[0].date, pad.left, height - 10);
   const endLabel = sampled.at(-1).date; const endWidth = ctx.measureText(endLabel).width;
   ctx.fillText(endLabel, width - pad.right - endWidth, height - 10);
-  $("chartNote").textContent = prices.at(-1) > cap ? `Scale capped at 95th percentile (${formatMoney(cap)})` : "Median shown in orange";
+  $("chartNote").textContent = prices.at(-1) > cap ? `Scale capped at 95th percentile (${formatMoney(cap)})` : "Median shown in gold";
   $("chartDescription").textContent = `${whole.format(points.length)} priced records from ${sampled[0].date} through ${sampled.at(-1).date}; median ${formatMoney(stats.median)}.`;
 }
 
@@ -360,17 +374,6 @@ function renderTable() {
   }
   $("tableBody").replaceChildren(...showing.map((record) => {
     const tr = document.createElement("tr");
-    tr.tabIndex = 0;
-    tr.setAttribute("aria-selected", "false");
-    const selectRow = () => {
-      const selected = tr.getAttribute("aria-selected") === "true";
-      $("tableBody").querySelectorAll('tr[aria-selected="true"]').forEach((row) => row.setAttribute("aria-selected", "false"));
-      tr.setAttribute("aria-selected", String(!selected));
-    };
-    tr.addEventListener("click", selectRow);
-    tr.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectRow(); }
-    });
     columns.forEach(([field]) => {
       const td = document.createElement("td");
       let value = field === "partNumbers" ? record.partNumbers.join(" · ") : record[field];
@@ -390,13 +393,13 @@ function clearFilters() {
 async function copySummary() {
   const stats = calculateStats(state.filtered);
   const text = [
-    "QPC Price History — filtered reference",
+    "QPC Price History — historical reference",
     `Source: ${state.file?.name || "—"}`,
     `Filters: ${activeFilterLabels().join(", ") || "none"}`,
     `Matching lines: ${stats.matches}`,
     `Priced lines: ${stats.priced}`,
     `Median: ${formatMoney(stats.median)}`,
-    `Average: ${formatMoney(stats.average)}`,
+    `Trimmed average: ${formatMoney(stats.trimmedAverage)}`,
     `P25–P75: ${formatMoney(stats.p25)}–${formatMoney(stats.p75)}`,
     `Latest: ${formatMoney(stats.latest)} (${stats.latestDate || "no date"})`,
   ].join("\n");
@@ -453,6 +456,7 @@ function setSourceSummary(message, tone = "") {
 }
 
 function formatMoney(value) { return value == null || !Number.isFinite(value) ? "—" : money.format(value); }
+function formatDate(value) { return value ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(`${value}T12:00:00`)) : "—"; }
 function formatCompactMoney(value) { return value >= 1000 ? `$${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}k` : `$${Math.round(value)}`; }
 function sampleEvenly(values, max) { if (values.length <= max) return values; const step = values.length / max; return Array.from({ length: max }, (_, index) => values[Math.floor(index * step)]); }
 function debounce(fn, delay) { let timer; return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), delay); }; }

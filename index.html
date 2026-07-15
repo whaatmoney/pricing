@@ -28,9 +28,9 @@
       <label class="theme-control" for="themeMode">
         <span class="sr-only">Color theme</span>
         <select id="themeMode" aria-label="Color theme">
-          <option value="system">System theme</option>
-          <option value="light">Light theme</option>
-          <option value="dark">Dark theme</option>
+          <option value="system">System</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
         </select>
       </label>
     </div>
@@ -40,26 +40,20 @@
     <section class="welcome" id="welcome" aria-labelledby="welcomeTitle">
       <div class="welcome-shell">
         <div class="welcome-intro">
-          <img class="welcome-logo" src="./qpc-badge.svg" width="64" height="64" alt="">
           <p class="eyebrow">Quoting intelligence</p>
-          <h1 id="welcomeTitle">A clearer price starts with your history.</h1>
-          <p>Turn QPC line-item records into a traceable reference range—without sending production data anywhere.</p>
-          <ul class="welcome-benefits" aria-label="What the tool provides">
-            <li><span aria-hidden="true">01</span> Verify the import</li>
-            <li><span aria-hidden="true">02</span> Find comparable work</li>
-            <li><span aria-hidden="true">03</span> Support the quote</li>
-          </ul>
+          <h1 id="welcomeTitle">Quote with evidence from your own history.</h1>
+          <p>Load the line-item export to find comparable work, review its historical range, and trace every number to the source.</p>
         </div>
 
         <div class="welcome-card" id="welcomeCard">
           <div class="upload-mark" aria-hidden="true">
             <span>↑</span>
           </div>
-          <p class="eyebrow">Prepare</p>
-          <h2>Load today’s line items</h2>
-          <p>Drop the Access export here or choose an Excel or CSV file.</p>
-          <button class="button button-primary button-large" id="welcomeLoadBtn" type="button">Choose spreadsheet</button>
-          <p class="file-help">Up to 25 MB <span aria-hidden="true">·</span> processed only in this browser</p>
+          <p class="eyebrow">Start here</p>
+          <h2>Load line-item history</h2>
+          <p>Drop the export here or choose an Excel or CSV file.</p>
+          <button class="button button-primary button-large" id="welcomeLoadBtn" type="button">Choose Excel or CSV</button>
+          <p class="file-help">Up to 25 MB <span aria-hidden="true">·</span> processed locally <span aria-hidden="true">·</span> nothing leaves this browser</p>
         </div>
       </div>
     </section>
@@ -82,47 +76,10 @@
           </div>
         </section>
 
-        <section class="decision-section" aria-labelledby="recommendationTitle">
-          <article class="recommendation-panel">
-            <div class="section-heading">
-              <div>
-                <p class="eyebrow">Decide</p>
-                <h2 id="recommendationTitle">Suggested price range</h2>
-              </div>
-              <span class="confidence" id="confidenceBadge">No sample</span>
-            </div>
-            <div class="recommendation-price" id="recommendationRange">—</div>
-            <p class="recommendation-copy" id="recommendationCopy">Use the filters below to build a comparable set.</p>
-            <dl class="recommendation-facts" id="recommendationFacts"></dl>
-            <button class="text-button" id="reviewEvidenceBtn" type="button">Review contributing lines <span aria-hidden="true">↓</span></button>
-          </article>
-
-          <aside class="stats" aria-label="Filtered price statistics">
-            <div class="stat stat-primary"><span class="stat-label">Median</span><span class="stat-value" id="sMedian">—</span></div>
-            <div class="stat"><span class="stat-label">Latest</span><span class="stat-value" id="sLatest">—</span></div>
-            <div class="stat"><span class="stat-label">Priced sample</span><span class="stat-value" id="sPriced">—</span></div>
-            <div class="stat"><span class="stat-label">Matching lines</span><span class="stat-value" id="sMatches">—</span></div>
-            <div class="stat"><span class="stat-label">Average</span><span class="stat-value" id="sAverage">—</span></div>
-            <div class="stat"><span class="stat-label">P25–P75</span><span class="stat-value stat-value-small" id="sRange">—</span></div>
-          </aside>
-        </section>
-
-        <article class="chart-panel" aria-labelledby="chartTitle">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Understand</p>
-              <h2 id="chartTitle">Price history and supporting evidence</h2>
-            </div>
-            <span class="chart-note" id="chartNote"></span>
-          </div>
-          <canvas id="priceChart" width="1000" height="300" role="img" aria-describedby="chartDescription"></canvas>
-          <p class="sr-only" id="chartDescription"></p>
-        </article>
-
         <section class="filters-panel" aria-labelledby="filtersTitle">
           <div class="filters-heading">
             <div>
-              <p class="eyebrow">Refine</p>
+              <p class="eyebrow">Define scope</p>
               <h2 id="filtersTitle">Find comparable work</h2>
             </div>
             <div class="filter-heading-actions">
@@ -165,6 +122,43 @@
             <label class="check-control"><input id="showZero" type="checkbox"> Include $0 and blank-price lines</label>
           </div>
         </section>
+
+        <section class="decision-section" aria-labelledby="recommendationTitle">
+          <article class="recommendation-panel">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Decide</p>
+                <h2 id="recommendationTitle">Historical reference range</h2>
+              </div>
+              <span class="confidence" id="confidenceBadge">No sample</span>
+            </div>
+            <div class="recommendation-price" id="recommendationRange">—</div>
+            <p class="recommendation-copy" id="recommendationCopy">Define a customer, part number, or process to build a comparable set.</p>
+            <dl class="recommendation-facts" id="recommendationFacts"></dl>
+            <button class="text-button" id="reviewEvidenceBtn" type="button">Review contributing lines <span aria-hidden="true">↓</span></button>
+          </article>
+
+          <aside class="stats" aria-label="Filtered price statistics">
+            <div class="stat stat-primary"><span class="stat-label">Median</span><span class="stat-value" id="sMedian">—</span></div>
+            <div class="stat"><span class="stat-label">Latest</span><span class="stat-value" id="sLatest">—</span></div>
+            <div class="stat"><span class="stat-label">Priced sample</span><span class="stat-value" id="sPriced">—</span></div>
+            <div class="stat"><span class="stat-label">Matching lines</span><span class="stat-value" id="sMatches">—</span></div>
+            <div class="stat"><span class="stat-label">Latest record</span><span class="stat-value stat-value-small" id="sRecency">—</span></div>
+            <div class="stat"><span class="stat-label">P25–P75</span><span class="stat-value stat-value-small" id="sRange">—</span></div>
+          </aside>
+        </section>
+
+        <article class="chart-panel" aria-labelledby="chartTitle">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Understand</p>
+              <h2 id="chartTitle">Price history and supporting evidence</h2>
+            </div>
+            <span class="chart-note" id="chartNote"></span>
+          </div>
+          <canvas id="priceChart" width="1000" height="300" role="img" aria-describedby="chartDescription"></canvas>
+          <p class="sr-only" id="chartDescription"></p>
+        </article>
 
         <section class="results" id="results" aria-labelledby="resultsTitle">
           <div class="section-heading results-heading">
