@@ -1,0 +1,9 @@
+{
+  "name": "qpc-price-history",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-isolation=none tests/core.test.js",
+    "test:production": "node tests/production-workbook.mjs"
+  }
+}
