@@ -166,6 +166,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: none;
 .stats { padding: 20px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; overflow: hidden; background: var(--line); }
 .stat { min-width: 0; padding: 18px; display: flex; flex-direction: column-reverse; justify-content: center; background: var(--surface); }
 .stat-primary { grid-column: 1 / -1; padding-block: 22px; background: var(--header); }
+.stat:last-child { grid-column: 1 / -1; }
 .stat-value { display: block; color: var(--ink); font-size: clamp(19px, 2vw, 26px); line-height: 1.25; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .stat-primary .stat-value { color: var(--gold); font-size: clamp(30px, 3vw, 40px); }
 .stat-value-small { font-size: clamp(15px, 1.6vw, 20px); }
@@ -273,7 +274,7 @@ td.description { min-width: 280px; }
   .import-receipt > .button { grid-column: 1 / -1; justify-self: stretch; }
   .welcome-card { padding-inline: 22px; }
   .quality-grid, .stats { grid-template-columns: 1fr; }
-  .stat-primary { grid-column: auto; }
+  .stat-primary, .stat:last-child { grid-column: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {
