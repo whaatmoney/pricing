@@ -177,7 +177,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: none;
 .chart-note { max-width: 360px; color: var(--muted); font-size: 12px; text-align: right; }
 #priceChart { width: 100%; height: 160px; display: block; margin-top: 8px; }
 
-.filters-panel { margin-top: 8px; padding: 8px 10px; display: grid; grid-template-columns: 140px minmax(190px, 1fr) minmax(520px, 2fr) auto; align-items: end; gap: 7px 10px; box-shadow: none; }
+.filters-panel { margin-top: 8px; padding: 8px 10px; display: grid; grid-template-columns: max-content minmax(190px, 1fr) minmax(520px, 2fr) auto; align-items: end; gap: 7px 10px; box-shadow: none; }
 .filters-heading { grid-column: 1; grid-row: 1; align-self: center; }
 .filters-heading .eyebrow { display: none; }
 .filters-heading h2 { margin: 0; font-size: 15px; line-height: 1.25; white-space: nowrap; }

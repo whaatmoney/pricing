@@ -410,11 +410,11 @@ function renderChart() {
     ctx.strokeStyle = goldColor; ctx.lineWidth = 2; ctx.setLineDash([6, 5]);
     ctx.beginPath(); ctx.moveTo(pad.left, y(stats.median)); ctx.lineTo(width - pad.right, y(stats.median)); ctx.stroke(); ctx.setLineDash([]);
   }
-  ctx.fillStyle = mutedColor; ctx.fillText(sampled[0].date, pad.left, height - 10);
-  const endLabel = sampled.at(-1).date; const endWidth = ctx.measureText(endLabel).width;
+  ctx.fillStyle = mutedColor; ctx.fillText(formatDate(sampled[0].date), pad.left, height - 10);
+  const endLabel = formatDate(sampled.at(-1).date); const endWidth = ctx.measureText(endLabel).width;
   ctx.fillText(endLabel, width - pad.right - endWidth, height - 10);
   $("chartNote").textContent = prices.at(-1) > cap ? `Scale capped at 95th percentile (${formatMoney(cap)})` : "Median shown in gold";
-  $("chartDescription").textContent = `${whole.format(points.length)} priced records from ${sampled[0].date} through ${sampled.at(-1).date}; median ${formatMoney(stats.median)}.`;
+  $("chartDescription").textContent = `${whole.format(points.length)} priced records from ${formatDate(sampled[0].date)} through ${formatDate(sampled.at(-1).date)}; median ${formatMoney(stats.median)}.`;
 }
 
 function clearCanvas(canvas) {
