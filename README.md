@@ -1,6 +1,6 @@
-# QPC Price History
+# QPC Line Item History
 
-A local-only browser tool for loading the daily QPC line-item export, finding comparable work, and building an auditable quoting reference.
+A local-only browser tool for searching prior line-item formatting, inspecting exact source records, and referencing historical pricing.
 
 ## What it does
 
@@ -12,6 +12,8 @@ A local-only browser tool for loading the daily QPC line-item export, finding co
 - Calculates interpolated median and percentiles without discarding cents.
 - Shows a traceable reference range, latest price, trimmed average, sample size, and confidence level.
 - Charts the filtered price history and exposes every contributing line in the table.
+- Keeps dense search results beside a persistent pane containing every exact source field and line break.
+- Includes $0 and blank-price records by default so formatting-only history remains searchable.
 - Neutralizes formula-sensitive text during CSV export.
 
 ## Privacy

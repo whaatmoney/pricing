@@ -3,21 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Local-only QPC line-item price history and quoting reference.">
+  <meta name="description" content="Local-only QPC line-item history, formatting reference, and pricing context.">
   <meta name="theme-color" content="#1f2937">
-  <title>QPC Price History</title>
+  <title>QPC Line Item History</title>
   <link rel="icon" href="./qpc-badge.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body class="no-data">
-  <a class="skip-link" href="#main">Skip to analysis</a>
+  <a class="skip-link" href="#main">Skip to line item history</a>
 
   <header class="app-header">
-    <a class="brand" href="./" aria-label="QPC Price History home">
+    <a class="brand" href="./" aria-label="QPC Line Item History home">
       <img src="./qpc-badge.svg" width="40" height="40" alt="QPC">
       <span class="brand-copy">
         <span>Quality Precision Cleaning</span>
-        <strong>Price History</strong>
+        <strong>Line Item History</strong>
       </span>
     </a>
     <div class="header-actions">
@@ -40,9 +40,9 @@
     <section class="welcome" id="welcome" aria-labelledby="welcomeTitle">
       <div class="welcome-shell">
         <div class="welcome-intro">
-          <p class="eyebrow">Quoting intelligence</p>
-          <h1 id="welcomeTitle">Quote with evidence from your own history.</h1>
-          <p>Load the line-item export to find comparable work, review its historical range, and trace every number to the source.</p>
+          <p class="eyebrow">Operational reference</p>
+          <h1 id="welcomeTitle">Find exactly how prior line items were written.</h1>
+          <p>Search the complete line-item history, reuse proven formatting, and reference pricing without losing the source record.</p>
         </div>
 
         <div class="welcome-card" id="welcomeCard">
@@ -58,7 +58,7 @@
       </div>
     </section>
 
-    <section class="workspace" aria-label="Price history workspace">
+    <section class="workspace" aria-label="Line item history workspace">
       <div class="workspace-inner">
         <section class="import-receipt" aria-labelledby="qualityTitle">
           <div class="receipt-icon" aria-hidden="true">
@@ -80,13 +80,13 @@
           <div class="filters-heading">
             <div>
               <p class="eyebrow">Define scope</p>
-              <h2 id="filtersTitle">Find comparable work</h2>
+              <h2 id="filtersTitle">Find previous line items</h2>
             </div>
           </div>
 
           <div class="field search-field">
             <label for="q">Search anything</label>
-            <input id="q" type="search" placeholder="P/N, customer, spec, work order…" autocomplete="off">
+            <input id="q" type="search" placeholder="Description, P/N, customer, spec, work order…" autocomplete="off">
           </div>
 
           <div class="toolbar toolbar-primary" aria-label="Primary price history filters">
@@ -114,6 +114,16 @@
             <div class="filter-chips" id="filterChips" aria-label="Active filters"></div>
           </div>
 
+          <div class="quick-specs" id="quickSpecs" aria-label="Common specification filters">
+            <span>Quick specs</span>
+            <button type="button" data-quick-spec="IEST-STD-CC1246">IEST-STD-CC1246</button>
+            <button type="button" data-quick-spec="AMS2700">AMS2700</button>
+            <button type="button" data-quick-spec="SPX-00006876">SPX-00006876</button>
+            <button type="button" data-quick-spec="ASTM A967">ASTM A967</button>
+            <button type="button" data-quick-spec="CMSP-02292">CMSP-02292</button>
+            <button type="button" data-quick-spec="ER9301-9">ER9301-9</button>
+          </div>
+
           <div class="advanced-filters" id="advancedFilters" hidden>
             <div class="toolbar toolbar-secondary">
               <div class="field field-date">
@@ -125,16 +135,69 @@
                 <input id="dateTo" type="date">
               </div>
             </div>
-            <label class="check-control"><input id="showZero" type="checkbox"> Include $0 and blank-price lines</label>
+            <label class="check-control"><input id="showZero" type="checkbox" checked> Include $0 and blank-price lines</label>
           </div>
         </section>
 
+        <section class="pricing-strip" id="contextBar" aria-labelledby="pricingStripTitle">
+          <div class="pricing-strip-title">
+            <p class="eyebrow">Pricing history</p>
+            <h2 id="pricingStripTitle"><span id="contextScope">All line items</span></h2>
+            <span class="scope-inline-count" id="contextCount">— lines</span>
+          </div>
+          <div class="pricing-strip-stats" aria-live="polite">
+            <div><span>Median</span><strong id="contextMedian">—</strong></div>
+            <div><span>P25–P75</span><strong id="pRange">—</strong></div>
+            <div><span>Latest</span><strong id="pLatest">—</strong></div>
+            <div><span>Latest record</span><strong id="pRecency">—</strong></div>
+            <div><span>Priced lines</span><strong id="pPriced">—</strong></div>
+          </div>
+          <button class="button button-ghost button-compact" id="pricingJumpBtn" type="button">View trend ↓</button>
+        </section>
+
+        <section class="results" id="results" aria-labelledby="resultsTitle">
+          <div class="section-heading results-heading">
+            <div>
+              <p class="eyebrow">Reference</p>
+              <h2 id="resultsTitle">Complete line item history</h2>
+              <span id="resultCount"></span>
+              <span class="table-assurance">Select a row to inspect every exact source field and line break</span>
+            </div>
+            <div class="action-buttons">
+              <button class="button button-ghost" id="reloadBtn" type="button">Load new file</button>
+              <button class="button" id="copyBtn" type="button" disabled>Copy pricing summary</button>
+              <button class="button button-primary" id="exportBtn" type="button" disabled>Export filtered lines</button>
+            </div>
+          </div>
+          <div class="reference-workspace">
+            <div class="table-wrap">
+              <table class="history-table">
+                <thead><tr id="tableHead"></tr></thead>
+                <tbody id="tableBody"></tbody>
+              </table>
+            </div>
+            <aside class="record-pane" id="recordPane" aria-labelledby="recordPaneTitle">
+              <div class="record-pane-heading">
+                <div><p class="eyebrow">Exact source record</p><h3 id="recordPaneTitle">Select a line item</h3></div>
+                <span id="recordPaneMeta"></span>
+              </div>
+              <div class="record-pane-fields" id="recordPaneFields"></div>
+            </aside>
+          </div>
+        </section>
+
+        <details class="pricing-analysis" id="pricingAnalysis">
+          <summary>
+            <span><small>Full pricing history</small><strong>Recommendation and trend</strong></span>
+            <span class="pricing-summary" id="pricingSummary">—</span>
+          </summary>
+          <div class="pricing-analysis-body">
         <section class="decision-panel" id="decisionPanel" aria-labelledby="recommendationTitle">
           <article class="recommendation-main">
             <div class="section-heading">
               <div>
                 <p class="eyebrow">Decide</p>
-                <h2 id="recommendationTitle">Historical reference range</h2>
+                <h2 id="recommendationTitle">Pricing reference range</h2>
               </div>
               <span class="confidence" id="confidenceBadge" title="Unfiltered — all customers and parts.">No sample</span>
             </div>
@@ -166,7 +229,7 @@
           <div class="section-heading">
             <div>
               <p class="eyebrow">Understand</p>
-              <h2 id="chartTitle">Price history and supporting evidence</h2>
+              <h2 id="chartTitle">Price trend for the current scope</h2>
             </div>
             <span class="chart-note" id="chartNote"></span>
           </div>
@@ -174,34 +237,8 @@
           <p class="sr-only" id="chartDescription"></p>
         </article>
 
-        <div class="sticky-context" id="contextBar" aria-live="polite">
-          <span id="contextScope">All line items</span>
-          <strong id="contextMedian">Median —</strong>
-          <span id="contextCount">— lines</span>
-        </div>
-
-        <section class="results" id="results" aria-labelledby="resultsTitle">
-          <div class="section-heading results-heading">
-            <div>
-              <p class="eyebrow">Act</p>
-              <h2 id="resultsTitle">Contributing line items</h2>
-              <span id="resultCount"></span>
-              <span class="table-legend"><span aria-hidden="true"></span> Most recent priced match</span>
-            </div>
-            <div class="action-buttons">
-              <button class="button button-ghost" id="reloadBtn" type="button">Load new file</button>
-              <button class="button button-ghost" id="expandAllBtn" type="button" disabled>Expand all</button>
-              <button class="button" id="copyBtn" type="button" disabled>Copy summary</button>
-              <button class="button button-primary" id="exportBtn" type="button" disabled>Export CSV</button>
-            </div>
           </div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr id="tableHead"></tr></thead>
-              <tbody id="tableBody"></tbody>
-            </table>
-          </div>
-        </section>
+        </details>
       </div>
     </section>
   </main>

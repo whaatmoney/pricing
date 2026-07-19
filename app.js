@@ -13,13 +13,13 @@ const state = {
   file: null,
   sheetName: "",
   sort: { field: "date", direction: -1 },
-  expandedRows: new Set(),
-  expandAll: false,
+  selectedRow: null,
 };
 
 const columns = [
   ["date", "Received"], ["customer", "Customer"], ["wo", "WO"],
-  ["partNumbers", "Customer P/N"], ["price", "Unit price"], ["process", "Process / spec"],
+  ["part", "Part ID"], ["price", "Unit price"], ["description", "Line description"],
+  ["process", "Process"],
 ];
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -47,12 +47,19 @@ function bindEvents() {
   $("customer").addEventListener("change", applyFilters);
   $("showZero").addEventListener("change", applyFilters);
   $("filterChips").addEventListener("click", removeFilterChip);
+  $("quickSpecs").addEventListener("click", applyQuickSpec);
   $("clearBtn").addEventListener("click", clearFilters);
-  $("expandAllBtn").addEventListener("click", toggleExpandAll);
   $("copyBtn").addEventListener("click", copySummary);
   $("exportBtn").addEventListener("click", exportCsv);
   $("qualityToggle").addEventListener("click", toggleQuality);
   $("advancedFiltersToggle").addEventListener("click", toggleAdvancedFilters);
+  $("pricingJumpBtn").addEventListener("click", () => {
+    $("pricingAnalysis").open = true;
+    $("pricingAnalysis").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  $("pricingAnalysis").addEventListener("toggle", () => {
+    if ($("pricingAnalysis").open) requestAnimationFrame(renderChart);
+  });
   $("themeMode").addEventListener("change", (event) => setTheme(event.target.value, true));
   $("reviewEvidenceBtn").addEventListener("click", () => $("results").scrollIntoView({ behavior: "smooth", block: "start" }));
   document.querySelectorAll("[data-copy-stat]").forEach((button) => button.addEventListener("click", copyStat));
@@ -184,8 +191,6 @@ function applyFilters() {
     if (to && (!record.date || record.date > to)) return false;
     return tokens.every((token) => record.search.includes(token));
   });
-  state.expandedRows.clear();
-  state.expandAll = false;
   sortFiltered();
   const stats = renderAnalysis();
   renderFilterFeedback(stats);
@@ -200,7 +205,6 @@ function updateActionStates() {
   $("clearBtn").disabled = filterCount === 0;
   $("copyBtn").disabled = !hasResults;
   $("exportBtn").disabled = !hasResults;
-  $("expandAllBtn").disabled = !hasResults;
 }
 
 function sortFiltered() {
@@ -224,6 +228,13 @@ function renderAnalysis() {
   $("sLatest").textContent = formatMoney(stats.latest);
   $("sRecency").textContent = formatDate(stats.latestDate);
   $("sRange").textContent = stats.p25 == null ? "—" : `${formatMoney(stats.p25)}–${formatMoney(stats.p75)}`;
+  $("pRange").textContent = stats.p25 == null ? "—" : `${formatMoney(stats.p25)}–${formatMoney(stats.p75)}`;
+  $("pLatest").textContent = formatMoney(stats.latest);
+  $("pRecency").textContent = formatDate(stats.latestDate);
+  $("pPriced").textContent = whole.format(stats.priced);
+  $("pricingSummary").textContent = stats.priced
+    ? `Median ${formatMoney(stats.median)} · ${whole.format(stats.priced)} priced lines`
+    : "No priced lines in this scope";
   renderRecommendation(stats);
   renderChart();
   return stats;
@@ -286,8 +297,11 @@ function renderFilterFeedback(stats) {
   if ($("pn").value.trim()) contextParts.push($("pn").value.trim());
   if ($("process").value.trim()) contextParts.push($("process").value.trim());
   $("contextScope").textContent = contextParts.join(" · ") || "All line items";
-  $("contextMedian").textContent = `Median ${formatMoney(stats.median)}`;
+  $("contextMedian").textContent = formatMoney(stats.median);
   $("contextCount").textContent = `${whole.format(stats.matches)} line${stats.matches === 1 ? "" : "s"}`;
+  $("quickSpecs").querySelectorAll("[data-quick-spec]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.quickSpec.toLowerCase() === $("process").value.trim().toLowerCase());
+  });
 }
 
 function activeFilters() {
@@ -298,7 +312,7 @@ function activeFilters() {
   if ($("process").value.trim()) filters.push({ key: "process", label: "Spec", value: $("process").value.trim() });
   if ($("dateFrom").value) filters.push({ key: "dateFrom", label: "From", value: $("dateFrom").value });
   if ($("dateTo").value) filters.push({ key: "dateTo", label: "To", value: $("dateTo").value });
-  if ($("showZero").checked) filters.push({ key: "showZero", label: "Prices", value: "Include $0 and blanks" });
+  if (!$("showZero").checked) filters.push({ key: "showZero", label: "Prices", value: "Priced lines only" });
   return filters;
 }
 
@@ -306,8 +320,16 @@ function removeFilterChip(event) {
   const chip = event.target.closest("[data-filter-key]");
   if (!chip) return;
   const key = chip.dataset.filterKey;
-  if (key === "showZero") $("showZero").checked = false;
+  if (key === "showZero") $("showZero").checked = true;
   else if ($(key)) $(key).value = "";
+  applyFilters();
+}
+
+function applyQuickSpec(event) {
+  const button = event.target.closest("[data-quick-spec]");
+  if (!button) return;
+  const active = $("process").value.trim().toLowerCase() === button.dataset.quickSpec.toLowerCase();
+  $("process").value = active ? "" : button.dataset.quickSpec;
   applyFilters();
 }
 
@@ -426,97 +448,89 @@ function renderTable() {
   const showing = state.filtered.slice(0, PAGE_SIZE);
   const mostRecentSort = state.sort.field === "date" && state.sort.direction === -1;
   $("resultCount").textContent = state.filtered.length > PAGE_SIZE
-    ? `Showing ${whole.format(PAGE_SIZE)} ${mostRecentSort ? "most recent " : ""}of ${whole.format(state.filtered.length)} lines — filter to narrow`
-    : `${whole.format(state.filtered.length)} line${state.filtered.length === 1 ? "" : "s"}`;
-  $("expandAllBtn").textContent = state.expandAll ? "Collapse all" : "Expand all";
+    ? `Showing ${whole.format(PAGE_SIZE)} ${mostRecentSort ? "most recent " : ""}source lines of ${whole.format(state.filtered.length)} — filter to narrow`
+    : `${whole.format(state.filtered.length)} complete source line${state.filtered.length === 1 ? "" : "s"}`;
   if (!showing.length) {
-    const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = columns.length; td.className = "empty-cell"; td.textContent = "No line items match these filters."; tr.append(td); $("tableBody").replaceChildren(tr); return;
+    const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = columns.length; td.className = "empty-cell"; td.textContent = "No line items match these filters."; tr.append(td); $("tableBody").replaceChildren(tr); renderRecordPane(null); return;
   }
-  const latestRecord = state.filtered
-    .filter((record) => record.price > 0 && record.date)
-    .slice()
-    .sort((a, b) => b.date.localeCompare(a.date))[0];
-  const rows = [];
-  showing.forEach((record) => {
-    const key = String(record.sourceRow);
-    const expanded = state.expandAll || state.expandedRows.has(key);
+  const selected = showing.find((record) => record.sourceRow === state.selectedRow) || showing[0];
+  state.selectedRow = selected.sourceRow;
+  $("tableBody").replaceChildren(...showing.map((record) => {
     const tr = document.createElement("tr");
-    tr.className = "compact-result-row";
+    tr.className = "reference-row";
     tr.tabIndex = 0;
-    tr.setAttribute("aria-expanded", String(expanded));
-    tr.setAttribute("aria-controls", `detail-${key}`);
-    if (latestRecord?.sourceRow === record.sourceRow) {
-      tr.classList.add("most-recent");
-      tr.title = "Most recent priced match";
-    }
+    tr.dataset.sourceRow = String(record.sourceRow);
+    tr.setAttribute("aria-selected", String(record.sourceRow === state.selectedRow));
+    if (record.sourceRow === state.selectedRow) tr.classList.add("selected");
     columns.forEach(([field]) => {
       const td = document.createElement("td");
-      let value = field === "partNumbers" ? record.partNumbers.join(" · ") : record[field];
-      if (field === "date") {
-        const chevron = document.createElement("span"); chevron.className = "row-chevron"; chevron.textContent = expanded ? "▾" : "›"; chevron.setAttribute("aria-hidden", "true");
-        const date = document.createElement("span"); date.textContent = value || "—";
-        td.append(chevron, date); tr.append(td); return;
-      }
+      let value = record[field];
       if (field === "price") { td.className = "number"; value = formatMoney(value); }
-      if (field === "process") { td.className = "process-preview"; value = firstLine(value); td.title = record.process || ""; }
-      td.textContent = value || "—"; tr.append(td);
+      if (field === "date") value = formatDate(value);
+      if (["description", "process"].includes(field)) {
+        td.className = "source-text";
+        const preview = document.createElement("span");
+        preview.className = "cell-preview";
+        preview.textContent = value || "—";
+        td.append(preview);
+      } else {
+        td.textContent = value || "—";
+      }
+      tr.append(td);
     });
-    const detail = document.createElement("tr");
-    detail.className = "detail-row";
-    detail.id = `detail-${key}`;
-    detail.hidden = !expanded;
-    const detailCell = document.createElement("td");
-    detailCell.colSpan = columns.length;
-    const detailGrid = document.createElement("div"); detailGrid.className = "detail-grid";
-    detailGrid.append(
-      detailField("Part ID", record.part),
-      detailField("End user", record.endUser),
-      detailField("Full process / specification", record.process, "detail-wide"),
-      detailField("Description", record.description, "detail-wide"),
-      detailField("Special instructions", record.special, "detail-wide"),
-    );
-    detailCell.append(detailGrid); detail.append(detailCell);
-    const toggle = () => toggleRow(key, tr, detail);
-    tr.addEventListener("click", toggle);
+    const select = () => selectRecord(record, tr);
+    tr.addEventListener("click", select);
     tr.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); }
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(); }
     });
-    rows.push(tr, detail);
+    return tr;
+  }));
+  renderRecordPane(selected);
+}
+
+function selectRecord(record, row) {
+  state.selectedRow = record.sourceRow;
+  $("tableBody").querySelectorAll(".reference-row").forEach((candidate) => {
+    const selected = candidate === row;
+    candidate.classList.toggle("selected", selected);
+    candidate.setAttribute("aria-selected", String(selected));
   });
-  $("tableBody").replaceChildren(...rows);
+  renderRecordPane(record);
 }
 
-function toggleRow(key, row, detail) {
-  const expanded = row.getAttribute("aria-expanded") === "true";
-  if (expanded) state.expandedRows.delete(key); else state.expandedRows.add(key);
-  state.expandAll = false;
-  row.setAttribute("aria-expanded", String(!expanded));
-  row.querySelector(".row-chevron").textContent = expanded ? "›" : "▾";
-  detail.hidden = expanded;
-  $("expandAllBtn").textContent = "Expand all";
-}
-
-function toggleExpandAll() {
-  if (!state.filtered.length) return;
-  state.expandAll = !state.expandAll;
-  state.expandedRows.clear();
-  renderTable();
-}
-
-function detailField(label, value, className = "") {
-  const section = document.createElement("div"); section.className = `detail-field ${className}`.trim();
-  const strong = document.createElement("strong"); strong.textContent = label;
-  const content = document.createElement("p"); content.textContent = value || "—";
-  section.append(strong, content); return section;
-}
-
-function firstLine(value) {
-  return String(value || "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
+function renderRecordPane(record) {
+  if (!record) {
+    $("recordPaneTitle").textContent = "No matching line item";
+    $("recordPaneMeta").textContent = "";
+    $("recordPaneFields").replaceChildren();
+    return;
+  }
+  $("recordPaneTitle").textContent = `${record.customer || "Unknown customer"} · WO ${record.wo || "—"}`;
+  $("recordPaneMeta").textContent = `Source row ${whole.format(record.sourceRow)}`;
+  const fields = [
+    ["WO", record.wo],
+    ["Customer", record.customer],
+    ["Received", formatDate(record.date)],
+    ["Part ID", record.part],
+    ["Line Description", record.description],
+    ["Unit Price", formatMoney(record.price)],
+    ["Process", record.process],
+    ["End User", record.endUser],
+    ["Special Instructions", record.special],
+  ];
+  $("recordPaneFields").replaceChildren(...fields.map(([label, value]) => {
+    const section = document.createElement("section");
+    section.className = "record-field";
+    const heading = document.createElement("strong"); heading.textContent = label;
+    const content = document.createElement("p"); content.textContent = value || "—";
+    section.append(heading, content);
+    return section;
+  }));
 }
 
 function clearFilters() {
   ["q", "pn", "process", "dateFrom", "dateTo"].forEach((id) => { $(id).value = ""; });
-  $("customer").value = ""; $("showZero").checked = false; applyFilters();
+  $("customer").value = ""; $("showZero").checked = true; applyFilters();
 }
 
 async function copyStat(event) {
@@ -533,7 +547,7 @@ async function copyStat(event) {
 async function copySummary() {
   const stats = calculateStats(state.filtered);
   const text = [
-    "QPC Price History — historical reference",
+    "QPC Line Item History — pricing reference",
     `Source: ${state.file?.name || "—"}`,
     `Filters: ${activeFilterLabels().join(", ") || "none"}`,
     `Matching lines: ${stats.matches}`,
@@ -549,11 +563,11 @@ async function copySummary() {
 
 function exportCsv() {
   if (!state.filtered.length) return showToast("There are no filtered rows to export.", "error");
-  const header = ["Date", "Customer", "WO", "Part ID", "Customer P/N", "Unit Price", "Description", "Process", "End User", "Special Instructions", "Source Row"];
-  const rows = state.filtered.map((record) => [record.date, record.customer, record.wo, record.part, record.partNumbers.join(" | "), record.price ?? "", record.description, record.process, record.endUser, record.special, record.sourceRow]);
-  const csv = [header, ...rows].map((row) => row.map((cell, index) => csvCell(cell, index === 5 || index === 10)).join(",")).join("\r\n");
+  const header = ["WO", "CUSTOMER", "RECEIVED", "PART ID", "LINE DESCRIPTION", "UNIT PRICE", "PROCESS", "END USER", "SPECIAL INSTRUCTIONS"];
+  const rows = state.filtered.map((record) => [record.wo, record.customer, record.date, record.part, record.description, record.price ?? "", record.process, record.endUser, record.special]);
+  const csv = [header, ...rows].map((row) => row.map((cell, index) => csvCell(cell, index === 5)).join(",")).join("\r\n");
   const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
-  const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `qpc_price_history_${new Date().toISOString().slice(0, 10)}.csv`; link.click();
+  const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `qpc_line_item_history_${new Date().toISOString().slice(0, 10)}.csv`; link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
