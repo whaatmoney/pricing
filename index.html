@@ -23,7 +23,7 @@
     <div class="header-actions">
       <div class="source-summary" id="sourceSummary" aria-live="polite">
         <span class="status-dot" aria-hidden="true"></span>
-        <span>Ready for a spreadsheet</span>
+        <span>No file loaded</span>
       </div>
       <label class="theme-control" for="themeMode">
         <span class="sr-only">Color theme</span>
@@ -84,6 +84,11 @@
             </div>
           </div>
 
+          <div class="field search-field">
+            <label for="q">Search anything</label>
+            <input id="q" type="search" placeholder="P/N, customer, spec, work order…" autocomplete="off">
+          </div>
+
           <div class="toolbar toolbar-primary" aria-label="Primary price history filters">
             <div class="field">
               <label for="customer">Customer</label>
@@ -100,17 +105,17 @@
           </div>
 
           <div class="filter-heading-actions">
-            <span class="filter-count" id="activeFilterCount" hidden></span>
             <button class="button button-ghost button-compact" id="advancedFiltersToggle" type="button" aria-expanded="false" aria-controls="advancedFilters">More filters</button>
             <button class="button button-ghost button-compact" id="clearBtn" type="button" disabled>Clear</button>
           </div>
 
+          <div class="filter-feedback" aria-live="polite">
+            <strong id="filterMatchCount">— lines match</strong>
+            <div class="filter-chips" id="filterChips" aria-label="Active filters"></div>
+          </div>
+
           <div class="advanced-filters" id="advancedFilters" hidden>
             <div class="toolbar toolbar-secondary">
-              <div class="field field-wide">
-                <label for="q">Search all fields</label>
-                <input id="q" type="search" placeholder="Description, work order, end user…" autocomplete="off">
-              </div>
               <div class="field field-date">
                 <label for="dateFrom">Received from</label>
                 <input id="dateFrom" type="date">
@@ -124,28 +129,36 @@
           </div>
         </section>
 
-        <section class="decision-section" aria-labelledby="recommendationTitle">
-          <article class="recommendation-panel">
+        <section class="decision-panel" id="decisionPanel" aria-labelledby="recommendationTitle">
+          <article class="recommendation-main">
             <div class="section-heading">
               <div>
                 <p class="eyebrow">Decide</p>
                 <h2 id="recommendationTitle">Historical reference range</h2>
               </div>
-              <span class="confidence" id="confidenceBadge">No sample</span>
+              <span class="confidence" id="confidenceBadge" title="Unfiltered — all customers and parts.">No sample</span>
             </div>
             <div class="recommendation-price" id="recommendationRange">—</div>
             <p class="recommendation-copy" id="recommendationCopy">Define a customer, part number, or process to build a comparable set.</p>
-            <dl class="recommendation-facts" id="recommendationFacts"></dl>
+            <div class="stat-rows" aria-label="Filtered price statistics">
+              <div class="stat-row"><span>Median</span><strong id="sMedian">—</strong><button class="stat-copy" type="button" data-copy-stat="sMedian" aria-label="Copy median" title="Copy median">⧉</button></div>
+              <div class="stat-row"><span>P25–P75</span><strong id="sRange">—</strong><button class="stat-copy" type="button" data-copy-stat="sRange" aria-label="Copy percentile range" title="Copy percentile range">⧉</button></div>
+              <div class="stat-row"><span>Latest price</span><strong id="sLatest">—</strong><button class="stat-copy" type="button" data-copy-stat="sLatest" aria-label="Copy latest price" title="Copy latest price">⧉</button></div>
+              <div class="stat-row"><span>Latest record</span><strong id="sRecency">—</strong><button class="stat-copy" type="button" data-copy-stat="sRecency" aria-label="Copy latest record date" title="Copy latest record date">⧉</button></div>
+              <div class="stat-row"><span>Priced sample</span><strong id="sPriced">—</strong><button class="stat-copy" type="button" data-copy-stat="sPriced" aria-label="Copy priced sample" title="Copy priced sample">⧉</button></div>
+              <div class="stat-row"><span>Matching lines</span><strong id="sMatches">—</strong><button class="stat-copy" type="button" data-copy-stat="sMatches" aria-label="Copy matching line count" title="Copy matching line count">⧉</button></div>
+            </div>
             <button class="text-button" id="reviewEvidenceBtn" type="button">Review contributing lines <span aria-hidden="true">↓</span></button>
           </article>
 
-          <aside class="stats" aria-label="Filtered price statistics">
-            <div class="stat stat-primary"><span class="stat-label">Median</span><span class="stat-value" id="sMedian">—</span></div>
-            <div class="stat"><span class="stat-label">Latest</span><span class="stat-value" id="sLatest">—</span></div>
-            <div class="stat"><span class="stat-label">Priced sample</span><span class="stat-value" id="sPriced">—</span></div>
-            <div class="stat"><span class="stat-label">Matching lines</span><span class="stat-value" id="sMatches">—</span></div>
-            <div class="stat"><span class="stat-label">Latest record</span><span class="stat-value stat-value-small" id="sRecency">—</span></div>
-            <div class="stat"><span class="stat-label">P25–P75</span><span class="stat-value stat-value-small" id="sRange">—</span></div>
+          <aside class="scope-panel" aria-labelledby="scopeTitle">
+            <div>
+              <p class="eyebrow">Current scope</p>
+              <h3 id="scopeTitle">What produced this range</h3>
+            </div>
+            <p class="scope-summary" id="scopeSummary">All customers · No P/N · No spec</p>
+            <strong class="scope-count" id="scopeCount">— lines</strong>
+            <p class="scope-help">Change any filter above and the range updates immediately.</p>
           </aside>
         </section>
 
@@ -157,9 +170,15 @@
             </div>
             <span class="chart-note" id="chartNote"></span>
           </div>
-          <canvas id="priceChart" width="1000" height="300" role="img" aria-describedby="chartDescription"></canvas>
+          <canvas id="priceChart" width="1000" height="170" role="img" aria-describedby="chartDescription"></canvas>
           <p class="sr-only" id="chartDescription"></p>
         </article>
+
+        <div class="sticky-context" id="contextBar" aria-live="polite">
+          <span id="contextScope">All line items</span>
+          <strong id="contextMedian">Median —</strong>
+          <span id="contextCount">— lines</span>
+        </div>
 
         <section class="results" id="results" aria-labelledby="resultsTitle">
           <div class="section-heading results-heading">
@@ -167,9 +186,11 @@
               <p class="eyebrow">Act</p>
               <h2 id="resultsTitle">Contributing line items</h2>
               <span id="resultCount"></span>
+              <span class="table-legend"><span aria-hidden="true"></span> Most recent priced match</span>
             </div>
             <div class="action-buttons">
               <button class="button button-ghost" id="reloadBtn" type="button">Load new file</button>
+              <button class="button button-ghost" id="expandAllBtn" type="button" disabled>Expand all</button>
               <button class="button" id="copyBtn" type="button" disabled>Copy summary</button>
               <button class="button button-primary" id="exportBtn" type="button" disabled>Export CSV</button>
             </div>

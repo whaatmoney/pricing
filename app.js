@@ -13,12 +13,13 @@ const state = {
   file: null,
   sheetName: "",
   sort: { field: "date", direction: -1 },
+  expandedRows: new Set(),
+  expandAll: false,
 };
 
 const columns = [
-  ["date", "Received"], ["customer", "Customer"], ["wo", "WO"], ["part", "Part ID"],
+  ["date", "Received"], ["customer", "Customer"], ["wo", "WO"],
   ["partNumbers", "Customer P/N"], ["price", "Unit price"], ["process", "Process / spec"],
-  ["endUser", "End user"], ["description", "Description"],
 ];
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -42,16 +43,19 @@ function bindEvents() {
     loadFile(event.dataTransfer?.files?.[0]);
   });
 
-  ["q", "pn", "process", "dateFrom", "dateTo"].forEach((id) => $(id).addEventListener("input", debounce(applyFilters, 120)));
+  ["q", "pn", "process", "dateFrom", "dateTo"].forEach((id) => $(id).addEventListener("input", debounce(applyFilters, 80)));
   $("customer").addEventListener("change", applyFilters);
   $("showZero").addEventListener("change", applyFilters);
+  $("filterChips").addEventListener("click", removeFilterChip);
   $("clearBtn").addEventListener("click", clearFilters);
+  $("expandAllBtn").addEventListener("click", toggleExpandAll);
   $("copyBtn").addEventListener("click", copySummary);
   $("exportBtn").addEventListener("click", exportCsv);
   $("qualityToggle").addEventListener("click", toggleQuality);
   $("advancedFiltersToggle").addEventListener("click", toggleAdvancedFilters);
   $("themeMode").addEventListener("change", (event) => setTheme(event.target.value, true));
   $("reviewEvidenceBtn").addEventListener("click", () => $("results").scrollIntoView({ behavior: "smooth", block: "start" }));
+  document.querySelectorAll("[data-copy-stat]").forEach((button) => button.addEventListener("click", copyStat));
   window.addEventListener("resize", debounce(renderChart, 100));
 }
 
@@ -180,10 +184,14 @@ function applyFilters() {
     if (to && (!record.date || record.date > to)) return false;
     return tokens.every((token) => record.search.includes(token));
   });
+  state.expandedRows.clear();
+  state.expandAll = false;
   sortFiltered();
-  renderAnalysis();
+  const stats = renderAnalysis();
+  renderFilterFeedback(stats);
   renderTable();
   updateActionStates();
+  flashLiveUpdate();
 }
 
 function updateActionStates() {
@@ -192,8 +200,7 @@ function updateActionStates() {
   $("clearBtn").disabled = filterCount === 0;
   $("copyBtn").disabled = !hasResults;
   $("exportBtn").disabled = !hasResults;
-  $("activeFilterCount").hidden = filterCount === 0;
-  $("activeFilterCount").textContent = `${filterCount} active`;
+  $("expandAllBtn").disabled = !hasResults;
 }
 
 function sortFiltered() {
@@ -219,6 +226,7 @@ function renderAnalysis() {
   $("sRange").textContent = stats.p25 == null ? "—" : `${formatMoney(stats.p25)}–${formatMoney(stats.p75)}`;
   renderRecommendation(stats);
   renderChart();
+  return stats;
 }
 
 function renderRecommendation(stats) {
@@ -239,6 +247,9 @@ function renderRecommendation(stats) {
   }
   $("confidenceBadge").textContent = stats.priced ? confidence : "No sample";
   $("confidenceBadge").dataset.level = stats.priced ? confidenceLevel : "low";
+  $("confidenceBadge").title = hasComparableScope
+    ? "Confidence reflects sample size and how recently matching work was received."
+    : "Unfiltered — all customers and parts.";
   $("recommendationRange").textContent = stats.p25 == null ? "—" : `${formatMoney(stats.p25)} – ${formatMoney(stats.p75)}`;
   if (!stats.priced) {
     $("recommendationCopy").textContent = "No positive-priced lines match the current filters.";
@@ -247,18 +258,65 @@ function renderRecommendation(stats) {
   } else {
     $("recommendationCopy").textContent = `Observed range from ${whole.format(stats.priced)} priced line${stats.priced === 1 ? "" : "s"}${active.length ? ` matching ${active.join(", ")}` : ""}. Use the median as the center and review the source work before quoting.`;
   }
-  const facts = [
-    ["Median", formatMoney(stats.median)],
-    ["Trimmed average", formatMoney(stats.trimmedAverage)],
-    ["Latest price", formatMoney(stats.latest)],
-    ["Latest record", stats.latestDate || "—"],
-    ["Sample", `${whole.format(stats.priced)} priced / ${whole.format(stats.matches)} matching`],
-  ];
-  $("recommendationFacts").replaceChildren(...facts.flatMap(([label, value]) => {
-    const dt = document.createElement("dt"); dt.textContent = label;
-    const dd = document.createElement("dd"); dd.textContent = value;
-    return [dt, dd];
+}
+
+function renderFilterFeedback(stats) {
+  const filters = activeFilters();
+  $("filterMatchCount").textContent = `${whole.format(stats.matches)} line${stats.matches === 1 ? "" : "s"} match`;
+  $("filterChips").replaceChildren(...filters.map((filter) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "filter-chip";
+    button.dataset.filterKey = filter.key;
+    button.setAttribute("aria-label", `Remove ${filter.label} filter`);
+    button.textContent = `${filter.label}: ${filter.value} ×`;
+    return button;
   }));
+
+  const customer = $("customer").value || "All customers";
+  const pn = $("pn").value.trim() ? `P/N ${$("pn").value.trim()}` : "No P/N";
+  const spec = $("process").value.trim() ? `Spec ${$("process").value.trim()}` : "No spec";
+  const search = $("q").value.trim();
+  $("scopeSummary").textContent = [search ? `Search “${search}”` : "", customer, pn, spec].filter(Boolean).join(" · ");
+  $("scopeCount").textContent = `${whole.format(stats.matches)} matching · ${whole.format(stats.priced)} priced`;
+
+  const contextParts = [];
+  if (search) contextParts.push(`“${search}”`);
+  if ($("customer").value) contextParts.push($("customer").value);
+  if ($("pn").value.trim()) contextParts.push($("pn").value.trim());
+  if ($("process").value.trim()) contextParts.push($("process").value.trim());
+  $("contextScope").textContent = contextParts.join(" · ") || "All line items";
+  $("contextMedian").textContent = `Median ${formatMoney(stats.median)}`;
+  $("contextCount").textContent = `${whole.format(stats.matches)} line${stats.matches === 1 ? "" : "s"}`;
+}
+
+function activeFilters() {
+  const filters = [];
+  if ($("q").value.trim()) filters.push({ key: "q", label: "Search", value: $("q").value.trim() });
+  if ($("customer").value) filters.push({ key: "customer", label: "Customer", value: $("customer").value });
+  if ($("pn").value.trim()) filters.push({ key: "pn", label: "P/N", value: $("pn").value.trim() });
+  if ($("process").value.trim()) filters.push({ key: "process", label: "Spec", value: $("process").value.trim() });
+  if ($("dateFrom").value) filters.push({ key: "dateFrom", label: "From", value: $("dateFrom").value });
+  if ($("dateTo").value) filters.push({ key: "dateTo", label: "To", value: $("dateTo").value });
+  if ($("showZero").checked) filters.push({ key: "showZero", label: "Prices", value: "Include $0 and blanks" });
+  return filters;
+}
+
+function removeFilterChip(event) {
+  const chip = event.target.closest("[data-filter-key]");
+  if (!chip) return;
+  const key = chip.dataset.filterKey;
+  if (key === "showZero") $("showZero").checked = false;
+  else if ($(key)) $(key).value = "";
+  applyFilters();
+}
+
+function flashLiveUpdate() {
+  [$("decisionPanel"), $("filterMatchCount"), $("contextBar")].forEach((element) => {
+    element.classList.remove("just-updated");
+    void element.offsetWidth;
+    element.classList.add("just-updated");
+  });
 }
 
 function renderQuality() {
@@ -303,10 +361,10 @@ function renderChart() {
   const end = new Date(`${sampled.at(-1).date}T12:00:00`).getTime();
   const dpr = window.devicePixelRatio || 1;
   const width = canvas.clientWidth || 760;
-  const height = 290;
+  const height = 160;
   canvas.width = Math.round(width * dpr); canvas.height = Math.round(height * dpr);
   const ctx = canvas.getContext("2d"); ctx.scale(dpr, dpr);
-  const pad = { left: 58, right: 18, top: 16, bottom: 34 };
+  const pad = { left: 54, right: 14, top: 10, bottom: 28 };
   const x = (date) => pad.left + ((new Date(`${date}T12:00:00`).getTime() - start) / Math.max(1, end - start)) * (width - pad.left - pad.right);
   const y = (price) => pad.top + (1 - Math.min(price, cap) / Math.max(1, cap)) * (height - pad.top - pad.bottom);
   ctx.clearRect(0, 0, width, height);
@@ -316,10 +374,10 @@ function renderChart() {
   const infoColor = styles.getPropertyValue("--info").trim();
   const goldColor = styles.getPropertyValue("--gold").trim();
   ctx.strokeStyle = lineColor; ctx.fillStyle = mutedColor; ctx.font = "12px system-ui";
-  for (let i = 0; i <= 4; i += 1) {
-    const py = pad.top + i * (height - pad.top - pad.bottom) / 4;
+  for (let i = 0; i <= 3; i += 1) {
+    const py = pad.top + i * (height - pad.top - pad.bottom) / 3;
     ctx.beginPath(); ctx.moveTo(pad.left, py); ctx.lineTo(width - pad.right, py); ctx.stroke();
-    ctx.fillText(formatCompactMoney(cap * (1 - i / 4)), 4, py + 4);
+    ctx.fillText(formatCompactMoney(cap * (1 - i / 3)), 4, py + 4);
   }
   ctx.fillStyle = infoColor;
   ctx.globalAlpha = .48;
@@ -366,28 +424,110 @@ function updateSortHeaders() {
 
 function renderTable() {
   const showing = state.filtered.slice(0, PAGE_SIZE);
+  const mostRecentSort = state.sort.field === "date" && state.sort.direction === -1;
   $("resultCount").textContent = state.filtered.length > PAGE_SIZE
-    ? `Showing ${whole.format(PAGE_SIZE)} of ${whole.format(state.filtered.length)} lines`
+    ? `Showing ${whole.format(PAGE_SIZE)} ${mostRecentSort ? "most recent " : ""}of ${whole.format(state.filtered.length)} lines — filter to narrow`
     : `${whole.format(state.filtered.length)} line${state.filtered.length === 1 ? "" : "s"}`;
+  $("expandAllBtn").textContent = state.expandAll ? "Collapse all" : "Expand all";
   if (!showing.length) {
     const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = columns.length; td.className = "empty-cell"; td.textContent = "No line items match these filters."; tr.append(td); $("tableBody").replaceChildren(tr); return;
   }
-  $("tableBody").replaceChildren(...showing.map((record) => {
+  const latestRecord = state.filtered
+    .filter((record) => record.price > 0 && record.date)
+    .slice()
+    .sort((a, b) => b.date.localeCompare(a.date))[0];
+  const rows = [];
+  showing.forEach((record) => {
+    const key = String(record.sourceRow);
+    const expanded = state.expandAll || state.expandedRows.has(key);
     const tr = document.createElement("tr");
+    tr.className = "compact-result-row";
+    tr.tabIndex = 0;
+    tr.setAttribute("aria-expanded", String(expanded));
+    tr.setAttribute("aria-controls", `detail-${key}`);
+    if (latestRecord?.sourceRow === record.sourceRow) {
+      tr.classList.add("most-recent");
+      tr.title = "Most recent priced match";
+    }
     columns.forEach(([field]) => {
       const td = document.createElement("td");
       let value = field === "partNumbers" ? record.partNumbers.join(" · ") : record[field];
+      if (field === "date") {
+        const chevron = document.createElement("span"); chevron.className = "row-chevron"; chevron.textContent = expanded ? "▾" : "›"; chevron.setAttribute("aria-hidden", "true");
+        const date = document.createElement("span"); date.textContent = value || "—";
+        td.append(chevron, date); tr.append(td); return;
+      }
       if (field === "price") { td.className = "number"; value = formatMoney(value); }
-      if (field === "description") td.className = "description";
+      if (field === "process") { td.className = "process-preview"; value = firstLine(value); td.title = record.process || ""; }
       td.textContent = value || "—"; tr.append(td);
     });
-    return tr;
-  }));
+    const detail = document.createElement("tr");
+    detail.className = "detail-row";
+    detail.id = `detail-${key}`;
+    detail.hidden = !expanded;
+    const detailCell = document.createElement("td");
+    detailCell.colSpan = columns.length;
+    const detailGrid = document.createElement("div"); detailGrid.className = "detail-grid";
+    detailGrid.append(
+      detailField("Part ID", record.part),
+      detailField("End user", record.endUser),
+      detailField("Full process / specification", record.process, "detail-wide"),
+      detailField("Description", record.description, "detail-wide"),
+      detailField("Special instructions", record.special, "detail-wide"),
+    );
+    detailCell.append(detailGrid); detail.append(detailCell);
+    const toggle = () => toggleRow(key, tr, detail);
+    tr.addEventListener("click", toggle);
+    tr.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); }
+    });
+    rows.push(tr, detail);
+  });
+  $("tableBody").replaceChildren(...rows);
+}
+
+function toggleRow(key, row, detail) {
+  const expanded = row.getAttribute("aria-expanded") === "true";
+  if (expanded) state.expandedRows.delete(key); else state.expandedRows.add(key);
+  state.expandAll = false;
+  row.setAttribute("aria-expanded", String(!expanded));
+  row.querySelector(".row-chevron").textContent = expanded ? "›" : "▾";
+  detail.hidden = expanded;
+  $("expandAllBtn").textContent = "Expand all";
+}
+
+function toggleExpandAll() {
+  if (!state.filtered.length) return;
+  state.expandAll = !state.expandAll;
+  state.expandedRows.clear();
+  renderTable();
+}
+
+function detailField(label, value, className = "") {
+  const section = document.createElement("div"); section.className = `detail-field ${className}`.trim();
+  const strong = document.createElement("strong"); strong.textContent = label;
+  const content = document.createElement("p"); content.textContent = value || "—";
+  section.append(strong, content); return section;
+}
+
+function firstLine(value) {
+  return String(value || "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
 }
 
 function clearFilters() {
   ["q", "pn", "process", "dateFrom", "dateTo"].forEach((id) => { $(id).value = ""; });
   $("customer").value = ""; $("showZero").checked = false; applyFilters();
+}
+
+async function copyStat(event) {
+  const target = $(event.currentTarget.dataset.copyStat);
+  const label = event.currentTarget.getAttribute("aria-label").replace(/^Copy /, "");
+  try {
+    await navigator.clipboard.writeText(target.textContent);
+    showToast(`${label[0].toUpperCase()}${label.slice(1)} copied.`, "success");
+  } catch {
+    showToast("Clipboard access was unavailable.", "error");
+  }
 }
 
 async function copySummary() {
@@ -433,14 +573,7 @@ function toggleAdvancedFilters() {
 }
 
 function activeFilterLabels() {
-  const labels = [];
-  if ($("customer").value) labels.push(`customer ${$("customer").value}`);
-  if ($("pn").value.trim()) labels.push(`P/N containing ${$("pn").value.trim()}`);
-  if ($("process").value.trim()) labels.push(`process containing ${$("process").value.trim()}`);
-  if ($("q").value.trim()) labels.push(`search “${$("q").value.trim()}”`);
-  if ($("dateFrom").value || $("dateTo").value) labels.push(`dates ${$("dateFrom").value || "…"} to ${$("dateTo").value || "…"}`);
-  if ($("showZero").checked) labels.push("including $0 and blank prices");
-  return labels;
+  return activeFilters().map((filter) => `${filter.label.toLowerCase()} ${filter.value}`);
 }
 
 function setSourceSummary(message, tone = "") {
