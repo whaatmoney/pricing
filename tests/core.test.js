@@ -55,6 +55,26 @@ test("duplicate detection is case insensitive and import reports quality", () =>
   assert.equal(result.quality.normalizedLineBreakRows, 1);
 });
 
+test("router forms load into the record and search text when present", () => {
+  const rows = [
+    [...headers, "ROUTER FORMS"],
+    ["1", "ACME", "07/13/2026", "P1", "P/N: ABC", 100, "AMS2700", "END", "", "10: PCL001 > 20: CLR001 > 30: PCK001"],
+  ];
+  const result = buildDataset(rows);
+  assert.equal(result.records[0].router, "10: PCL001 > 20: CLR001 > 30: PCK001");
+  assert.ok(result.records[0].search.includes("clr001"));
+});
+
+test("workbooks without a router column still load", () => {
+  const rows = [
+    headers,
+    ["1", "ACME", "07/13/2026", "P1", "P/N: ABC", 100, "AMS2700", "END", ""],
+  ];
+  const result = buildDataset(rows);
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0].router, "");
+});
+
 test("median and percentiles interpolate correctly", () => {
   assert.equal(percentile([10, 20, 30, 40], 0.5), 25);
   assert.equal(percentile([10, 20, 30, 40], 0.25), 17.5);

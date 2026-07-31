@@ -8,6 +8,7 @@ export const EXPECTED_COLUMNS = {
   process: ["process"],
   endUser: ["end user", "enduser", "end-user"],
   special: ["special instructions", "notes", "special inst"],
+  router: ["router forms", "router form history", "router forms history", "router history", "routers", "router"],
 };
 
 const REQUIRED_COLUMNS = ["wo", "customer", "part", "description", "price", "process"];
@@ -157,6 +158,7 @@ export function buildDataset(rows, headerIndex = 0, sheetName = "Sheet1") {
     const process = normalizeText(read(row, columns.process));
     const endUser = normalizeText(read(row, columns.endUser));
     const special = normalizeText(read(row, columns.special));
+    const router = normalizeText(read(row, columns.router));
     const rawDate = read(row, columns.date);
     const date = normalizeDate(rawDate);
     const priceResult = parsePrice(read(row, columns.price));
@@ -192,9 +194,10 @@ export function buildDataset(rows, headerIndex = 0, sheetName = "Sheet1") {
       process,
       endUser,
       special,
+      router,
       partNumbers,
     };
-    record.search = [date, customer, wo, part, description, process, endUser, special, ...partNumbers].join(" ").toLowerCase();
+    record.search = [date, customer, wo, part, description, process, endUser, special, router, ...partNumbers].join(" ").toLowerCase();
     records.push(record);
   }
   quality.loadedRows = records.length;

@@ -19,7 +19,7 @@ const state = {
 const columns = [
   ["date", "Received"], ["customer", "Customer"], ["wo", "WO"],
   ["part", "Part ID"], ["price", "Unit price"], ["description", "Line description"],
-  ["process", "Process"],
+  ["process", "Process"], ["router", "Router forms"],
 ];
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -467,7 +467,7 @@ function renderTable() {
       let value = record[field];
       if (field === "price") { td.className = "number"; value = formatMoney(value); }
       if (field === "date") value = formatDate(value);
-      if (["description", "process"].includes(field)) {
+      if (["description", "process", "router"].includes(field)) {
         td.className = "source-text";
         const preview = document.createElement("span");
         preview.className = "cell-preview";
@@ -517,6 +517,7 @@ function renderRecordPane(record) {
     ["Process", record.process],
     ["End User", record.endUser],
     ["Special Instructions", record.special],
+    ["Router Forms", record.router],
   ];
   $("recordPaneFields").replaceChildren(...fields.map(([label, value]) => {
     const section = document.createElement("section");
@@ -563,8 +564,8 @@ async function copySummary() {
 
 function exportCsv() {
   if (!state.filtered.length) return showToast("There are no filtered rows to export.", "error");
-  const header = ["WO", "CUSTOMER", "RECEIVED", "PART ID", "LINE DESCRIPTION", "UNIT PRICE", "PROCESS", "END USER", "SPECIAL INSTRUCTIONS"];
-  const rows = state.filtered.map((record) => [record.wo, record.customer, record.date, record.part, record.description, record.price ?? "", record.process, record.endUser, record.special]);
+  const header = ["WO", "CUSTOMER", "RECEIVED", "PART ID", "LINE DESCRIPTION", "UNIT PRICE", "PROCESS", "END USER", "SPECIAL INSTRUCTIONS", "ROUTER FORMS"];
+  const rows = state.filtered.map((record) => [record.wo, record.customer, record.date, record.part, record.description, record.price ?? "", record.process, record.endUser, record.special, record.router]);
   const csv = [header, ...rows].map((row) => row.map((cell, index) => csvCell(cell, index === 5)).join(",")).join("\r\n");
   const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
   const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `qpc_line_item_history_${new Date().toISOString().slice(0, 10)}.csv`; link.click();

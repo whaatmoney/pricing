@@ -13,6 +13,7 @@ A local-only browser tool for searching prior line-item formatting, inspecting e
 - Shows a traceable reference range, latest price, trimmed average, sample size, and confidence level.
 - Charts the filtered price history and exposes every contributing line in the table.
 - Keeps dense search results beside a persistent pane containing every exact source field and line break.
+- Shows router form history (e.g. `10: PCL001 > 20: CLR001`) when the workbook includes a `ROUTER FORMS` column, searchable alongside every other field.
 - Includes $0 and blank-price records by default so formatting-only history remains searchable.
 - Neutralizes formula-sensitive text during CSV export.
 
