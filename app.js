@@ -231,6 +231,12 @@ function renderAnalysis() {
   $("sRange").textContent = stats.p25 == null ? "—" : `${formatMoney(stats.p25)}–${formatMoney(stats.p75)}`;
   $("pRange").textContent = stats.p25 == null ? "—" : `${formatMoney(stats.p25)}–${formatMoney(stats.p75)}`;
   $("pLatest").textContent = formatMoney(stats.latest);
+  const hasComparableScope = Boolean($("customer").value || $("pn").value.trim() || $("process").value.trim());
+  $("pLatestWrap").classList.toggle("stat-muted", !hasComparableScope);
+  $("pLatestLabel").textContent = hasComparableScope ? "Latest" : "Latest line";
+  $("pLatestWrap").title = hasComparableScope
+    ? "Most recent priced line in the current scope."
+    : "Most recent single priced line across the whole file — define a customer, P/N, or process to make this comparable.";
   $("pRecency").textContent = formatDate(stats.latestDate);
   $("pPriced").textContent = whole.format(stats.priced);
   $("pricingSummary").textContent = stats.priced
