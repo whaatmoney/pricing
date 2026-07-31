@@ -1,4 +1,4 @@
-import { buildDataset, calculateStats, csvCell, findHeaderRow } from "./core.js";
+import { buildDataset, calculateStats, csvCell, findHeaderRow, parseRouterSteps } from "./core.js";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const PAGE_SIZE = 500;
@@ -474,7 +474,12 @@ function renderTable() {
       let value = record[field];
       if (field === "price") { td.className = "number"; value = formatMoney(value); }
       if (field === "date") value = formatDate(value);
-      if (["description", "process", "router", "special"].includes(field)) {
+      if (field === "router") {
+        td.className = "source-text";
+        const chips = renderRouterChips(value, true);
+        if (chips) { chips.title = value; td.append(chips); }
+        else td.textContent = "—";
+      } else if (["description", "process", "special"].includes(field)) {
         td.className = "source-text";
         const preview = document.createElement("span");
         preview.className = "cell-preview";
@@ -530,10 +535,51 @@ function renderRecordPane(record) {
     const section = document.createElement("section");
     section.className = "record-field";
     const heading = document.createElement("strong"); heading.textContent = label;
-    const content = document.createElement("p"); content.textContent = value || "—";
-    section.append(heading, content);
+    section.append(heading);
+    const chips = label === "Router Forms" ? renderRouterChips(value, false) : null;
+    if (chips) {
+      chips.title = value;
+      section.append(chips);
+    } else {
+      const content = document.createElement("p"); content.textContent = value || "—";
+      section.append(content);
+    }
     return section;
   }));
+}
+
+function renderRouterChips(value, compact) {
+  const segments = parseRouterSteps(value);
+  if (!segments.length) return null;
+  const wrap = document.createElement("div");
+  wrap.className = compact ? "router-steps compact" : "router-steps";
+  segments.forEach((segment) => {
+    if (segment.woId && !compact) {
+      const label = document.createElement("span");
+      label.className = "router-woid";
+      label.textContent = `WoID ${segment.woId}`;
+      wrap.append(label);
+    }
+    segment.steps.forEach((step, index) => {
+      if (index > 0) {
+        const arrow = document.createElement("span");
+        arrow.className = "router-arrow";
+        arrow.setAttribute("aria-hidden", "true");
+        arrow.textContent = "›";
+        wrap.append(arrow);
+      }
+      const chip = document.createElement("span");
+      chip.className = "router-chip";
+      if (step.seq) {
+        const seq = document.createElement("small");
+        seq.textContent = step.seq;
+        chip.append(seq);
+      }
+      chip.append(document.createTextNode(step.form));
+      wrap.append(chip);
+    });
+  });
+  return wrap;
 }
 
 function clearFilters() {

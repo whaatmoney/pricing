@@ -117,6 +117,25 @@ export function extractPartNumbers(description) {
   return found;
 }
 
+export function parseRouterSteps(value) {
+  const text = normalizeText(value);
+  if (!text) return [];
+  return text
+    .split(/\s*\|\|\s*/)
+    .map((segment) => {
+      const woMatch = segment.match(/^\[\s*WoID\s+([^\]]+)\]\s*(.*)$/i);
+      const steps = (woMatch ? woMatch[2] : segment)
+        .split(/\s*>\s*/)
+        .filter(Boolean)
+        .map((step) => {
+          const parsed = step.match(/^(\d+)\s*:\s*(.+)$/);
+          return parsed ? { seq: parsed[1], form: parsed[2].trim() } : { seq: "", form: step.trim() };
+        });
+      return { woId: woMatch ? woMatch[1].trim() : "", steps };
+    })
+    .filter((segment) => segment.steps.length);
+}
+
 export function buildDataset(rows, headerIndex = 0, sheetName = "Sheet1") {
   if (!Array.isArray(rows) || rows.length <= headerIndex + 1) throw new Error("The selected sheet has no data rows.");
   const { columns, missing } = resolveColumns(rows[headerIndex]);

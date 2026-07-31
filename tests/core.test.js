@@ -9,6 +9,7 @@ import {
   normalizeDate,
   normalizeText,
   parsePrice,
+  parseRouterSteps,
   percentile,
 } from "../core.js";
 
@@ -63,6 +64,18 @@ test("router forms load into the record and search text when present", () => {
   const result = buildDataset(rows);
   assert.equal(result.records[0].router, "10: PCL001 > 20: CLR001 > 30: PCK001");
   assert.ok(result.records[0].search.includes("clr001"));
+});
+
+test("router steps parse into sequenced segments", () => {
+  assert.deepEqual(parseRouterSteps("10: PCL001 > 20: CLR001"), [
+    { woId: "", steps: [{ seq: "10", form: "PCL001" }, { seq: "20", form: "CLR001" }] },
+  ]);
+  assert.deepEqual(parseRouterSteps("[WoID 174] 10: PCL001  ||  [WoID 175] 10: PCL005 > 20: LAB000"), [
+    { woId: "174", steps: [{ seq: "10", form: "PCL001" }] },
+    { woId: "175", steps: [{ seq: "10", form: "PCL005" }, { seq: "20", form: "LAB000" }] },
+  ]);
+  assert.deepEqual(parseRouterSteps("FREEFORM NOTE"), [{ woId: "", steps: [{ seq: "", form: "FREEFORM NOTE" }] }]);
+  assert.deepEqual(parseRouterSteps(""), []);
 });
 
 test("workbooks without a router column still load", () => {
