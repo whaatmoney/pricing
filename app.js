@@ -17,9 +17,10 @@ const state = {
 };
 
 const columns = [
-  ["date", "Received"], ["customer", "Customer"], ["wo", "WO"],
-  ["part", "Part ID"], ["price", "Unit price"], ["description", "Line description"],
+  ["date", "Received"], ["wo", "WO"], ["customer", "Customer"],
+  ["part", "Part ID"], ["description", "Line description"], ["price", "Unit price"],
   ["process", "Process"], ["router", "Router forms"],
+  ["endUser", "End user"], ["special", "Special instructions"],
 ];
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -467,7 +468,7 @@ function renderTable() {
       let value = record[field];
       if (field === "price") { td.className = "number"; value = formatMoney(value); }
       if (field === "date") value = formatDate(value);
-      if (["description", "process", "router"].includes(field)) {
+      if (["description", "process", "router", "special"].includes(field)) {
         td.className = "source-text";
         const preview = document.createElement("span");
         preview.className = "cell-preview";
@@ -508,16 +509,16 @@ function renderRecordPane(record) {
   $("recordPaneTitle").textContent = `${record.customer || "Unknown customer"} · WO ${record.wo || "—"}`;
   $("recordPaneMeta").textContent = `Source row ${whole.format(record.sourceRow)}`;
   const fields = [
+    ["Received", formatDate(record.date)],
     ["WO", record.wo],
     ["Customer", record.customer],
-    ["Received", formatDate(record.date)],
     ["Part ID", record.part],
     ["Line Description", record.description],
     ["Unit Price", formatMoney(record.price)],
     ["Process", record.process],
+    ["Router Forms", record.router],
     ["End User", record.endUser],
     ["Special Instructions", record.special],
-    ["Router Forms", record.router],
   ];
   $("recordPaneFields").replaceChildren(...fields.map(([label, value]) => {
     const section = document.createElement("section");
@@ -564,8 +565,8 @@ async function copySummary() {
 
 function exportCsv() {
   if (!state.filtered.length) return showToast("There are no filtered rows to export.", "error");
-  const header = ["WO", "CUSTOMER", "RECEIVED", "PART ID", "LINE DESCRIPTION", "UNIT PRICE", "PROCESS", "END USER", "SPECIAL INSTRUCTIONS", "ROUTER FORMS"];
-  const rows = state.filtered.map((record) => [record.wo, record.customer, record.date, record.part, record.description, record.price ?? "", record.process, record.endUser, record.special, record.router]);
+  const header = ["RECEIVED", "WO", "CUSTOMER", "PART ID", "LINE DESCRIPTION", "UNIT PRICE", "PROCESS", "ROUTER FORMS", "END USER", "SPECIAL INSTRUCTIONS"];
+  const rows = state.filtered.map((record) => [record.date, record.wo, record.customer, record.part, record.description, record.price ?? "", record.process, record.router, record.endUser, record.special]);
   const csv = [header, ...rows].map((row) => row.map((cell, index) => csvCell(cell, index === 5)).join(",")).join("\r\n");
   const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
   const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `qpc_line_item_history_${new Date().toISOString().slice(0, 10)}.csv`; link.click();
