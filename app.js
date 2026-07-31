@@ -20,7 +20,7 @@ const columns = [
   ["date", "Received"], ["wo", "WO"], ["customer", "Customer"],
   ["part", "Part ID"], ["description", "Line description"], ["price", "Unit price"],
   ["process", "Process"], ["router", "Router forms"],
-  ["endUser", "End user"], ["special", "Special instructions"],
+  ["special", "Special instructions"], ["endUser", "End user"],
 ];
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -517,8 +517,8 @@ function renderRecordPane(record) {
     ["Unit Price", formatMoney(record.price)],
     ["Process", record.process],
     ["Router Forms", record.router],
-    ["End User", record.endUser],
     ["Special Instructions", record.special],
+    ["End User", record.endUser],
   ];
   $("recordPaneFields").replaceChildren(...fields.map(([label, value]) => {
     const section = document.createElement("section");
@@ -565,8 +565,8 @@ async function copySummary() {
 
 function exportCsv() {
   if (!state.filtered.length) return showToast("There are no filtered rows to export.", "error");
-  const header = ["RECEIVED", "WO", "CUSTOMER", "PART ID", "LINE DESCRIPTION", "UNIT PRICE", "PROCESS", "ROUTER FORMS", "END USER", "SPECIAL INSTRUCTIONS"];
-  const rows = state.filtered.map((record) => [record.date, record.wo, record.customer, record.part, record.description, record.price ?? "", record.process, record.router, record.endUser, record.special]);
+  const header = ["RECEIVED", "WO", "CUSTOMER", "PART ID", "LINE DESCRIPTION", "UNIT PRICE", "PROCESS", "ROUTER FORMS", "SPECIAL INSTRUCTIONS", "END USER"];
+  const rows = state.filtered.map((record) => [record.date, record.wo, record.customer, record.part, record.description, record.price ?? "", record.process, record.router, record.special, record.endUser]);
   const csv = [header, ...rows].map((row) => row.map((cell, index) => csvCell(cell, index === 5)).join(",")).join("\r\n");
   const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
   const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `qpc_line_item_history_${new Date().toISOString().slice(0, 10)}.csv`; link.click();
