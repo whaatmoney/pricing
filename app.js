@@ -287,7 +287,13 @@ function renderFilterFeedback(stats) {
     button.className = "filter-chip";
     button.dataset.filterKey = filter.key;
     button.setAttribute("aria-label", `Remove ${filter.label} filter`);
-    button.textContent = `${filter.label}: ${filter.value} ×`;
+    const text = document.createElement("span");
+    text.textContent = `${filter.label}: ${filter.value}`;
+    const remove = document.createElement("span");
+    remove.className = "chip-remove";
+    remove.setAttribute("aria-hidden", "true");
+    remove.textContent = "×";
+    button.append(text, remove);
     return button;
   }));
 
