@@ -46,6 +46,16 @@ function bindEvents() {
 
   ["q", "pn", "process", "dateFrom", "dateTo"].forEach((id) => $(id).addEventListener("input", debounce(applyFilters, 80)));
   $("customer").addEventListener("change", applyFilters);
+  $("customerBtn").addEventListener("click", () => toggleCustomerPop());
+  $("customerSearch").addEventListener("input", debounce(() => renderCustomerList($("customerSearch").value), 60));
+  $("customerList").addEventListener("click", (event) => {
+    const option = event.target.closest("[data-value]");
+    if (option) selectCustomer(option.dataset.value);
+  });
+  $("customerCombo").addEventListener("keydown", customerKeydown);
+  document.addEventListener("click", (event) => {
+    if (!$("customerPop").hidden && !$("customerCombo").contains(event.target)) toggleCustomerPop(false);
+  });
   $("showZero").addEventListener("change", applyFilters);
   $("filterChips").addEventListener("click", removeFilterChip);
   $("quickSpecs").addEventListener("click", applyQuickSpec);
@@ -169,12 +179,92 @@ function chooseDataSheet(workbook) {
 function populateCustomers() {
   const counts = new Map();
   state.records.forEach((record) => record.customer && counts.set(record.customer, (counts.get(record.customer) || 0) + 1));
-  const options = [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  $("customer").replaceChildren(new Option("All customers", ""), ...options.map(([name, count]) => new Option(`${name} (${whole.format(count)})`, name)));
+  state.customers = [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  renderCustomerList("");
+}
+
+function renderCustomerList(query) {
+  const q = query.trim().toLowerCase();
+  const current = $("customer").value;
+  const entries = [["", state.records.length]]
+    .concat((state.customers || []).filter(([name]) => !q || name.toLowerCase().includes(q)));
+  $("customerList").replaceChildren(...entries.map(([name, count]) => {
+    const li = document.createElement("li");
+    li.setAttribute("role", "option");
+    li.dataset.value = name;
+    li.setAttribute("aria-selected", String(name === current));
+    const label = document.createElement("span");
+    label.className = "combo-option-label";
+    label.textContent = name || "All customers";
+    const badge = document.createElement("span");
+    badge.className = "combo-count";
+    badge.textContent = whole.format(count);
+    li.append(label, badge);
+    return li;
+  }));
+}
+
+function syncCustomerTrigger() {
+  const value = $("customer").value;
+  const label = $("customerLabel");
+  label.replaceChildren();
+  const name = document.createElement("span");
+  name.className = "combo-value-text";
+  name.textContent = value || "All customers";
+  label.append(name);
+  const count = value
+    ? (state.customers || []).find(([customer]) => customer === value)?.[1]
+    : state.records.length;
+  if (count != null) {
+    const badge = document.createElement("span");
+    badge.className = "combo-count";
+    badge.textContent = whole.format(count);
+    label.append(badge);
+  }
+}
+
+function toggleCustomerPop(open = $("customerPop").hidden) {
+  $("customerPop").hidden = !open;
+  $("customerBtn").setAttribute("aria-expanded", String(open));
+  if (open) {
+    $("customerSearch").value = "";
+    renderCustomerList("");
+    $("customerSearch").focus();
+  }
+}
+
+function selectCustomer(value) {
+  $("customer").value = value;
+  toggleCustomerPop(false);
+  $("customerBtn").focus();
+  $("customer").dispatchEvent(new Event("change"));
+}
+
+function customerKeydown(event) {
+  if (event.key === "Escape" && !$("customerPop").hidden) {
+    event.preventDefault();
+    toggleCustomerPop(false);
+    $("customerBtn").focus();
+    return;
+  }
+  if (!["ArrowDown", "ArrowUp", "Enter"].includes(event.key) || $("customerPop").hidden) return;
+  const options = [...$("customerList").querySelectorAll("[data-value]")];
+  if (!options.length) return;
+  let index = options.findIndex((option) => option.classList.contains("focused"));
+  if (event.key === "Enter") {
+    event.preventDefault();
+    if (index >= 0) selectCustomer(options[index].dataset.value);
+    return;
+  }
+  event.preventDefault();
+  index = event.key === "ArrowDown" ? Math.min(index + 1, options.length - 1) : Math.max(index - 1, 0);
+  options.forEach((option, i) => option.classList.toggle("focused", i === index));
+  options[index].scrollIntoView({ block: "nearest" });
 }
 
 function applyFilters() {
   if (!state.records.length) return;
+  syncCustomerTrigger();
   const tokens = $("q").value.trim().toLowerCase().match(/"[^"]+"|\S+/g)?.map((token) => token.replace(/^"|"$/g, "")) || [];
   const customer = $("customer").value;
   const pn = $("pn").value.trim().toLowerCase();

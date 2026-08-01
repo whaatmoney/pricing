@@ -91,8 +91,18 @@
 
           <div class="toolbar toolbar-primary" aria-label="Primary price history filters">
             <div class="field">
-              <label for="customer">Customer</label>
-              <select id="customer"><option value="">All customers</option></select>
+              <label for="customerBtn">Customer</label>
+              <div class="combo" id="customerCombo">
+                <button type="button" class="combo-trigger" id="customerBtn" aria-haspopup="listbox" aria-expanded="false" aria-controls="customerList">
+                  <span class="combo-value" id="customerLabel">All customers</span>
+                  <span class="combo-caret" aria-hidden="true">▾</span>
+                </button>
+                <div class="combo-pop" id="customerPop" hidden>
+                  <input id="customerSearch" type="search" placeholder="Filter customers…" autocomplete="off" aria-label="Filter customer list">
+                  <ul class="combo-list" id="customerList" role="listbox" aria-label="Customer"></ul>
+                </div>
+                <input type="hidden" id="customer" value="">
+              </div>
             </div>
             <div class="field">
               <label for="pn">Customer P/N</label>
