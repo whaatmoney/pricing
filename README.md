@@ -1,4 +1,4 @@
-# QPC Line Item History
+# QPC Part Memory
 
 A local-only browser tool for searching prior line-item formatting, inspecting exact source records, and referencing historical pricing.
 

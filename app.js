@@ -836,7 +836,7 @@ async function copyStat(event) {
 async function copySummary() {
   const stats = calculateStats(state.filtered);
   const text = [
-    "QPC Line Item History — pricing reference",
+    "QPC Part Memory — pricing reference",
     `Source: ${state.file?.name || "—"}`,
     `Filters: ${activeFilterLabels().join(", ") || "none"}`,
     `Matching lines: ${stats.matches}`,
@@ -856,7 +856,7 @@ function exportCsv() {
   const rows = state.filtered.map((record) => [record.date, record.wo, record.customer, record.part, record.description, record.price ?? "", record.process, record.router, record.special, record.endUser]);
   const csv = [header, ...rows].map((row) => row.map((cell, index) => csvCell(cell, index === 5)).join(",")).join("\r\n");
   const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
-  const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `qpc_line_item_history_${new Date().toISOString().slice(0, 10)}.csv`; link.click();
+  const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `qpc_part_memory_${new Date().toISOString().slice(0, 10)}.csv`; link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
