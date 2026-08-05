@@ -225,8 +225,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: none;
 .quick-specs button.active::before { content: "✓"; background: var(--gold); color: var(--header); }
 .advanced-filters { grid-column: 1 / -1; grid-row: 3; margin-top: 2px; padding-top: 8px; border-top: 1px solid var(--line); }
 .advanced-filters .toolbar { margin-top: 0; }
-.check-control { margin-top: 9px; display: inline-flex; align-items: center; gap: 8px; color: var(--muted-strong); font-size: 12px; cursor: pointer; }
-.check-control input { width: 17px; height: 17px; accent-color: var(--gold-hover); }
 
 .pricing-strip { position: sticky; top: 0; z-index: 12; min-height: 62px; margin-top: 8px; padding: 7px 9px 7px 12px; display: grid; grid-template-columns: 210px minmax(0, 1fr) auto; align-items: center; gap: 9px; background: color-mix(in srgb, var(--surface) 96%, transparent); border: 1px solid var(--line-strong); border-top: 3px solid var(--gold); border-radius: var(--radius-sm); box-shadow: var(--shadow-sm); backdrop-filter: blur(8px); }
 .pricing-strip-title { line-height: 1.2; }
@@ -303,12 +301,11 @@ td.number { font-variant-numeric: tabular-nums; font-weight: 750; text-align: ri
 .lookup-chip .chip-go { display: inline-grid; place-items: center; min-width: 15px; height: 15px; padding: 0 3px; background: var(--gold-soft); color: var(--muted-strong); border-radius: 999px; font-size: 9px; font-weight: 800; }
 .lookup-chip:hover .chip-go { background: var(--gold); color: var(--header); }
 .lookup-groups { display: flex; flex-wrap: wrap; gap: 4px; }
-.group-chip { display: inline-flex; align-items: center; gap: 4px; min-height: 22px; padding: 2px 7px 2px 3px; color: var(--muted-strong); background: var(--surface-subtle); border: 1px solid var(--line-strong); border-radius: 999px; cursor: pointer; font-size: 10px; font-weight: 650; letter-spacing: .02em; white-space: nowrap; }
-.group-chip::before { content: "○"; display: inline-grid; place-items: center; min-width: 15px; height: 15px; padding: 0 3px; background: var(--gold-soft); color: var(--muted-strong); border-radius: 999px; font-size: 8px; font-weight: 800; }
-.group-chip:hover, .group-chip.active { color: var(--ink); background: var(--gold-soft); border-color: var(--gold); }
-.group-chip.active::before { content: "✓"; background: var(--gold); color: var(--header); font-size: 9px; }
-.lookup-exact { display: inline-flex; align-items: center; gap: 4px; color: var(--muted-strong); font-size: 10px; font-weight: 650; cursor: pointer; white-space: nowrap; }
-.lookup-exact input { width: 12px; height: 12px; margin: 0; accent-color: var(--gold); cursor: pointer; }
+.group-chip, .toggle-chip { display: inline-flex; align-items: center; gap: 4px; min-height: 22px; padding: 2px 7px 2px 3px; color: var(--muted-strong); background: var(--surface-subtle); border: 1px solid var(--line-strong); border-radius: 999px; cursor: pointer; font-size: 10px; font-weight: 650; letter-spacing: .02em; white-space: nowrap; }
+.group-chip::before, .toggle-chip::before { content: "○"; display: inline-grid; place-items: center; min-width: 15px; height: 15px; padding: 0 3px; background: var(--gold-soft); color: var(--muted-strong); border-radius: 999px; font-size: 8px; font-weight: 800; }
+.group-chip:hover, .group-chip.active, .toggle-chip:hover, .toggle-chip.active { color: var(--ink); background: var(--gold-soft); border-color: var(--gold); }
+.group-chip.active::before, .toggle-chip.active::before { content: "✓"; background: var(--gold); color: var(--header); font-size: 9px; }
+.check-toggle { margin-top: 9px; }
 .record-lookup-head { flex-wrap: wrap; }
 .selection-lookup { position: fixed; z-index: 70; background: var(--surface); box-shadow: var(--shadow-md); }
 .empty-cell { padding: 48px; color: var(--muted); text-align: center; }

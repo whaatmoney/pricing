@@ -71,6 +71,10 @@ function bindEvents() {
     if (!$("customerPop").hidden && !$("customerCombo").contains(event.target)) toggleCustomerPop(false);
   });
   $("showZero").addEventListener("change", applyFilters);
+  $("showZeroChip").addEventListener("click", () => {
+    $("showZero").checked = !$("showZero").checked;
+    $("showZero").dispatchEvent(new Event("change"));
+  });
   $("filterChips").addEventListener("click", removeFilterChip);
   $("quickSpecs").addEventListener("click", applyQuickSpec);
   $("clearBtn").addEventListener("click", clearFilters);
@@ -299,6 +303,8 @@ function customerKeydown(event) {
 function applyFilters() {
   if (!state.records.length) return;
   syncCustomerTrigger();
+  $("showZeroChip").classList.toggle("active", $("showZero").checked);
+  $("showZeroChip").setAttribute("aria-checked", String($("showZero").checked));
   const tokens = $("q").value.trim().toLowerCase().match(/"[^"]+"|\S+/g)?.map((token) => token.replace(/^"|"$/g, "")) || [];
   const customer = $("customer").value;
   const pn = $("pn").value.trim().toLowerCase();
@@ -726,15 +732,21 @@ function renderRecordLookup(record) {
   head.className = "record-lookup-head";
   const heading = document.createElement("strong");
   heading.textContent = "Look up in Viva Engage";
-  const exactLabel = document.createElement("label");
-  exactLabel.className = "lookup-exact";
-  exactLabel.title = "On: exact phrase. Off: looser match for spacing or format variants.";
-  const exactBox = document.createElement("input");
-  exactBox.type = "checkbox";
-  exactBox.checked = state.vivaExact;
-  exactBox.addEventListener("change", () => { state.vivaExact = exactBox.checked; });
-  exactLabel.append(exactBox, document.createTextNode("Exact"));
-  head.append(heading, exactLabel);
+  const exactChip = document.createElement("button");
+  exactChip.type = "button";
+  exactChip.className = "toggle-chip";
+  exactChip.title = "On: exact phrase. Off: looser match for spacing or format variants.";
+  exactChip.setAttribute("role", "switch");
+  const exactText = document.createElement("span");
+  exactText.textContent = "Exact";
+  exactChip.append(exactText);
+  const syncExact = () => {
+    exactChip.classList.toggle("active", state.vivaExact);
+    exactChip.setAttribute("aria-checked", String(state.vivaExact));
+  };
+  exactChip.addEventListener("click", () => { state.vivaExact = !state.vivaExact; syncExact(); });
+  syncExact();
+  head.append(heading, exactChip);
   const groups = document.createElement("div");
   groups.className = "lookup-groups";
   groups.setAttribute("role", "radiogroup");
