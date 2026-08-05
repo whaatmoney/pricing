@@ -917,6 +917,7 @@ function toggleQuality() {
   $("qualityDetails").hidden = !hidden;
   $("qualityToggle").setAttribute("aria-expanded", String(hidden));
   $("qualityToggle").textContent = hidden ? "Hide details" : "View details";
+  $("qualityToggle").dataset.glyph = hidden ? "▴" : "▾";
 }
 
 function toggleAdvancedFilters() {
@@ -924,6 +925,7 @@ function toggleAdvancedFilters() {
   $("advancedFilters").hidden = !hidden;
   $("advancedFiltersToggle").setAttribute("aria-expanded", String(hidden));
   $("advancedFiltersToggle").textContent = hidden ? "Fewer filters" : "More filters";
+  $("advancedFiltersToggle").dataset.glyph = hidden ? "−" : "+";
   if (hidden) $("q").focus();
 }
 

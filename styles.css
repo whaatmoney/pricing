@@ -122,7 +122,13 @@ button, select, input { transition: border-color var(--ease), box-shadow var(--e
 .no-data .workspace { display: none; }
 .workspace-inner { width: min(1440px, 100%); margin: 0 auto; padding: 16px clamp(16px, 3.5vw, 52px) 48px; }
 
-.button { min-height: 40px; padding: 8px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; font-weight: 750; font-size: 13px; box-shadow: 0 1px 1px rgba(31, 41, 55, .03); }
+.button { min-height: 40px; padding: 8px 14px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); cursor: pointer; font-weight: 750; font-size: 13px; box-shadow: 0 1px 1px rgba(31, 41, 55, .03); }
+.button[data-glyph] { padding-left: 8px; }
+.button-compact[data-glyph] { padding-left: 6px; }
+.button[data-glyph]::before { content: attr(data-glyph); flex: 0 0 auto; display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 3px; background: var(--gold-soft); color: var(--muted-strong); border-radius: 999px; font-size: 10px; font-weight: 800; }
+.button[data-glyph]:hover:not(:disabled)::before { background: var(--gold); color: var(--header); }
+.button-primary[data-glyph]::before { background: rgba(31, 41, 55, .16); color: #1f2937; }
+.button-primary[data-glyph]:hover:not(:disabled)::before { background: rgba(31, 41, 55, .24); color: #171d25; }
 .button:hover:not(:disabled) { border-color: var(--gold-hover); color: var(--ink); background: var(--gold-soft); }
 .button:active:not(:disabled) { transform: translateY(1px); }
 .button:disabled { color: var(--muted); background: var(--surface-subtle); border-color: var(--line); cursor: not-allowed; opacity: .62; box-shadow: none; }

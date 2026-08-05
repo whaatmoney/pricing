@@ -45,7 +45,7 @@
           <p class="eyebrow">Start here</p>
           <h2>Load the memory</h2>
           <p>Drop the line-items export here or choose an Excel or CSV file.</p>
-          <button class="button button-primary button-large" id="welcomeLoadBtn" type="button">Choose Excel or CSV</button>
+          <button class="button button-primary button-large" id="welcomeLoadBtn" type="button" data-glyph="↑">Choose Excel or CSV</button>
           <p class="file-help">Up to 25 MB <span aria-hidden="true">·</span> processed locally <span aria-hidden="true">·</span> nothing leaves this browser</p>
         </div>
       </div>
@@ -62,7 +62,7 @@
             <h2 id="qualityTitle">Import verified</h2>
             <p id="importReceiptSummary">The workbook passed required column checks.</p>
           </div>
-          <button class="button button-ghost button-compact" id="qualityToggle" type="button" aria-expanded="false" aria-controls="qualityDetails">View details</button>
+          <button class="button button-ghost button-compact" id="qualityToggle" type="button" aria-expanded="false" aria-controls="qualityDetails" data-glyph="▾">View details</button>
           <div class="quality-details" id="qualityDetails" hidden>
             <div class="quality-grid" id="qualityGrid"></div>
             <ul class="warning-list" id="warningList"></ul>
@@ -108,8 +108,8 @@
           </div>
 
           <div class="filter-heading-actions">
-            <button class="button button-ghost button-compact" id="advancedFiltersToggle" type="button" aria-expanded="false" aria-controls="advancedFilters">More filters</button>
-            <button class="button button-ghost button-compact" id="clearBtn" type="button" disabled>Clear</button>
+            <button class="button button-ghost button-compact" id="advancedFiltersToggle" type="button" aria-expanded="false" aria-controls="advancedFilters" data-glyph="+">More filters</button>
+            <button class="button button-ghost button-compact" id="clearBtn" type="button" disabled data-glyph="×">Clear</button>
           </div>
 
           <div class="filter-feedback" aria-live="polite">
@@ -156,7 +156,7 @@
             <div><span>Latest record</span><strong id="pRecency">—</strong></div>
             <div><span>Priced lines</span><strong id="pPriced">—</strong></div>
           </div>
-          <button class="button button-ghost button-compact" id="pricingJumpBtn" type="button">View trend ↓</button>
+          <button class="button button-ghost button-compact" id="pricingJumpBtn" type="button" data-glyph="↓">View trend</button>
         </section>
 
         <section class="results" id="results" aria-labelledby="resultsTitle">
@@ -168,9 +168,9 @@
               <span class="table-assurance">Select a row to inspect every exact source field and line break</span>
             </div>
             <div class="action-buttons">
-              <button class="button button-ghost" id="reloadBtn" type="button">Load new file</button>
-              <button class="button" id="copyBtn" type="button" disabled>Copy pricing summary</button>
-              <button class="button button-primary" id="exportBtn" type="button" disabled>Export filtered lines</button>
+              <button class="button button-ghost" id="reloadBtn" type="button" data-glyph="↑">Load new file</button>
+              <button class="button" id="copyBtn" type="button" disabled data-glyph="⧉">Copy pricing summary</button>
+              <button class="button button-primary" id="exportBtn" type="button" disabled data-glyph="↓">Export filtered lines</button>
             </div>
           </div>
           <div class="reference-workspace">
