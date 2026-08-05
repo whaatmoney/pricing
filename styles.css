@@ -95,7 +95,12 @@ button, select, input { transition: border-color var(--ease), box-shadow var(--e
 .source-summary { max-width: 480px; min-width: 0; display: flex; align-items: center; gap: 8px; color: var(--header-muted); font-size: 12px; text-align: right; }
 .source-summary span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 4px rgba(201, 163, 77, .12); }
-.theme-control select { min-height: 36px; padding: 6px 30px 6px 10px; color: #f8f7f2; background: transparent; border: 1px solid #4a5564; border-radius: var(--radius-sm); font-size: 12px; cursor: pointer; }
+.theme-control { display: inline-flex; align-items: center; gap: 4px; }
+.theme-chip { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 2px 8px 2px 3px; color: #cfd6df; background: transparent; border: 1px solid #4a5564; border-radius: 999px; cursor: pointer; font-size: 10px; font-weight: 650; letter-spacing: .02em; white-space: nowrap; }
+.theme-chip::before { content: "○"; display: inline-grid; place-items: center; min-width: 15px; height: 15px; padding: 0 3px; background: rgba(255,255,255,.08); color: #cfd6df; border-radius: 999px; font-size: 8px; font-weight: 800; }
+.theme-chip:hover { color: #f8f7f2; border-color: var(--gold); }
+.theme-chip.active { color: #f8f7f2; background: rgba(201,163,77,.16); border-color: var(--gold); }
+.theme-chip.active::before { content: "✓"; background: var(--gold); color: #1f2937; font-size: 9px; }
 .theme-control select option { color: var(--ink); background: var(--surface); }
 
 .eyebrow { margin: 0; color: var(--gold-hover); font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
@@ -378,7 +383,8 @@ td.number { font-variant-numeric: tabular-nums; font-weight: 750; text-align: ri
   .brand-copy span { display: none; }
   .header-actions { min-width: 0; gap: 6px; }
   .source-summary { max-width: 150px; }
-  .theme-control select { width: 82px; padding-inline: 8px 24px; }
+  .theme-chip span { display: none; }
+  .theme-chip { padding: 2px 3px; }
   .workspace-inner { padding-top: 10px; }
   .receipt-copy { align-items: flex-start; flex-direction: column; gap: 0; }
   .receipt-copy p:last-child { max-width: 100%; }

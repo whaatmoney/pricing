@@ -85,7 +85,6 @@ function bindEvents() {
   $("pricingAnalysis").addEventListener("toggle", () => {
     if ($("pricingAnalysis").open) requestAnimationFrame(renderChart);
   });
-  $("themeMode").addEventListener("change", (event) => setTheme(event.target.value, true));
   $("reviewEvidenceBtn").addEventListener("click", () => $("results").scrollIntoView({ behavior: "smooth", block: "start" }));
   document.querySelectorAll("[data-copy-stat]").forEach((button) => button.addEventListener("click", copyStat));
   window.addEventListener("resize", debounce(renderChart, 100));
@@ -94,10 +93,24 @@ function bindEvents() {
 function initializeTheme() {
   let saved = "system";
   try { saved = localStorage.getItem("qpc-price-theme") || "system"; } catch { /* Preference storage is optional. */ }
-  $("themeMode").value = ["system", "light", "dark"].includes(saved) ? saved : "system";
-  setTheme($("themeMode").value, false);
+  if (!["system", "light", "dark"].includes(saved)) saved = "system";
+  const control = $("themeControl");
+  [["system", "System"], ["light", "Light"], ["dark", "Dark"]].forEach(([mode, label]) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "theme-chip";
+    chip.dataset.mode = mode;
+    chip.setAttribute("role", "radio");
+    chip.title = `${label} theme`;
+    const text = document.createElement("span");
+    text.textContent = label;
+    chip.append(text);
+    chip.addEventListener("click", () => setTheme(mode, true));
+    control.append(chip);
+  });
+  setTheme(saved, false);
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-    if ($("themeMode").value === "system") setTheme("system", false);
+    if ($("themeControl").dataset.mode === "system") setTheme("system", false);
   });
 }
 
@@ -106,6 +119,13 @@ function setTheme(mode, persist) {
     ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
     : mode;
   document.documentElement.dataset.theme = resolved;
+  const control = $("themeControl");
+  control.dataset.mode = mode;
+  control.querySelectorAll(".theme-chip").forEach((chip) => {
+    const active = chip.dataset.mode === mode;
+    chip.classList.toggle("active", active);
+    chip.setAttribute("aria-checked", String(active));
+  });
   if (persist) {
     try { localStorage.setItem("qpc-price-theme", mode); } catch { /* Keep the selected theme for this visit. */ }
   }
