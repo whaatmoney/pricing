@@ -503,7 +503,7 @@ function renderQuality() {
     const card = document.createElement("div"); card.className = `quality-card ${tone}`;
     const strong = document.createElement("strong"); strong.textContent = value;
     const span = document.createElement("span"); span.textContent = label;
-    card.append(strong, span); return card;
+    card.append(span, strong); return card;
   }));
 
   const warnings = [];

@@ -150,12 +150,14 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: none;
 .receipt-copy p:last-child { min-width: 0; margin: 0; overflow: hidden; color: var(--muted-strong); font-size: 12px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .import-receipt > .button { min-height: 30px; padding-block: 3px; }
 .quality-details { grid-column: 1 / -1; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--success) 22%, transparent); }
-.quality-grid { display: grid; grid-template-columns: repeat(6, minmax(100px, 1fr)); gap: 8px; }
-.quality-card { min-height: 72px; padding: 12px; display: flex; flex-direction: column; justify-content: center; background: color-mix(in srgb, var(--surface) 76%, transparent); border: 1px solid var(--line); border-radius: var(--radius-sm); }
-.quality-card.good { border-color: color-mix(in srgb, var(--success) 30%, var(--line)); }
-.quality-card.warn { background: var(--warning-soft); border-color: color-mix(in srgb, var(--warning) 35%, var(--line)); }
-.quality-card strong { font-size: 20px; line-height: 1.15; font-variant-numeric: tabular-nums; }
-.quality-card span { margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.35; }
+.quality-grid { display: flex; flex-wrap: wrap; gap: 4px; }
+.quality-card { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 3px; background: var(--surface-subtle); border: 1px solid var(--line-strong); border-radius: 999px; }
+.quality-card span { flex: 0 0 auto; display: inline-grid; place-items: center; min-height: 15px; padding: 1px 6px; background: var(--gold-soft); color: var(--muted-strong); border-radius: 999px; font-size: 8.5px; font-weight: 800; letter-spacing: .055em; text-transform: uppercase; white-space: nowrap; line-height: 1.2; }
+.quality-card strong { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.quality-card.good { border-color: color-mix(in srgb, var(--success) 45%, var(--line-strong)); }
+.quality-card.good span { background: var(--success-soft); color: var(--success); }
+.quality-card.warn { border-color: color-mix(in srgb, var(--warning) 55%, var(--line-strong)); }
+.quality-card.warn span { background: var(--warning-soft); color: var(--warning); }
 .warning-list { margin: 12px 0 0; padding-left: 20px; color: var(--muted-strong); font-size: 13px; }
 .warning-list li + li { margin-top: 4px; }
 
@@ -385,7 +387,6 @@ td.number { font-variant-numeric: tabular-nums; font-weight: 750; text-align: ri
   .toolbar-primary .field:last-child { grid-column: 1 / -1; }
   .toolbar-secondary { grid-template-columns: 1fr 1fr; }
   .toolbar-secondary .field-wide { grid-column: 1 / -1; }
-  .quality-grid { grid-template-columns: repeat(3, 1fr); }
   .pricing-strip { grid-template-columns: 150px minmax(0, 1fr); }
   .pricing-strip > .button { grid-column: 1 / -1; justify-self: end; }
   .reference-workspace { max-height: none; grid-template-columns: 1fr; }
@@ -403,7 +404,6 @@ td.number { font-variant-numeric: tabular-nums; font-weight: 750; text-align: ri
   .workspace-inner { padding-top: 10px; }
   .receipt-copy { align-items: flex-start; flex-direction: column; gap: 0; }
   .receipt-copy p:last-child { max-width: 100%; }
-  .quality-grid { grid-template-columns: repeat(2, 1fr); }
   .toolbar-primary, .toolbar-secondary { grid-template-columns: 1fr; }
   .toolbar-primary .field:last-child, .toolbar-secondary .field-wide { grid-column: auto; }
   .filters-panel { grid-template-columns: 1fr; }
@@ -439,7 +439,6 @@ td.number { font-variant-numeric: tabular-nums; font-weight: 750; text-align: ri
   .import-receipt { grid-template-columns: auto minmax(0, 1fr); }
   .import-receipt > .button { grid-column: 1 / -1; justify-self: stretch; }
   .welcome-card { padding-inline: 22px; }
-  .quality-grid { grid-template-columns: 1fr; }
 }
 
 @media (hover: none), (pointer: coarse) {
