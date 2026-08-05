@@ -696,7 +696,8 @@ function vivaLookup(pn, wo) {
 
 function renderRecordLookup(record) {
   const targets = record.partNumbers.map((pn) => ({ label: pn, pn, wo: "" }));
-  if (record.wo) targets.push({ label: `WO ${record.wo}`, pn: "", wo: record.wo });
+  const woTerm = record.wo ? (record.wo.match(/\d+/)?.[0] || record.wo) : "";
+  if (woTerm) targets.push({ label: `WO ${woTerm}`, pn: "", wo: woTerm });
   if (!targets.length) return null;
   const section = document.createElement("section");
   section.className = "record-field record-lookup";
@@ -730,7 +731,8 @@ function renderRecordLookup(record) {
     const chip = document.createElement("button");
     chip.type = "button";
     chip.className = "lookup-chip";
-    chip.setAttribute("aria-label", `Search Viva Engage for ${target.label}`);
+    chip.title = `Searches Viva Engage for: ${target.pn || target.wo}`;
+    chip.setAttribute("aria-label", `Search Viva Engage for ${target.pn || target.wo}`);
     const text = document.createElement("span");
     text.textContent = target.label;
     const badge = document.createElement("span");
