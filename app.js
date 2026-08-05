@@ -4,10 +4,10 @@ const MAX_FILE_BYTES = 25 * 1024 * 1024;
 // Mirrors the Operations Center Find tool (whaatmoney.github.io/qpct) — same
 // URL scheme and localStorage keys, so lookups and group choice are shared.
 const VIVA_GROUPS = [
-  { key: "all", label: "All groups", groupId: null },
-  { key: "inspection", label: "Inspection", groupId: "14999188" },
-  { key: "ncr", label: "NCR", groupId: "14824878" },
-  { key: "packaging", label: "Packaging Inspection", groupId: "15414084" },
+  { key: "all", label: "All groups", short: "All", groupId: null },
+  { key: "inspection", label: "Inspection", short: "Inspection", groupId: "14999188" },
+  { key: "ncr", label: "NCR", short: "NCR", groupId: "14824878" },
+  { key: "packaging", label: "Packaging Inspection", short: "Packaging", groupId: "15414084" },
 ];
 const VIVA_SEARCH_BASE = "https://engage.cloud.microsoft/main/search";
 const VIVA_RECENT_KEY = "pnwiki:recent";
@@ -26,6 +26,7 @@ const state = {
   sort: { field: "date", direction: -1 },
   selectedRow: null,
   vivaExact: true,
+  vivaDept: null,
 };
 
 const columns = [
@@ -679,7 +680,7 @@ function vivaUrl(deptKey, pn, wo, exact) {
 }
 
 function vivaLookup(pn, wo) {
-  const deptKey = $("vivaGroup")?.value || "all";
+  const deptKey = state.vivaDept ?? vivaLastDept();
   const exact = state.vivaExact !== false;
   const url = vivaUrl(deptKey, pn, wo, exact);
   if (!url) return;
@@ -705,16 +706,6 @@ function renderRecordLookup(record) {
   head.className = "record-lookup-head";
   const heading = document.createElement("strong");
   heading.textContent = "Look up in Viva Engage";
-  const select = document.createElement("select");
-  select.id = "vivaGroup";
-  select.setAttribute("aria-label", "Viva Engage group scope");
-  VIVA_GROUPS.forEach((group) => select.append(new Option(group.label, group.key)));
-  select.value = vivaLastDept();
-  select.addEventListener("change", () => {
-    try { localStorage.setItem(VIVA_DEPT_KEY, select.value); } catch { /* Shared preference is optional. */ }
-  });
-  const controls = document.createElement("div");
-  controls.className = "lookup-controls";
   const exactLabel = document.createElement("label");
   exactLabel.className = "lookup-exact";
   exactLabel.title = "On: exact phrase. Off: looser match for spacing or format variants.";
@@ -723,8 +714,33 @@ function renderRecordLookup(record) {
   exactBox.checked = state.vivaExact;
   exactBox.addEventListener("change", () => { state.vivaExact = exactBox.checked; });
   exactLabel.append(exactBox, document.createTextNode("Exact"));
-  controls.append(exactLabel, select);
-  head.append(heading, controls);
+  head.append(heading, exactLabel);
+  const groups = document.createElement("div");
+  groups.className = "lookup-groups";
+  groups.setAttribute("role", "radiogroup");
+  groups.setAttribute("aria-label", "Viva Engage group scope");
+  const currentDept = state.vivaDept ?? vivaLastDept();
+  state.vivaDept = currentDept;
+  VIVA_GROUPS.forEach((group) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "group-chip";
+    chip.setAttribute("role", "radio");
+    chip.setAttribute("aria-checked", String(group.key === currentDept));
+    chip.classList.toggle("active", group.key === currentDept);
+    chip.title = group.label;
+    chip.textContent = group.short;
+    chip.addEventListener("click", () => {
+      state.vivaDept = group.key;
+      try { localStorage.setItem(VIVA_DEPT_KEY, group.key); } catch { /* Shared preference is optional. */ }
+      groups.querySelectorAll(".group-chip").forEach((candidate) => {
+        const selected = candidate === chip;
+        candidate.classList.toggle("active", selected);
+        candidate.setAttribute("aria-checked", String(selected));
+      });
+    });
+    groups.append(chip);
+  });
   const chips = document.createElement("div");
   chips.className = "lookup-chips";
   targets.forEach((target) => {
@@ -743,7 +759,7 @@ function renderRecordLookup(record) {
     chip.addEventListener("click", () => vivaLookup(target.pn, target.wo));
     chips.append(chip);
   });
-  section.append(head, chips);
+  section.append(head, groups, chips);
   return section;
 }
 
