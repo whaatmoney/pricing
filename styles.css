@@ -306,6 +306,12 @@ td.number { font-variant-numeric: tabular-nums; font-weight: 750; text-align: ri
 .group-chip:hover, .group-chip.active, .toggle-chip:hover, .toggle-chip.active { color: var(--ink); background: var(--gold-soft); border-color: var(--gold); }
 .group-chip.active::before, .toggle-chip.active::before { content: "✓"; background: var(--gold); color: var(--header); font-size: 9px; }
 .check-toggle { margin-top: 9px; }
+.date-chip { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; padding: 2px 8px 2px 3px; background: var(--surface-subtle); border: 1px solid var(--line-strong); border-radius: 999px; font-size: 11px; font-weight: 650; letter-spacing: .02em; }
+.date-chip::before { content: "○"; display: inline-grid; place-items: center; min-width: 15px; height: 15px; padding: 0 3px; background: var(--gold-soft); color: var(--muted-strong); border-radius: 999px; font-size: 8px; font-weight: 800; }
+.date-chip:focus-within { border-color: var(--gold-hover); box-shadow: var(--focus); }
+.date-chip.active { background: var(--gold-soft); border-color: var(--gold); }
+.date-chip.active::before { content: "✓"; background: var(--gold); color: var(--header); font-size: 9px; }
+.field .date-chip input { width: auto; min-height: 0; padding: 1px 2px; color: var(--ink); background: transparent; border: 0; outline: none; box-shadow: none; font-size: 11px; font-weight: 650; }
 .record-lookup-head { flex-wrap: wrap; }
 .selection-lookup { position: fixed; z-index: 70; background: var(--surface); box-shadow: var(--shadow-md); }
 .empty-cell { padding: 48px; color: var(--muted); text-align: center; }

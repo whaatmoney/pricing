@@ -305,6 +305,7 @@ function applyFilters() {
   syncCustomerTrigger();
   $("showZeroChip").classList.toggle("active", $("showZero").checked);
   $("showZeroChip").setAttribute("aria-checked", String($("showZero").checked));
+  ["dateFrom", "dateTo"].forEach((id) => $(`${id}Chip`).classList.toggle("active", Boolean($(id).value)));
   const tokens = $("q").value.trim().toLowerCase().match(/"[^"]+"|\S+/g)?.map((token) => token.replace(/^"|"$/g, "")) || [];
   const customer = $("customer").value;
   const pn = $("pn").value.trim().toLowerCase();
