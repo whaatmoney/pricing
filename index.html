@@ -79,7 +79,7 @@
 
           <div class="field search-field">
             <label for="q">Search anything</label>
-            <input id="q" type="search" placeholder="Description, P/N, customer, spec, router form, work order…" autocomplete="off">
+            <span class="input-chip" id="qChip"><input id="q" type="search" placeholder="Description, P/N, customer, spec, router form, work order…" autocomplete="off"></span>
           </div>
 
           <div class="toolbar toolbar-primary" aria-label="Primary price history filters">
@@ -91,7 +91,7 @@
                   <span class="combo-caret" aria-hidden="true">▾</span>
                 </button>
                 <div class="combo-pop" id="customerPop" hidden>
-                  <input id="customerSearch" type="search" placeholder="Filter customers…" autocomplete="off" aria-label="Filter customer list">
+                  <span class="input-chip" id="customerSearchChip"><input id="customerSearch" type="search" placeholder="Filter customers…" autocomplete="off" aria-label="Filter customer list"></span>
                   <ul class="combo-list" id="customerList" role="listbox" aria-label="Customer"></ul>
                 </div>
                 <input type="hidden" id="customer" value="">
@@ -99,11 +99,11 @@
             </div>
             <div class="field">
               <label for="pn">Customer P/N</label>
-              <input id="pn" type="search" placeholder="Contains part number" autocomplete="off">
+              <span class="input-chip" id="pnChip"><input id="pn" type="search" placeholder="Contains part number" autocomplete="off"></span>
             </div>
             <div class="field">
               <label for="process">Process or specification</label>
-              <input id="process" type="search" placeholder="AMS2700, CC1246…" autocomplete="off">
+              <span class="input-chip" id="processChip"><input id="process" type="search" placeholder="AMS2700, CC1246…" autocomplete="off"></span>
             </div>
           </div>
 

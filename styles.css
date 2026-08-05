@@ -312,6 +312,13 @@ td.number { font-variant-numeric: tabular-nums; font-weight: 750; text-align: ri
 .date-chip.active { background: var(--gold-soft); border-color: var(--gold); }
 .date-chip.active::before { content: "✓"; background: var(--gold); color: var(--header); font-size: 9px; }
 .field .date-chip input { width: auto; min-height: 0; padding: 1px 2px; color: var(--ink); background: transparent; border: 0; outline: none; box-shadow: none; font-size: 11px; font-weight: 650; }
+.input-chip { display: flex; align-items: center; gap: 6px; min-height: 36px; padding: 2px 10px 2px 5px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 999px; }
+.input-chip::before { content: "○"; flex: 0 0 auto; display: inline-grid; place-items: center; min-width: 15px; height: 15px; padding: 0 3px; background: var(--gold-soft); color: var(--muted-strong); border-radius: 999px; font-size: 8px; font-weight: 800; }
+.input-chip:focus-within { border-color: var(--gold-hover); box-shadow: var(--focus); }
+.input-chip.active { border-color: var(--gold); }
+.input-chip.active::before { content: "✓"; background: var(--gold); color: var(--header); font-size: 9px; }
+.input-chip input, .field .input-chip input, .combo-pop .input-chip input { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 0; margin: 0; padding: 4px 2px; color: var(--ink); background: transparent; border: 0; outline: none; box-shadow: none; }
+.combo-pop .input-chip { min-height: 32px; margin-bottom: 6px; }
 .record-lookup-head { flex-wrap: wrap; }
 .selection-lookup { position: fixed; z-index: 70; background: var(--surface); box-shadow: var(--shadow-md); }
 .empty-cell { padding: 48px; color: var(--muted); text-align: center; }

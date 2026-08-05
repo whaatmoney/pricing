@@ -62,6 +62,7 @@ function bindEvents() {
   $("customer").addEventListener("change", applyFilters);
   $("customerBtn").addEventListener("click", () => toggleCustomerPop());
   $("customerSearch").addEventListener("input", debounce(() => renderCustomerList($("customerSearch").value), 60));
+  $("customerSearch").addEventListener("input", () => $("customerSearchChip").classList.toggle("active", Boolean($("customerSearch").value.trim())));
   $("customerList").addEventListener("click", (event) => {
     const option = event.target.closest("[data-value]");
     if (option) selectCustomer(option.dataset.value);
@@ -266,6 +267,7 @@ function toggleCustomerPop(open = $("customerPop").hidden) {
   $("customerBtn").setAttribute("aria-expanded", String(open));
   if (open) {
     $("customerSearch").value = "";
+    $("customerSearchChip").classList.remove("active");
     renderCustomerList("");
     $("customerSearch").focus();
   }
@@ -306,6 +308,7 @@ function applyFilters() {
   $("showZeroChip").classList.toggle("active", $("showZero").checked);
   $("showZeroChip").setAttribute("aria-checked", String($("showZero").checked));
   ["dateFrom", "dateTo"].forEach((id) => $(`${id}Chip`).classList.toggle("active", Boolean($(id).value)));
+  ["q", "pn", "process"].forEach((id) => $(`${id}Chip`).classList.toggle("active", Boolean($(id).value.trim())));
   const tokens = $("q").value.trim().toLowerCase().match(/"[^"]+"|\S+/g)?.map((token) => token.replace(/^"|"$/g, "")) || [];
   const customer = $("customer").value;
   const pn = $("pn").value.trim().toLowerCase();
