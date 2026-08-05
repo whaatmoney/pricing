@@ -1,6 +1,17 @@
 import { buildDataset, calculateStats, csvCell, findHeaderRow, parseRouterSteps } from "./core.js";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
+// Mirrors the Operations Center Find tool (whaatmoney.github.io/qpct) — same
+// URL scheme and localStorage keys, so lookups and group choice are shared.
+const VIVA_GROUPS = [
+  { key: "all", label: "All groups", groupId: null },
+  { key: "inspection", label: "Inspection", groupId: "14999188" },
+  { key: "ncr", label: "NCR", groupId: "14824878" },
+  { key: "packaging", label: "Packaging Inspection", groupId: "15414084" },
+];
+const VIVA_SEARCH_BASE = "https://engage.cloud.microsoft/main/search";
+const VIVA_RECENT_KEY = "pnwiki:recent";
+const VIVA_DEPT_KEY = "pnwiki:lastDept";
 const PAGE_SIZE = 500;
 const $ = (id) => document.getElementById(id);
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -627,7 +638,8 @@ function renderRecordPane(record) {
     ["Special Instructions", record.special],
     ["End User", record.endUser],
   ];
-  $("recordPaneFields").replaceChildren(...fields.map(([label, value]) => {
+  const lookup = renderRecordLookup(record);
+  const sections = fields.map(([label, value]) => {
     const section = document.createElement("section");
     section.className = "record-field";
     const heading = document.createElement("strong"); heading.textContent = label;
@@ -641,7 +653,82 @@ function renderRecordPane(record) {
       section.append(content);
     }
     return section;
-  }));
+  });
+  $("recordPaneFields").replaceChildren(...(lookup ? [lookup, ...sections] : sections));
+}
+
+function vivaGroup(key) {
+  return VIVA_GROUPS.find((group) => group.key === key) || VIVA_GROUPS[0];
+}
+
+function vivaLastDept() {
+  let saved = null;
+  try { saved = localStorage.getItem(VIVA_DEPT_KEY); } catch { /* Shared preference is optional. */ }
+  return vivaGroup(saved || "all").key;
+}
+
+function vivaUrl(deptKey, pn, wo) {
+  const terms = [pn, wo].map((term) => (term || "").trim()).filter(Boolean).map((term) => `"${term}"`);
+  if (!terms.length) return null;
+  let url = `${VIVA_SEARCH_BASE}?search=${encodeURIComponent(terms.join(" "))}&type=threads`;
+  const group = vivaGroup(deptKey);
+  if (group.groupId) url += `&groupScope=${encodeURIComponent(btoa(JSON.stringify({ _type: "Group", id: group.groupId })))}`;
+  return url;
+}
+
+function vivaLookup(pn, wo) {
+  const deptKey = $("vivaGroup")?.value || "all";
+  const url = vivaUrl(deptKey, pn, wo);
+  if (!url) return;
+  try {
+    localStorage.setItem(VIVA_DEPT_KEY, deptKey);
+    const stored = JSON.parse(localStorage.getItem(VIVA_RECENT_KEY) || "[]");
+    const recent = (Array.isArray(stored) ? stored : [])
+      .filter((entry) => !(entry.pn === (pn || "") && entry.wo === (wo || "") && entry.dept === deptKey));
+    recent.unshift({ pn: pn || "", wo: wo || "", dept: deptKey, exact: true });
+    localStorage.setItem(VIVA_RECENT_KEY, JSON.stringify(recent.slice(0, 10)));
+  } catch { /* Shared recents are optional. */ }
+  window.open(url, "_blank", "noopener");
+}
+
+function renderRecordLookup(record) {
+  const targets = record.partNumbers.map((pn) => ({ label: pn, pn, wo: "" }));
+  if (record.wo) targets.push({ label: `WO ${record.wo}`, pn: "", wo: record.wo });
+  if (!targets.length) return null;
+  const section = document.createElement("section");
+  section.className = "record-field record-lookup";
+  const head = document.createElement("div");
+  head.className = "record-lookup-head";
+  const heading = document.createElement("strong");
+  heading.textContent = "Look up in Viva Engage";
+  const select = document.createElement("select");
+  select.id = "vivaGroup";
+  select.setAttribute("aria-label", "Viva Engage group scope");
+  VIVA_GROUPS.forEach((group) => select.append(new Option(group.label, group.key)));
+  select.value = vivaLastDept();
+  select.addEventListener("change", () => {
+    try { localStorage.setItem(VIVA_DEPT_KEY, select.value); } catch { /* Shared preference is optional. */ }
+  });
+  head.append(heading, select);
+  const chips = document.createElement("div");
+  chips.className = "lookup-chips";
+  targets.forEach((target) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "lookup-chip";
+    chip.setAttribute("aria-label", `Search Viva Engage for ${target.label}`);
+    const text = document.createElement("span");
+    text.textContent = target.label;
+    const badge = document.createElement("span");
+    badge.className = "chip-go";
+    badge.setAttribute("aria-hidden", "true");
+    badge.textContent = "↗";
+    chip.append(text, badge);
+    chip.addEventListener("click", () => vivaLookup(target.pn, target.wo));
+    chips.append(chip);
+  });
+  section.append(head, chips);
+  return section;
 }
 
 function renderRouterChips(value, compact) {

@@ -289,6 +289,14 @@ td.number { font-variant-numeric: tabular-nums; font-weight: 750; text-align: ri
 .router-chip small { display: inline-grid; place-items: center; min-width: 15px; height: 15px; padding: 0 3px; background: var(--gold-soft); color: var(--muted-strong); border-radius: 999px; font-size: 8.5px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .router-arrow { color: var(--muted); font-size: 10px; }
 .record-field .router-steps { margin-top: 2px; }
+.record-lookup { display: grid; gap: 7px; }
+.record-lookup-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.record-lookup-head select { min-height: 26px; padding: 2px 6px; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); font-size: 11px; cursor: pointer; }
+.lookup-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.lookup-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 3px 2px 8px; color: var(--ink); background: var(--surface-subtle); border: 1px solid var(--line-strong); border-radius: 999px; cursor: pointer; font-size: 10px; font-weight: 650; letter-spacing: .02em; white-space: nowrap; }
+.lookup-chip:hover { border-color: var(--gold); background: var(--gold-soft); }
+.lookup-chip .chip-go { display: inline-grid; place-items: center; min-width: 15px; height: 15px; padding: 0 3px; background: var(--gold-soft); color: var(--muted-strong); border-radius: 999px; font-size: 9px; font-weight: 800; }
+.lookup-chip:hover .chip-go { background: var(--gold); color: var(--header); }
 .empty-cell { padding: 48px; color: var(--muted); text-align: center; }
 .record-pane { min-width: 0; max-height: 66vh; overflow: auto; background: var(--surface-subtle); border-left: 1px solid var(--line-strong); }
 .record-pane-heading { position: sticky; top: 0; z-index: 2; min-height: 56px; padding: 9px 12px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; background: color-mix(in srgb, var(--surface-subtle) 96%, transparent); border-bottom: 1px solid var(--line); backdrop-filter: blur(8px); }
