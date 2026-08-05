@@ -25,6 +25,7 @@ const state = {
   sheetName: "",
   sort: { field: "date", direction: -1 },
   selectedRow: null,
+  vivaExact: true,
 };
 
 const columns = [
@@ -38,6 +39,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initializeTheme();
   buildTableHead();
   bindEvents();
+  initSelectionLookup();
   updateActionStates();
 });
 
@@ -667,8 +669,8 @@ function vivaLastDept() {
   return vivaGroup(saved || "all").key;
 }
 
-function vivaUrl(deptKey, pn, wo) {
-  const terms = [pn, wo].map((term) => (term || "").trim()).filter(Boolean).map((term) => `"${term}"`);
+function vivaUrl(deptKey, pn, wo, exact) {
+  const terms = [pn, wo].map((term) => (term || "").trim()).filter(Boolean).map((term) => exact ? `"${term}"` : term);
   if (!terms.length) return null;
   let url = `${VIVA_SEARCH_BASE}?search=${encodeURIComponent(terms.join(" "))}&type=threads`;
   const group = vivaGroup(deptKey);
@@ -678,14 +680,15 @@ function vivaUrl(deptKey, pn, wo) {
 
 function vivaLookup(pn, wo) {
   const deptKey = $("vivaGroup")?.value || "all";
-  const url = vivaUrl(deptKey, pn, wo);
+  const exact = state.vivaExact !== false;
+  const url = vivaUrl(deptKey, pn, wo, exact);
   if (!url) return;
   try {
     localStorage.setItem(VIVA_DEPT_KEY, deptKey);
     const stored = JSON.parse(localStorage.getItem(VIVA_RECENT_KEY) || "[]");
     const recent = (Array.isArray(stored) ? stored : [])
       .filter((entry) => !(entry.pn === (pn || "") && entry.wo === (wo || "") && entry.dept === deptKey));
-    recent.unshift({ pn: pn || "", wo: wo || "", dept: deptKey, exact: true });
+    recent.unshift({ pn: pn || "", wo: wo || "", dept: deptKey, exact });
     localStorage.setItem(VIVA_RECENT_KEY, JSON.stringify(recent.slice(0, 10)));
   } catch { /* Shared recents are optional. */ }
   window.open(url, "_blank", "noopener");
@@ -709,7 +712,18 @@ function renderRecordLookup(record) {
   select.addEventListener("change", () => {
     try { localStorage.setItem(VIVA_DEPT_KEY, select.value); } catch { /* Shared preference is optional. */ }
   });
-  head.append(heading, select);
+  const controls = document.createElement("div");
+  controls.className = "lookup-controls";
+  const exactLabel = document.createElement("label");
+  exactLabel.className = "lookup-exact";
+  exactLabel.title = "On: exact phrase. Off: looser match for spacing or format variants.";
+  const exactBox = document.createElement("input");
+  exactBox.type = "checkbox";
+  exactBox.checked = state.vivaExact;
+  exactBox.addEventListener("change", () => { state.vivaExact = exactBox.checked; });
+  exactLabel.append(exactBox, document.createTextNode("Exact"));
+  controls.append(exactLabel, select);
+  head.append(heading, controls);
   const chips = document.createElement("div");
   chips.className = "lookup-chips";
   targets.forEach((target) => {
@@ -729,6 +743,42 @@ function renderRecordLookup(record) {
   });
   section.append(head, chips);
   return section;
+}
+
+function initSelectionLookup() {
+  const popup = document.createElement("button");
+  popup.type = "button";
+  popup.className = "lookup-chip selection-lookup";
+  popup.title = "Search Viva Engage for the selected text";
+  popup.hidden = true;
+  const text = document.createElement("span");
+  const badge = document.createElement("span");
+  badge.className = "chip-go";
+  badge.setAttribute("aria-hidden", "true");
+  badge.textContent = "↗";
+  popup.append(text, badge);
+  document.body.append(popup);
+  const hide = () => { popup.hidden = true; };
+  popup.addEventListener("mousedown", (event) => event.preventDefault());
+  popup.addEventListener("click", () => {
+    if (popup.dataset.term) vivaLookup(popup.dataset.term, "");
+    window.getSelection()?.removeAllRanges();
+    hide();
+  });
+  document.addEventListener("selectionchange", debounce(() => {
+    const selection = window.getSelection();
+    const term = selection?.toString().replace(/\s+/g, " ").trim() || "";
+    const inPane = selection?.rangeCount && $("recordPaneFields").contains(selection.anchorNode);
+    if (!term || !inPane || term.length > 80) return hide();
+    const rect = selection.getRangeAt(0).getBoundingClientRect();
+    popup.dataset.term = term;
+    text.textContent = term.length > 30 ? `${term.slice(0, 30)}…` : term;
+    popup.hidden = false;
+    popup.style.left = `${Math.max(8, Math.min(window.innerWidth - popup.offsetWidth - 8, rect.left + rect.width / 2 - popup.offsetWidth / 2))}px`;
+    popup.style.top = `${Math.max(8, rect.top - popup.offsetHeight - 8)}px`;
+  }, 120));
+  window.addEventListener("scroll", hide, true);
+  window.addEventListener("resize", hide);
 }
 
 function renderRouterChips(value, compact) {

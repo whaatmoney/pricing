@@ -297,6 +297,11 @@ td.number { font-variant-numeric: tabular-nums; font-weight: 750; text-align: ri
 .lookup-chip:hover { border-color: var(--gold); background: var(--gold-soft); }
 .lookup-chip .chip-go { display: inline-grid; place-items: center; min-width: 15px; height: 15px; padding: 0 3px; background: var(--gold-soft); color: var(--muted-strong); border-radius: 999px; font-size: 9px; font-weight: 800; }
 .lookup-chip:hover .chip-go { background: var(--gold); color: var(--header); }
+.lookup-controls { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+.lookup-exact { display: inline-flex; align-items: center; gap: 4px; color: var(--muted-strong); font-size: 10px; font-weight: 650; cursor: pointer; white-space: nowrap; }
+.lookup-exact input { width: 12px; height: 12px; margin: 0; accent-color: var(--gold); cursor: pointer; }
+.record-lookup-head { flex-wrap: wrap; }
+.selection-lookup { position: fixed; z-index: 70; background: var(--surface); box-shadow: var(--shadow-md); }
 .empty-cell { padding: 48px; color: var(--muted); text-align: center; }
 .record-pane { min-width: 0; max-height: 66vh; overflow: auto; background: var(--surface-subtle); border-left: 1px solid var(--line-strong); }
 .record-pane-heading { position: sticky; top: 0; z-index: 2; min-height: 56px; padding: 9px 12px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; background: color-mix(in srgb, var(--surface-subtle) 96%, transparent); border-bottom: 1px solid var(--line); backdrop-filter: blur(8px); }
