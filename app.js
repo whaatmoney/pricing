@@ -1,4 +1,4 @@
-import { buildDataset, calculateStats, csvCell, findHeaderRow, parseRouterSteps, percentile } from "./core.js";
+import { buildDataset, calculateStats, csvCell, findHeaderRow, parseRouterSteps, percentile } from "./core.js?v=20260916a";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 // Mirrors the Operations Center Find tool (whaatmoney.github.io/qpct) — same
