@@ -1,4 +1,4 @@
-import { buildDataset, calculateStats, csvCell, findHeaderRow, parseRouterSteps } from "./core.js";
+import { buildDataset, calculateStats, csvCell, findHeaderRow, parseRouterSteps, percentile } from "./core.js";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 // Mirrors the Operations Center Find tool (whaatmoney.github.io/qpct) — same
@@ -27,6 +27,7 @@ const state = {
   selectedRow: null,
   vivaExact: true,
   vivaDept: null,
+  chart: null,
 };
 
 const columns = [
@@ -41,6 +42,7 @@ document.addEventListener("DOMContentLoaded", () => {
   buildTableHead();
   bindEvents();
   initSelectionLookup();
+  bindChartHover();
   updateActionStates();
 });
 
@@ -523,52 +525,196 @@ function renderChart() {
   if (!canvas || !state.filtered.length) return clearCanvas(canvas);
   const points = state.filtered.filter((record) => record.price > 0 && record.date).sort((a, b) => a.date.localeCompare(b.date));
   if (!points.length) return clearCanvas(canvas);
-  const sampled = sampleEvenly(points, 800);
+  const sampled = sampleEvenly(points, 900);
   const prices = sampled.map((record) => record.price).sort((a, b) => a - b);
   const cap = prices[Math.floor((prices.length - 1) * 0.95)] || prices.at(-1);
-  const start = new Date(`${sampled[0].date}T12:00:00`).getTime();
-  const end = new Date(`${sampled.at(-1).date}T12:00:00`).getTime();
+  const ticks = niceTicks(0, cap, 4);
+  const yMax = ticks.at(-1) || cap || 1;
+  const start = dayMs(sampled[0].date);
+  const end = dayMs(sampled.at(-1).date);
+  const span = Math.max(1, end - start);
   const dpr = window.devicePixelRatio || 1;
   const width = canvas.clientWidth || 760;
-  const height = 160;
+  const height = 220;
   canvas.width = Math.round(width * dpr); canvas.height = Math.round(height * dpr);
   const ctx = canvas.getContext("2d"); ctx.scale(dpr, dpr);
-  const pad = { left: 54, right: 14, top: 10, bottom: 28 };
-  const x = (date) => pad.left + ((new Date(`${date}T12:00:00`).getTime() - start) / Math.max(1, end - start)) * (width - pad.left - pad.right);
-  const y = (price) => pad.top + (1 - Math.min(price, cap) / Math.max(1, cap)) * (height - pad.top - pad.bottom);
+  const pad = { left: 58, right: 16, top: 12, bottom: 30 };
+  const plotW = width - pad.left - pad.right;
+  const plotH = height - pad.top - pad.bottom;
+  const x = (ms) => pad.left + ((ms - start) / span) * plotW;
+  const y = (price) => pad.top + (1 - Math.min(price, yMax) / yMax) * plotH;
   ctx.clearRect(0, 0, width, height);
+
   const styles = getComputedStyle(document.documentElement);
-  const lineColor = styles.getPropertyValue("--line").trim();
-  const mutedColor = styles.getPropertyValue("--muted").trim();
-  const infoColor = styles.getPropertyValue("--info").trim();
-  const goldColor = styles.getPropertyValue("--gold").trim();
-  ctx.strokeStyle = lineColor; ctx.fillStyle = mutedColor; ctx.font = "12px system-ui";
-  for (let i = 0; i <= 3; i += 1) {
-    const py = pad.top + i * (height - pad.top - pad.bottom) / 3;
+  const css = (name) => styles.getPropertyValue(name).trim();
+  const surface = css("--surface");
+  const hairline = css("--hairline");
+  const muted = css("--muted");
+  const accent = css("--accent");
+  const gold = css("--gold");
+  const goldWash = css("--gold-wash");
+  ctx.font = `11px ${css("--mono") || "ui-monospace, monospace"}`;
+  ctx.textBaseline = "middle";
+
+  // Gridlines and y ticks: hairline, recessive, clean numbers.
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = hairline;
+  ctx.fillStyle = muted;
+  ctx.textAlign = "right";
+  ticks.forEach((tick) => {
+    const py = Math.round(y(tick)) + .5;
     ctx.beginPath(); ctx.moveTo(pad.left, py); ctx.lineTo(width - pad.right, py); ctx.stroke();
-    ctx.fillText(formatCompactMoney(cap * (1 - i / 3)), 4, py + 4);
+    ctx.fillText(formatCompactMoney(tick), pad.left - 10, py);
+  });
+
+  // X ticks: one per year boundary when the span allows, else start/end.
+  ctx.textAlign = "center";
+  ctx.fillStyle = muted;
+  const firstYear = new Date(start).getFullYear();
+  const lastYear = new Date(end).getFullYear();
+  const yearTicks = [];
+  for (let year = firstYear + 1; year <= lastYear; year += 1) {
+    const ms = new Date(year, 0, 1).getTime();
+    if (ms > start && ms < end) yearTicks.push({ ms, label: String(year) });
   }
-  ctx.fillStyle = infoColor;
-  ctx.globalAlpha = .48;
-  sampled.forEach((record) => { ctx.beginPath(); ctx.arc(x(record.date), y(record.price), 2.4, 0, Math.PI * 2); ctx.fill(); });
+  const minGap = 64;
+  const shown = yearTicks.filter((tick, index, all) => index === 0 || x(tick.ms) - x(all[index - 1].ms) >= minGap);
+  if (shown.length >= 2 && x(shown[0].ms) - pad.left > minGap && width - pad.right - x(shown.at(-1).ms) > minGap) {
+    shown.forEach((tick) => {
+      const px = Math.round(x(tick.ms)) + .5;
+      ctx.strokeStyle = hairline;
+      ctx.beginPath(); ctx.moveTo(px, pad.top); ctx.lineTo(px, pad.top + plotH); ctx.stroke();
+      ctx.fillText(tick.label, px, height - 12);
+    });
+  } else {
+    ctx.textAlign = "left"; ctx.fillText(formatDate(sampled[0].date), pad.left, height - 12);
+    ctx.textAlign = "right"; ctx.fillText(formatDate(sampled.at(-1).date), width - pad.right, height - 12);
+  }
+
+  // Rolling quartile band and median line, binned by period.
+  const bins = binByPeriod(sampled, start, end);
+  const solid = bins.filter((bin) => bin.count >= 3);
+  if (solid.length >= 3) {
+    ctx.fillStyle = goldWash;
+    ctx.beginPath();
+    solid.forEach((bin, index) => { const px = x(bin.center); const py = y(bin.p75); index ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+    [...solid].reverse().forEach((bin) => ctx.lineTo(x(bin.center), y(bin.p25)));
+    ctx.closePath(); ctx.fill();
+  }
+
+  // Dots: series hue, 2px surface ring so overlaps stay legible.
+  const plotted = sampled.map((record) => ({ record, px: x(dayMs(record.date)), py: y(record.price), capped: record.price > yMax }));
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = surface;
+  ctx.fillStyle = accent;
+  ctx.globalAlpha = plotted.length > 300 ? .55 : .8;
+  plotted.forEach((point) => { ctx.beginPath(); ctx.arc(point.px, point.py, 3, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); });
   ctx.globalAlpha = 1;
-  const stats = calculateStats(state.filtered);
-  if (stats.median != null) {
-    ctx.strokeStyle = goldColor; ctx.lineWidth = 2; ctx.setLineDash([6, 5]);
-    ctx.beginPath(); ctx.moveTo(pad.left, y(stats.median)); ctx.lineTo(width - pad.right, y(stats.median)); ctx.stroke(); ctx.setLineDash([]);
+
+  if (solid.length >= 3) {
+    ctx.strokeStyle = gold; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.lineCap = "round";
+    ctx.beginPath();
+    solid.forEach((bin, index) => { const px = x(bin.center); const py = y(bin.median); index ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+    ctx.stroke();
+    const last = solid.at(-1);
+    ctx.fillStyle = gold; ctx.strokeStyle = surface; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x(last.center), y(last.median), 4.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
   }
-  ctx.fillStyle = mutedColor; ctx.fillText(formatDate(sampled[0].date), pad.left, height - 10);
-  const endLabel = formatDate(sampled.at(-1).date); const endWidth = ctx.measureText(endLabel).width;
-  ctx.fillText(endLabel, width - pad.right - endWidth, height - 10);
-  $("chartNote").textContent = prices.at(-1) > cap ? `Scale capped at 95th percentile (${formatMoney(cap)})` : "Median shown in gold";
+
+  const stats = calculateStats(state.filtered);
+  const overCap = plotted.filter((point) => point.capped).length;
+  state.chart = { plotted, pad, width, height, bins: solid, x, y };
+  const periodLabel = bins.length ? bins[0].period : "quarter";
+  $("chartNote").textContent = [
+    solid.length >= 3 ? `Rolling median and middle 50% are computed per ${periodLabel}.` : "Not enough dated lines for a rolling trend; each dot is one priced line.",
+    overCap ? `${whole.format(overCap)} line${overCap === 1 ? "" : "s"} above ${formatMoney(yMax)} sit at the top edge so the scale stays readable.` : "",
+    plotted.length < points.length ? `Showing an even sample of ${whole.format(plotted.length)} of ${whole.format(points.length)} lines.` : "",
+  ].filter(Boolean).join(" ");
   $("chartDescription").textContent = `${whole.format(points.length)} priced records from ${formatDate(sampled[0].date)} through ${formatDate(sampled.at(-1).date)}; median ${formatMoney(stats.median)}.`;
+}
+
+function binByPeriod(records, start, end) {
+  const days = (end - start) / 86400000;
+  const period = days > 365 * 3 ? "quarter" : days > 240 ? "month" : "week";
+  const key = (date) => {
+    const [year, month, day] = date.split("-").map(Number);
+    if (period === "quarter") return `${year}-Q${Math.floor((month - 1) / 3)}`;
+    if (period === "month") return `${year}-${month}`;
+    const time = Date.UTC(year, month - 1, day);
+    return `w${Math.floor(time / (7 * 86400000))}`;
+  };
+  const groups = new Map();
+  records.forEach((record) => {
+    const k = key(record.date);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(record);
+  });
+  return [...groups.values()].map((group) => {
+    const prices = group.map((record) => record.price).sort((a, b) => a - b);
+    const times = group.map((record) => dayMs(record.date));
+    return {
+      period,
+      count: group.length,
+      center: times.reduce((sum, value) => sum + value, 0) / times.length,
+      median: percentile(prices, .5),
+      p25: percentile(prices, .25),
+      p75: percentile(prices, .75),
+    };
+  }).sort((a, b) => a.center - b.center);
+}
+
+function niceTicks(min, max, count) {
+  if (!(max > min)) return [0, 1];
+  const rawStep = (max - min) / count;
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+  const residual = rawStep / magnitude;
+  const step = (residual >= 5 ? 10 : residual >= 2 ? 5 : residual >= 1 ? 2 : 1) * magnitude;
+  const ticks = [];
+  for (let value = Math.floor(min / step) * step; value < max + step; value += step) ticks.push(Math.round(value * 100) / 100);
+  return ticks;
+}
+
+function dayMs(date) { return new Date(`${date}T12:00:00`).getTime(); }
+
+function bindChartHover() {
+  const canvas = $("priceChart");
+  const tooltip = $("chartTooltip");
+  const hide = () => { tooltip.hidden = true; };
+  canvas.addEventListener("pointerleave", hide);
+  canvas.addEventListener("pointermove", (event) => {
+    const chart = state.chart;
+    if (!chart) return hide();
+    const rect = canvas.getBoundingClientRect();
+    const mx = event.clientX - rect.left;
+    const my = event.clientY - rect.top;
+    let best = null;
+    for (const point of chart.plotted) {
+      const dx = point.px - mx; const dy = point.py - my;
+      const distance = dx * dx + dy * dy;
+      if (!best || distance < best.distance) best = { point, distance };
+    }
+    if (!best || best.distance > 18 * 18) return hide();
+    const { record } = best.point;
+    tooltip.replaceChildren();
+    const price = document.createElement("strong"); price.textContent = formatMoney(record.price);
+    const who = document.createElement("span"); who.textContent = `${record.customer || "Unknown customer"} · ${formatDate(record.date)}`;
+    const woText = !record.wo ? "" : /^wo/i.test(record.wo) ? record.wo : `WO ${record.wo}`;
+    const what = document.createElement("span"); what.textContent = [woText, record.partNumbers[0] || record.part || ""].filter(Boolean).join(" · ");
+    tooltip.append(price, who);
+    if (what.textContent) tooltip.append(what);
+    tooltip.hidden = false;
+    const left = Math.min(Math.max(best.point.px, chart.pad.left + 70), chart.width - 90);
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${best.point.py}px`;
+  });
 }
 
 function clearCanvas(canvas) {
   if (!canvas) return;
   canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+  state.chart = null;
   $("chartDescription").textContent = "No dated price records match the current filters.";
-  $("chartNote").textContent = "No dated prices";
+  $("chartNote").textContent = "No dated prices in this scope.";
 }
 
 function buildTableHead() {
@@ -657,7 +803,8 @@ function renderRecordPane(record) {
     $("recordPaneFields").replaceChildren();
     return;
   }
-  $("recordPaneTitle").textContent = `${record.customer || "Unknown customer"} · WO ${record.wo || "—"}`;
+  const woLabel = !record.wo ? "WO —" : /^wo/i.test(record.wo) ? record.wo : `WO ${record.wo}`;
+  $("recordPaneTitle").textContent = `${record.customer || "Unknown customer"} · ${woLabel}`;
   $("recordPaneMeta").textContent = `Source row ${whole.format(record.sourceRow)}`;
   const fields = [
     ["Received", formatDate(record.date)],

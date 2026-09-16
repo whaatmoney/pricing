@@ -7,6 +7,9 @@
   <meta name="theme-color" content="#1f2937">
   <title>QPC Part Memory</title>
   <link rel="icon" href="./qpc-badge.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body class="no-data">
@@ -14,7 +17,7 @@
 
   <header class="app-header">
     <a class="brand" href="./" aria-label="QPC Part Memory home">
-      <img src="./qpc-badge.svg" width="40" height="40" alt="QPC">
+      <img src="./qpc-badge.svg" width="36" height="36" alt="QPC">
       <span class="brand-copy">
         <span>Quality Precision Cleaning</span>
         <strong>Part Memory</strong>
@@ -35,17 +38,22 @@
         <div class="welcome-intro">
           <p class="eyebrow">Institutional memory</p>
           <h1 id="welcomeTitle">Everything QPC remembers about a part.</h1>
-          <p>What we charged, how the line was written, how the job ran, and a straight line to the conversation — all without losing the exact source record.</p>
+          <p class="welcome-lede">What we charged, how the line was written, how the job ran, and a straight line to the conversation — without losing the exact source record.</p>
+          <ul class="welcome-points">
+            <li><span class="point-mark" aria-hidden="true">01</span><span><strong>Search every field.</strong> Description, customer P/N, spec, router form, work order.</span></li>
+            <li><span class="point-mark" aria-hidden="true">02</span><span><strong>Read the exact source line.</strong> Every field and line break, as it was written.</span></li>
+            <li><span class="point-mark" aria-hidden="true">03</span><span><strong>Price with context.</strong> Median, quartiles, latest, and the trend behind them.</span></li>
+          </ul>
         </div>
 
         <div class="welcome-card" id="welcomeCard">
           <div class="upload-mark" aria-hidden="true">
-            <span>↑</span>
+            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m6 10 6-6 6 6"/><path d="M4 20h16"/></svg>
           </div>
           <p class="eyebrow">Start here</p>
-          <h2>Load the memory</h2>
-          <p>Drop the line-items export here or choose an Excel or CSV file.</p>
-          <button class="button button-primary button-large" id="welcomeLoadBtn" type="button" data-glyph="↑">Choose Excel or CSV</button>
+          <h2>Load the line-items export</h2>
+          <p>Drop the Excel or CSV export anywhere on this card, or choose it below.</p>
+          <button class="button button-primary button-large" id="welcomeLoadBtn" type="button">Choose Excel or CSV</button>
           <p class="file-help">Up to 25 MB <span aria-hidden="true">·</span> processed locally <span aria-hidden="true">·</span> nothing leaves this browser</p>
         </div>
       </div>
@@ -55,7 +63,7 @@
       <div class="workspace-inner">
         <section class="import-receipt" aria-labelledby="qualityTitle">
           <div class="receipt-icon" aria-hidden="true">
-            <span>✓</span>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></svg>
           </div>
           <div class="receipt-copy">
             <p class="eyebrow">Verify</p>
@@ -71,15 +79,13 @@
 
         <section class="filters-panel" aria-labelledby="filtersTitle">
           <div class="filters-heading">
-            <div>
-              <p class="eyebrow">Define scope</p>
-              <h2 id="filtersTitle">Find previous line items</h2>
-            </div>
+            <p class="eyebrow">Define scope</p>
+            <h2 id="filtersTitle">Find previous line items</h2>
           </div>
 
           <div class="field search-field">
             <label for="q">Search anything</label>
-            <span class="input-chip" id="qChip"><input id="q" type="search" placeholder="Description, P/N, customer, spec, router form, work order…" autocomplete="off"></span>
+            <span class="input-chip input-search" id="qChip"><input id="q" type="search" placeholder="Description, P/N, customer, spec, router form, work order…" autocomplete="off"></span>
           </div>
 
           <div class="toolbar toolbar-primary" aria-label="Primary price history filters">
@@ -88,10 +94,10 @@
               <div class="combo" id="customerCombo">
                 <button type="button" class="combo-trigger" id="customerBtn" aria-haspopup="listbox" aria-expanded="false" aria-controls="customerList">
                   <span class="combo-value" id="customerLabel">All customers</span>
-                  <span class="combo-caret" aria-hidden="true">▾</span>
+                  <span class="combo-caret" aria-hidden="true"></span>
                 </button>
                 <div class="combo-pop" id="customerPop" hidden>
-                  <span class="input-chip" id="customerSearchChip"><input id="customerSearch" type="search" placeholder="Filter customers…" autocomplete="off" aria-label="Filter customer list"></span>
+                  <span class="input-chip input-search" id="customerSearchChip"><input id="customerSearch" type="search" placeholder="Filter customers…" autocomplete="off" aria-label="Filter customer list"></span>
                   <ul class="combo-list" id="customerList" role="listbox" aria-label="Customer"></ul>
                 </div>
                 <input type="hidden" id="customer" value="">
@@ -137,9 +143,12 @@
                 <label for="dateTo">Received to</label>
                 <span class="date-chip" id="dateToChip"><input id="dateTo" type="date"></span>
               </div>
+              <div class="field field-toggle">
+                <label for="showZeroChip">Price gaps</label>
+                <button type="button" class="toggle-chip check-toggle active" id="showZeroChip" role="switch" aria-checked="true"><span>Include $0 and blank-price lines</span></button>
+                <input id="showZero" type="checkbox" checked hidden>
+              </div>
             </div>
-            <button type="button" class="toggle-chip check-toggle active" id="showZeroChip" role="switch" aria-checked="true"><span>Include $0 and blank-price lines</span></button>
-            <input id="showZero" type="checkbox" checked hidden>
           </div>
         </section>
 
@@ -150,11 +159,11 @@
             <span class="scope-inline-count" id="contextCount">— lines</span>
           </div>
           <div class="pricing-strip-stats" aria-live="polite">
-            <div><span>Median</span><strong id="contextMedian">—</strong></div>
-            <div><span>P25–P75</span><strong id="pRange">—</strong></div>
-            <div id="pLatestWrap"><span id="pLatestLabel">Latest</span><strong id="pLatest">—</strong></div>
-            <div><span>Latest record</span><strong id="pRecency">—</strong></div>
-            <div><span>Priced lines</span><strong id="pPriced">—</strong></div>
+            <div class="stat-tile stat-tile-lead"><span>Median</span><strong id="contextMedian">—</strong></div>
+            <div class="stat-tile"><span>P25–P75</span><strong id="pRange">—</strong></div>
+            <div class="stat-tile" id="pLatestWrap"><span id="pLatestLabel">Latest</span><strong id="pLatest">—</strong></div>
+            <div class="stat-tile"><span>Latest record</span><strong id="pRecency">—</strong></div>
+            <div class="stat-tile"><span>Priced lines</span><strong id="pPriced">—</strong></div>
           </div>
           <button class="button button-ghost button-compact" id="pricingJumpBtn" type="button" data-glyph="↓">View trend</button>
         </section>
@@ -192,55 +201,63 @@
 
         <details class="pricing-analysis" id="pricingAnalysis">
           <summary>
-            <span><small>Full pricing history</small><strong>Recommendation and trend</strong></span>
+            <span class="summary-caret" aria-hidden="true"></span>
+            <span class="summary-title"><small>Full pricing history</small><strong>Recommendation and trend</strong></span>
             <span class="pricing-summary" id="pricingSummary">—</span>
           </summary>
           <div class="pricing-analysis-body">
-        <section class="decision-panel" id="decisionPanel" aria-labelledby="recommendationTitle">
-          <article class="recommendation-main">
-            <div class="section-heading">
-              <div>
-                <p class="eyebrow">Decide</p>
-                <h2 id="recommendationTitle">Pricing reference range</h2>
+            <section class="decision-panel" id="decisionPanel" aria-labelledby="recommendationTitle">
+              <article class="recommendation-main">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Decide</p>
+                    <h2 id="recommendationTitle">Pricing reference range</h2>
+                  </div>
+                  <span class="confidence" id="confidenceBadge" title="Unfiltered — all customers and parts.">No sample</span>
+                </div>
+                <div class="recommendation-price" id="recommendationRange">—</div>
+                <p class="recommendation-copy" id="recommendationCopy">Define a customer, part number, or process to build a comparable set.</p>
+                <dl class="stat-rows" aria-label="Filtered price statistics">
+                  <div class="stat-row"><dt>Median</dt><dd id="sMedian">—</dd><button class="stat-copy" type="button" data-copy-stat="sMedian" aria-label="Copy median" title="Copy median">⧉</button></div>
+                  <div class="stat-row"><dt>P25–P75</dt><dd id="sRange">—</dd><button class="stat-copy" type="button" data-copy-stat="sRange" aria-label="Copy percentile range" title="Copy percentile range">⧉</button></div>
+                  <div class="stat-row"><dt>Latest price</dt><dd id="sLatest">—</dd><button class="stat-copy" type="button" data-copy-stat="sLatest" aria-label="Copy latest price" title="Copy latest price">⧉</button></div>
+                  <div class="stat-row"><dt>Latest record</dt><dd id="sRecency">—</dd><button class="stat-copy" type="button" data-copy-stat="sRecency" aria-label="Copy latest record date" title="Copy latest record date">⧉</button></div>
+                  <div class="stat-row"><dt>Priced sample</dt><dd id="sPriced">—</dd><button class="stat-copy" type="button" data-copy-stat="sPriced" aria-label="Copy priced sample" title="Copy priced sample">⧉</button></div>
+                  <div class="stat-row"><dt>Matching lines</dt><dd id="sMatches">—</dd><button class="stat-copy" type="button" data-copy-stat="sMatches" aria-label="Copy matching line count" title="Copy matching line count">⧉</button></div>
+                </dl>
+                <button class="text-button" id="reviewEvidenceBtn" type="button">Review contributing lines <span aria-hidden="true">↑</span></button>
+              </article>
+
+              <aside class="scope-panel" aria-labelledby="scopeTitle">
+                <div>
+                  <p class="eyebrow">Current scope</p>
+                  <h3 id="scopeTitle">What produced this range</h3>
+                </div>
+                <p class="scope-summary" id="scopeSummary">All customers · No P/N · No spec</p>
+                <strong class="scope-count" id="scopeCount">— lines</strong>
+                <p class="scope-help">Change any filter above and the range updates immediately.</p>
+              </aside>
+            </section>
+
+            <article class="chart-panel" aria-labelledby="chartTitle">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Understand</p>
+                  <h2 id="chartTitle">Price trend for the current scope</h2>
+                </div>
+                <div class="chart-legend" aria-hidden="true">
+                  <span class="legend-dot">Priced line</span>
+                  <span class="legend-line">Rolling median</span>
+                  <span class="legend-band">Middle 50%</span>
+                </div>
               </div>
-              <span class="confidence" id="confidenceBadge" title="Unfiltered — all customers and parts.">No sample</span>
-            </div>
-            <div class="recommendation-price" id="recommendationRange">—</div>
-            <p class="recommendation-copy" id="recommendationCopy">Define a customer, part number, or process to build a comparable set.</p>
-            <div class="stat-rows" aria-label="Filtered price statistics">
-              <div class="stat-row"><span>Median</span><strong id="sMedian">—</strong><button class="stat-copy" type="button" data-copy-stat="sMedian" aria-label="Copy median" title="Copy median">⧉</button></div>
-              <div class="stat-row"><span>P25–P75</span><strong id="sRange">—</strong><button class="stat-copy" type="button" data-copy-stat="sRange" aria-label="Copy percentile range" title="Copy percentile range">⧉</button></div>
-              <div class="stat-row"><span>Latest price</span><strong id="sLatest">—</strong><button class="stat-copy" type="button" data-copy-stat="sLatest" aria-label="Copy latest price" title="Copy latest price">⧉</button></div>
-              <div class="stat-row"><span>Latest record</span><strong id="sRecency">—</strong><button class="stat-copy" type="button" data-copy-stat="sRecency" aria-label="Copy latest record date" title="Copy latest record date">⧉</button></div>
-              <div class="stat-row"><span>Priced sample</span><strong id="sPriced">—</strong><button class="stat-copy" type="button" data-copy-stat="sPriced" aria-label="Copy priced sample" title="Copy priced sample">⧉</button></div>
-              <div class="stat-row"><span>Matching lines</span><strong id="sMatches">—</strong><button class="stat-copy" type="button" data-copy-stat="sMatches" aria-label="Copy matching line count" title="Copy matching line count">⧉</button></div>
-            </div>
-            <button class="text-button" id="reviewEvidenceBtn" type="button">Review contributing lines <span aria-hidden="true">↓</span></button>
-          </article>
-
-          <aside class="scope-panel" aria-labelledby="scopeTitle">
-            <div>
-              <p class="eyebrow">Current scope</p>
-              <h3 id="scopeTitle">What produced this range</h3>
-            </div>
-            <p class="scope-summary" id="scopeSummary">All customers · No P/N · No spec</p>
-            <strong class="scope-count" id="scopeCount">— lines</strong>
-            <p class="scope-help">Change any filter above and the range updates immediately.</p>
-          </aside>
-        </section>
-
-        <article class="chart-panel" aria-labelledby="chartTitle">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Understand</p>
-              <h2 id="chartTitle">Price trend for the current scope</h2>
-            </div>
-            <span class="chart-note" id="chartNote"></span>
-          </div>
-          <canvas id="priceChart" width="1000" height="170" role="img" aria-describedby="chartDescription"></canvas>
-          <p class="sr-only" id="chartDescription"></p>
-        </article>
-
+              <div class="chart-stage">
+                <canvas id="priceChart" width="1000" height="220" role="img" aria-describedby="chartDescription"></canvas>
+                <div class="chart-tooltip" id="chartTooltip" hidden></div>
+              </div>
+              <p class="chart-note" id="chartNote"></p>
+              <p class="sr-only" id="chartDescription"></p>
+            </article>
           </div>
         </details>
       </div>
