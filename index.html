@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css?v=20260916a">
+  <link rel="stylesheet" href="./styles.css?v=20260916b">
 </head>
 <body class="no-data">
   <a class="skip-link" href="#main">Skip to part memory</a>
@@ -53,7 +53,7 @@
           <p class="eyebrow">Start here</p>
           <h2>Load the line-items export</h2>
           <p>Drop the Excel or CSV export anywhere on this card, or choose it below.</p>
-          <button class="button button-primary button-large" id="welcomeLoadBtn" type="button">Choose Excel or CSV</button>
+          <button class="button button-primary button-large" id="welcomeLoadBtn" type="button" data-icon="upload">Choose Excel or CSV</button>
           <p class="file-help">Up to 25 MB <span aria-hidden="true">·</span> processed locally <span aria-hidden="true">·</span> nothing leaves this browser</p>
         </div>
       </div>
@@ -66,11 +66,11 @@
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></svg>
           </div>
           <div class="receipt-copy">
-            <p class="eyebrow">Verify</p>
+            <p class="eyebrow"><span class="step" aria-hidden="true">01</span>Verify</p>
             <h2 id="qualityTitle">Import verified</h2>
             <p id="importReceiptSummary">The workbook passed required column checks.</p>
           </div>
-          <button class="button button-ghost button-compact" id="qualityToggle" type="button" aria-expanded="false" aria-controls="qualityDetails" data-glyph="▾">View details</button>
+          <button class="button button-ghost button-compact" id="qualityToggle" type="button" aria-expanded="false" aria-controls="qualityDetails" data-icon="chevron-down">View details</button>
           <div class="quality-details" id="qualityDetails" hidden>
             <div class="quality-grid" id="qualityGrid"></div>
             <ul class="warning-list" id="warningList"></ul>
@@ -79,7 +79,7 @@
 
         <section class="filters-panel" aria-labelledby="filtersTitle">
           <div class="filters-heading">
-            <p class="eyebrow">Define scope</p>
+            <p class="eyebrow"><span class="step" aria-hidden="true">02</span>Define scope</p>
             <h2 id="filtersTitle">Find previous line items</h2>
           </div>
 
@@ -114,8 +114,8 @@
           </div>
 
           <div class="filter-heading-actions">
-            <button class="button button-ghost button-compact" id="advancedFiltersToggle" type="button" aria-expanded="false" aria-controls="advancedFilters" data-glyph="+">More filters</button>
-            <button class="button button-ghost button-compact" id="clearBtn" type="button" disabled data-glyph="×">Clear</button>
+            <button class="button button-ghost button-compact" id="advancedFiltersToggle" type="button" aria-expanded="false" aria-controls="advancedFilters" data-icon="plus">More filters</button>
+            <button class="button button-ghost button-compact" id="clearBtn" type="button" disabled data-icon="close">Clear</button>
           </div>
 
           <div class="filter-feedback" aria-live="polite">
@@ -154,7 +154,7 @@
 
         <section class="pricing-strip" id="contextBar" aria-labelledby="pricingStripTitle">
           <div class="pricing-strip-title">
-            <p class="eyebrow">Pricing history</p>
+            <p class="eyebrow"><span class="step" aria-hidden="true">03</span>Pricing history</p>
             <h2 id="pricingStripTitle"><span id="contextScope">All line items</span></h2>
             <span class="scope-inline-count" id="contextCount">— lines</span>
           </div>
@@ -165,30 +165,30 @@
             <div class="stat-tile"><span>Latest record</span><strong id="pRecency">—</strong></div>
             <div class="stat-tile"><span>Priced lines</span><strong id="pPriced">—</strong></div>
           </div>
-          <button class="button button-ghost button-compact" id="pricingJumpBtn" type="button" data-glyph="↓">View trend</button>
+          <button class="button button-ghost button-compact" id="pricingJumpBtn" type="button" data-icon="trend">View trend</button>
         </section>
 
         <section class="results" id="results" aria-labelledby="resultsTitle">
           <div class="section-heading results-heading">
             <div>
-              <p class="eyebrow">Reference</p>
+              <p class="eyebrow"><span class="step" aria-hidden="true">04</span>Reference</p>
               <h2 id="resultsTitle">Complete line item history</h2>
-              <span id="resultCount"></span>
-              <span class="table-assurance">Select a row to inspect every exact source field and line break</span>
+              <p class="results-meta"><span id="resultCount"></span><span class="table-assurance">Select a row to inspect every exact source field and line break</span></p>
             </div>
             <div class="action-buttons">
-              <button class="button button-ghost" id="reloadBtn" type="button" data-glyph="↑">Load new file</button>
-              <button class="button" id="copyBtn" type="button" disabled data-glyph="⧉">Copy pricing summary</button>
-              <button class="button button-primary" id="exportBtn" type="button" disabled data-glyph="↓">Export filtered lines</button>
+              <button class="button button-ghost" id="reloadBtn" type="button" data-icon="upload">Load new file</button>
+              <button class="button" id="copyBtn" type="button" disabled data-icon="copy">Copy pricing summary</button>
+              <button class="button button-primary" id="exportBtn" type="button" disabled data-icon="download">Export filtered lines</button>
             </div>
           </div>
-          <div class="reference-workspace">
-            <div class="table-wrap">
+          <div class="reference-workspace" id="referenceWorkspace">
+            <div class="table-wrap" id="tableWrap">
               <table class="history-table">
                 <thead><tr id="tableHead"></tr></thead>
                 <tbody id="tableBody"></tbody>
               </table>
             </div>
+            <div class="resize-handle resize-handle-x" data-resize="paneWidth" role="separator" aria-orientation="vertical" aria-label="Resize the source record pane. Drag, or use arrow keys. Double-click to reset." tabindex="0" title="Drag to resize · double-click to reset"><span aria-hidden="true"></span></div>
             <aside class="record-pane" id="recordPane" aria-labelledby="recordPaneTitle">
               <div class="record-pane-heading">
                 <div><p class="eyebrow">Exact source record</p><h3 id="recordPaneTitle">Select a line item</h3></div>
@@ -197,12 +197,13 @@
               <div class="record-pane-fields" id="recordPaneFields"></div>
             </aside>
           </div>
+          <div class="resize-handle resize-handle-y" data-resize="workspaceHeight" role="separator" aria-orientation="horizontal" aria-label="Resize the history table height. Drag, or use arrow keys. Double-click to reset." tabindex="0" title="Drag to resize · double-click to reset"><span aria-hidden="true"></span></div>
         </section>
 
         <details class="pricing-analysis" id="pricingAnalysis">
           <summary>
             <span class="summary-caret" aria-hidden="true"></span>
-            <span class="summary-title"><small>Full pricing history</small><strong>Recommendation and trend</strong></span>
+            <span class="summary-title"><small><span class="step" aria-hidden="true">05</span>Full pricing history</small><strong>Recommendation and trend</strong></span>
             <span class="pricing-summary" id="pricingSummary">—</span>
           </summary>
           <div class="pricing-analysis-body">
@@ -218,12 +219,12 @@
                 <div class="recommendation-price" id="recommendationRange">—</div>
                 <p class="recommendation-copy" id="recommendationCopy">Define a customer, part number, or process to build a comparable set.</p>
                 <dl class="stat-rows" aria-label="Filtered price statistics">
-                  <div class="stat-row"><dt>Median</dt><dd id="sMedian">—</dd><button class="stat-copy" type="button" data-copy-stat="sMedian" aria-label="Copy median" title="Copy median">⧉</button></div>
-                  <div class="stat-row"><dt>P25–P75</dt><dd id="sRange">—</dd><button class="stat-copy" type="button" data-copy-stat="sRange" aria-label="Copy percentile range" title="Copy percentile range">⧉</button></div>
-                  <div class="stat-row"><dt>Latest price</dt><dd id="sLatest">—</dd><button class="stat-copy" type="button" data-copy-stat="sLatest" aria-label="Copy latest price" title="Copy latest price">⧉</button></div>
-                  <div class="stat-row"><dt>Latest record</dt><dd id="sRecency">—</dd><button class="stat-copy" type="button" data-copy-stat="sRecency" aria-label="Copy latest record date" title="Copy latest record date">⧉</button></div>
-                  <div class="stat-row"><dt>Priced sample</dt><dd id="sPriced">—</dd><button class="stat-copy" type="button" data-copy-stat="sPriced" aria-label="Copy priced sample" title="Copy priced sample">⧉</button></div>
-                  <div class="stat-row"><dt>Matching lines</dt><dd id="sMatches">—</dd><button class="stat-copy" type="button" data-copy-stat="sMatches" aria-label="Copy matching line count" title="Copy matching line count">⧉</button></div>
+                  <div class="stat-row"><dt>Median</dt><dd id="sMedian">—</dd><button class="stat-copy" type="button" data-copy-stat="sMedian" data-icon="copy" aria-label="Copy median" title="Copy median"></button></div>
+                  <div class="stat-row"><dt>P25–P75</dt><dd id="sRange">—</dd><button class="stat-copy" type="button" data-copy-stat="sRange" data-icon="copy" aria-label="Copy percentile range" title="Copy percentile range"></button></div>
+                  <div class="stat-row"><dt>Latest price</dt><dd id="sLatest">—</dd><button class="stat-copy" type="button" data-copy-stat="sLatest" data-icon="copy" aria-label="Copy latest price" title="Copy latest price"></button></div>
+                  <div class="stat-row"><dt>Latest record</dt><dd id="sRecency">—</dd><button class="stat-copy" type="button" data-copy-stat="sRecency" data-icon="copy" aria-label="Copy latest record date" title="Copy latest record date"></button></div>
+                  <div class="stat-row"><dt>Priced sample</dt><dd id="sPriced">—</dd><button class="stat-copy" type="button" data-copy-stat="sPriced" data-icon="copy" aria-label="Copy priced sample" title="Copy priced sample"></button></div>
+                  <div class="stat-row"><dt>Matching lines</dt><dd id="sMatches">—</dd><button class="stat-copy" type="button" data-copy-stat="sMatches" data-icon="copy" aria-label="Copy matching line count" title="Copy matching line count"></button></div>
                 </dl>
                 <button class="text-button" id="reviewEvidenceBtn" type="button">Review contributing lines <span aria-hidden="true">↑</span></button>
               </article>
@@ -251,10 +252,11 @@
                   <span class="legend-band">Middle 50%</span>
                 </div>
               </div>
-              <div class="chart-stage">
-                <canvas id="priceChart" width="1000" height="220" role="img" aria-describedby="chartDescription"></canvas>
+              <div class="chart-stage" id="chartStage">
+                <canvas id="priceChart" width="1000" height="240" role="img" aria-describedby="chartDescription"></canvas>
                 <div class="chart-tooltip" id="chartTooltip" hidden></div>
               </div>
+              <div class="resize-handle resize-handle-y" data-resize="chartHeight" role="separator" aria-orientation="horizontal" aria-label="Resize the chart height. Drag, or use arrow keys. Double-click to reset." tabindex="0" title="Drag to resize · double-click to reset"><span aria-hidden="true"></span></div>
               <p class="chart-note" id="chartNote"></p>
               <p class="sr-only" id="chartDescription"></p>
             </article>
@@ -269,6 +271,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="./vendor/xlsx.full.min.js"></script>
-  <script type="module" src="./app.js?v=20260916a"></script>
+  <script type="module" src="./app.js?v=20260916b"></script>
 </body>
 </html>

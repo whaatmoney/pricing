@@ -28,6 +28,7 @@ const state = {
   vivaExact: true,
   vivaDept: null,
   chart: null,
+  layout: { paneWidth: null, workspaceHeight: null, chartHeight: null },
 };
 
 const columns = [
@@ -43,6 +44,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindEvents();
   initSelectionLookup();
   bindChartHover();
+  initResizers();
   updateActionStates();
 });
 
@@ -535,7 +537,7 @@ function renderChart() {
   const span = Math.max(1, end - start);
   const dpr = window.devicePixelRatio || 1;
   const width = canvas.clientWidth || 760;
-  const height = 220;
+  const height = canvas.clientHeight || 240;
   canvas.width = Math.round(width * dpr); canvas.height = Math.round(height * dpr);
   const ctx = canvas.getContext("2d"); ctx.scale(dpr, dpr);
   const pad = { left: 58, right: 16, top: 12, bottom: 30 };
@@ -709,6 +711,91 @@ function bindChartHover() {
   });
 }
 
+const LAYOUT_KEY = "qpc-pm-layout";
+const LAYOUT_LIMITS = {
+  paneWidth: { min: 300, max: 640, step: 16, target: () => $("referenceWorkspace"), prop: "--pane-w", defaultValue: 380 },
+  workspaceHeight: { min: 320, max: 1400, step: 24, target: () => $("referenceWorkspace"), prop: "--workspace-h", defaultValue: null },
+  chartHeight: { min: 180, max: 560, step: 20, target: () => $("chartStage"), prop: "--chart-h", defaultValue: 240 },
+};
+
+function initResizers() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}");
+    Object.keys(LAYOUT_LIMITS).forEach((key) => { if (Number.isFinite(saved[key])) state.layout[key] = saved[key]; });
+  } catch { /* Layout memory is optional. */ }
+  Object.keys(LAYOUT_LIMITS).forEach((key) => applyLayout(key, state.layout[key], false));
+  document.querySelectorAll("[data-resize]").forEach((handle) => bindResizer(handle));
+}
+
+function applyLayout(key, value, persist) {
+  const spec = LAYOUT_LIMITS[key];
+  const target = spec.target();
+  if (!target) return;
+  if (value == null) {
+    target.style.removeProperty(spec.prop);
+    state.layout[key] = null;
+  } else {
+    const clamped = Math.round(Math.min(spec.max, Math.max(spec.min, value)));
+    target.style.setProperty(spec.prop, `${clamped}px`);
+    state.layout[key] = clamped;
+  }
+  if (key === "chartHeight" && state.records.length) requestAnimationFrame(renderChart);
+  if (persist) {
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(state.layout)); } catch { /* Layout memory is optional. */ }
+  }
+}
+
+function currentLayoutValue(key) {
+  const spec = LAYOUT_LIMITS[key];
+  if (state.layout[key] != null) return state.layout[key];
+  if (key === "paneWidth") return $("recordPane").getBoundingClientRect().width || spec.defaultValue;
+  if (key === "workspaceHeight") return $("tableWrap").getBoundingClientRect().height || 480;
+  if (key === "chartHeight") return $("priceChart").getBoundingClientRect().height || spec.defaultValue;
+  return spec.defaultValue;
+}
+
+function bindResizer(handle) {
+  const key = handle.dataset.resize;
+  const spec = LAYOUT_LIMITS[key];
+  const horizontal = handle.getAttribute("aria-orientation") === "vertical";
+  let origin = null;
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    origin = { x: event.clientX, y: event.clientY, value: currentLayoutValue(key) };
+    try { handle.setPointerCapture(event.pointerId); } catch { /* Synthetic or stale pointer; drag still works via bubbling. */ }
+    handle.classList.add("is-dragging");
+    document.body.classList.add(horizontal ? "is-resizing-x" : "is-resizing-y");
+    event.preventDefault();
+  });
+  handle.addEventListener("pointermove", (event) => {
+    if (!origin) return;
+    // The record pane sits to the right of its handle, so dragging left widens it.
+    const delta = horizontal ? origin.x - event.clientX : event.clientY - origin.y;
+    applyLayout(key, origin.value + delta, false);
+  });
+  const finish = () => {
+    if (!origin) return;
+    origin = null;
+    handle.classList.remove("is-dragging");
+    document.body.classList.remove("is-resizing-x", "is-resizing-y");
+    applyLayout(key, state.layout[key], true);
+    if (key !== "chartHeight" && state.records.length) requestAnimationFrame(renderChart);
+  };
+  handle.addEventListener("pointerup", finish);
+  handle.addEventListener("pointercancel", finish);
+  handle.addEventListener("lostpointercapture", finish);
+  handle.addEventListener("dblclick", () => applyLayout(key, spec.defaultValue, true));
+  handle.addEventListener("keydown", (event) => {
+    const grow = horizontal ? ["ArrowLeft"] : ["ArrowDown"];
+    const shrink = horizontal ? ["ArrowRight"] : ["ArrowUp"];
+    if (grow.includes(event.key)) applyLayout(key, currentLayoutValue(key) + spec.step, true);
+    else if (shrink.includes(event.key)) applyLayout(key, currentLayoutValue(key) - spec.step, true);
+    else if (event.key === "Home" || event.key === "Enter") applyLayout(key, spec.defaultValue, true);
+    else return;
+    event.preventDefault();
+  });
+}
+
 function clearCanvas(canvas) {
   if (!canvas) return;
   canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
@@ -758,7 +845,7 @@ function renderTable() {
     columns.forEach(([field]) => {
       const td = document.createElement("td");
       let value = record[field];
-      if (field === "price") { td.className = "number"; value = formatMoney(value); }
+      if (field === "price") { td.className = record.price > 0 ? "number" : "number is-zero"; value = formatMoney(value); }
       if (field === "date") value = formatDate(value);
       if (field === "router") {
         td.className = "source-text";
@@ -1022,14 +1109,30 @@ function clearFilters() {
 }
 
 async function copyStat(event) {
-  const target = $(event.currentTarget.dataset.copyStat);
-  const label = event.currentTarget.getAttribute("aria-label").replace(/^Copy /, "");
+  const button = event.currentTarget;
+  const target = $(button.dataset.copyStat);
   try {
     await navigator.clipboard.writeText(target.textContent);
-    showToast(`${label[0].toUpperCase()}${label.slice(1)} copied.`, "success");
+    confirmAction(button, "check");
   } catch {
     showToast("Clipboard access was unavailable.", "error");
   }
+}
+
+// Swap a button into a brief confirmed state, then restore its original icon and label.
+function confirmAction(button, icon, label) {
+  if (button.dataset.confirming) return;
+  const previous = { icon: button.dataset.icon, text: button.textContent };
+  button.dataset.confirming = "true";
+  button.classList.add("is-confirmed");
+  if (icon) button.dataset.icon = icon;
+  if (label) button.textContent = label;
+  setTimeout(() => {
+    button.classList.remove("is-confirmed");
+    if (previous.icon) button.dataset.icon = previous.icon;
+    if (label) button.textContent = previous.text;
+    delete button.dataset.confirming;
+  }, 1400);
 }
 
 async function copySummary() {
@@ -1045,7 +1148,7 @@ async function copySummary() {
     `P25–P75: ${formatMoney(stats.p25)}–${formatMoney(stats.p75)}`,
     `Latest: ${formatMoney(stats.latest)} (${stats.latestDate || "no date"})`,
   ].join("\n");
-  try { await navigator.clipboard.writeText(text); showToast("Summary copied.", "success"); }
+  try { await navigator.clipboard.writeText(text); confirmAction($("copyBtn"), "check", "Copied"); }
   catch { showToast("Clipboard access was unavailable.", "error"); }
 }
 
@@ -1056,6 +1159,7 @@ function exportCsv() {
   const csv = [header, ...rows].map((row) => row.map((cell, index) => csvCell(cell, index === 5)).join(",")).join("\r\n");
   const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
   const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `qpc_part_memory_${new Date().toISOString().slice(0, 10)}.csv`; link.click();
+  confirmAction($("exportBtn"), "check", "Exported");
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
@@ -1064,7 +1168,7 @@ function toggleQuality() {
   $("qualityDetails").hidden = !hidden;
   $("qualityToggle").setAttribute("aria-expanded", String(hidden));
   $("qualityToggle").textContent = hidden ? "Hide details" : "View details";
-  $("qualityToggle").dataset.glyph = hidden ? "▴" : "▾";
+  $("qualityToggle").dataset.icon = hidden ? "chevron-up" : "chevron-down";
 }
 
 function toggleAdvancedFilters() {
@@ -1072,7 +1176,7 @@ function toggleAdvancedFilters() {
   $("advancedFilters").hidden = !hidden;
   $("advancedFiltersToggle").setAttribute("aria-expanded", String(hidden));
   $("advancedFiltersToggle").textContent = hidden ? "Fewer filters" : "More filters";
-  $("advancedFiltersToggle").dataset.glyph = hidden ? "−" : "+";
+  $("advancedFiltersToggle").dataset.icon = hidden ? "minus" : "plus";
   if (hidden) $("q").focus();
 }
 
