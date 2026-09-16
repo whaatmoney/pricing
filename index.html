@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css?v=20260916b">
+  <link rel="stylesheet" href="./styles.css?v=20260916c">
 </head>
 <body class="no-data">
   <a class="skip-link" href="#main">Skip to part memory</a>
@@ -173,12 +173,31 @@
             <div>
               <p class="eyebrow"><span class="step" aria-hidden="true">04</span>Reference</p>
               <h2 id="resultsTitle">Complete line item history</h2>
-              <p class="results-meta"><span id="resultCount"></span><span class="table-assurance">Select a row to inspect every exact source field and line break</span></p>
             </div>
             <div class="action-buttons">
               <button class="button button-ghost" id="reloadBtn" type="button" data-icon="upload">Load new file</button>
               <button class="button" id="copyBtn" type="button" disabled data-icon="copy">Copy pricing summary</button>
               <button class="button button-primary" id="exportBtn" type="button" disabled data-icon="download">Export filtered lines</button>
+            </div>
+          </div>
+          <div class="table-tools">
+            <p class="results-meta"><span id="resultCount"></span><span class="table-assurance">Select a row to inspect every exact source field and line break</span></p>
+            <div class="table-tools-controls">
+              <div class="segmented" id="densityControl" role="radiogroup" aria-label="Row density">
+                <button type="button" data-density="comfortable" role="radio" aria-checked="true">Comfortable</button>
+                <button type="button" data-density="compact" role="radio" aria-checked="false">Compact</button>
+              </div>
+              <div class="menu" id="columnsMenu">
+                <button class="button button-ghost button-compact" id="columnsBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="columnsPop" data-icon="columns"><span>Columns</span></button>
+                <div class="menu-pop" id="columnsPop" role="menu" aria-label="Show or hide columns" hidden>
+                  <p class="menu-title">Show columns</p>
+                  <div class="menu-list" id="columnsList"></div>
+                  <div class="menu-foot">
+                    <span>Drag a header edge to resize · double-click to reset</span>
+                    <button class="button button-ghost button-compact" id="columnsReset" type="button">Reset columns</button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
           <div class="reference-workspace" id="referenceWorkspace">
@@ -226,7 +245,7 @@
                   <div class="stat-row"><dt>Priced sample</dt><dd id="sPriced">—</dd><button class="stat-copy" type="button" data-copy-stat="sPriced" data-icon="copy" aria-label="Copy priced sample" title="Copy priced sample"></button></div>
                   <div class="stat-row"><dt>Matching lines</dt><dd id="sMatches">—</dd><button class="stat-copy" type="button" data-copy-stat="sMatches" data-icon="copy" aria-label="Copy matching line count" title="Copy matching line count"></button></div>
                 </dl>
-                <button class="text-button" id="reviewEvidenceBtn" type="button">Review contributing lines <span aria-hidden="true">↑</span></button>
+                <button class="text-button" id="reviewEvidenceBtn" type="button">Review contributing lines</button>
               </article>
 
               <aside class="scope-panel" aria-labelledby="scopeTitle">
@@ -271,6 +290,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="./vendor/xlsx.full.min.js"></script>
-  <script type="module" src="./app.js?v=20260916b"></script>
+  <script type="module" src="./app.js?v=20260916c"></script>
 </body>
 </html>

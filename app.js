@@ -17,6 +17,13 @@ const $ = (id) => document.getElementById(id);
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const whole = new Intl.NumberFormat("en-US");
 
+const COLUMN_DEFAULTS = { date: 112, wo: 96, customer: 168, part: 84, description: 300, price: 108, process: 220, router: 300, special: 240, endUser: 130 };
+const COLUMN_LIMITS = { min: 64, max: 900 };
+const MIN_VISIBLE_COLUMNS = 2;
+const COLUMNS_KEY = "qpc-pm-columns";
+const DENSITY_KEY = "qpc-pm-density";
+const WIDE_LAYOUT = "(min-width: 1600px)";
+
 const state = {
   records: [],
   filtered: [],
@@ -29,6 +36,8 @@ const state = {
   vivaDept: null,
   chart: null,
   layout: { paneWidth: null, workspaceHeight: null, chartHeight: null },
+  columns: { widths: { ...COLUMN_DEFAULTS }, hidden: [] },
+  density: "comfortable",
 };
 
 const columns = [
@@ -40,6 +49,9 @@ const columns = [
 
 document.addEventListener("DOMContentLoaded", () => {
   initializeTheme();
+  initColumns();
+  initDensity();
+  initWideLayout();
   buildTableHead();
   bindEvents();
   initSelectionLookup();
@@ -86,6 +98,7 @@ function bindEvents() {
   $("copyBtn").addEventListener("click", copySummary);
   $("exportBtn").addEventListener("click", exportCsv);
   $("qualityToggle").addEventListener("click", toggleQuality);
+  $("columnsReset").addEventListener("click", resetColumns);
   $("advancedFiltersToggle").addEventListener("click", toggleAdvancedFilters);
   $("pricingJumpBtn").addEventListener("click", () => {
     $("pricingAnalysis").open = true;
@@ -527,7 +540,7 @@ function renderChart() {
   if (!canvas || !state.filtered.length) return clearCanvas(canvas);
   const points = state.filtered.filter((record) => record.price > 0 && record.date).sort((a, b) => a.date.localeCompare(b.date));
   if (!points.length) return clearCanvas(canvas);
-  const sampled = sampleEvenly(points, 900);
+  const sampled = sampleEvenly(points, Math.max(240, Math.round((canvas.clientWidth || 760) * 0.75)));
   const prices = sampled.map((record) => record.price).sort((a, b) => a - b);
   const cap = prices[Math.floor((prices.length - 1) * 0.95)] || prices.at(-1);
   const ticks = niceTicks(0, cap, 4);
@@ -804,17 +817,194 @@ function clearCanvas(canvas) {
   $("chartNote").textContent = "No dated prices in this scope.";
 }
 
+function visibleColumns() {
+  return columns.filter(([field]) => !state.columns.hidden.includes(field));
+}
+
 function buildTableHead() {
-  $("tableHead").replaceChildren(...columns.map(([field, label]) => {
-    const th = document.createElement("th"); th.scope = "col";
+  const table = document.querySelector(".history-table");
+  let colgroup = table.querySelector("colgroup");
+  if (!colgroup) { colgroup = document.createElement("colgroup"); table.prepend(colgroup); }
+  const visible = visibleColumns();
+  colgroup.replaceChildren(...visible.map(([field]) => {
+    const col = document.createElement("col");
+    col.dataset.field = field;
+    col.style.width = `${state.columns.widths[field]}px`;
+    return col;
+  }));
+  $("tableHead").replaceChildren(...visible.map(([field, label], index) => {
+    const th = document.createElement("th"); th.scope = "col"; th.dataset.field = field;
+    if (index < 3) th.classList.add(`sticky-${index + 1}`);
     const button = document.createElement("button"); button.type = "button"; button.textContent = label; button.dataset.field = field;
     button.addEventListener("click", () => {
       state.sort.direction = state.sort.field === field ? -state.sort.direction : (field === "date" || field === "price" ? -1 : 1);
       state.sort.field = field; sortFiltered(); renderTable(); updateSortHeaders();
     });
-    th.append(button); return th;
+    const grip = document.createElement("div");
+    grip.className = "col-resizer";
+    grip.title = `Drag to resize ${label.toLowerCase()} · double-click to reset`;
+    grip.setAttribute("role", "separator");
+    grip.setAttribute("aria-orientation", "vertical");
+    grip.setAttribute("aria-label", `Resize ${label} column`);
+    grip.tabIndex = 0;
+    bindColumnResizer(grip, field);
+    th.append(button, grip);
+    return th;
   }));
+  applyStickyOffsets();
   updateSortHeaders();
+}
+
+function applyStickyOffsets() {
+  const table = document.querySelector(".history-table");
+  const visible = visibleColumns();
+  const width = (index) => (visible[index] ? state.columns.widths[visible[index][0]] : 0);
+  table.style.setProperty("--sticky-1-w", `${width(0)}px`);
+  table.style.setProperty("--sticky-2-w", `${width(0) + width(1)}px`);
+}
+
+function setColumnWidth(field, value, persist) {
+  const clamped = Math.round(Math.min(COLUMN_LIMITS.max, Math.max(COLUMN_LIMITS.min, value)));
+  state.columns.widths[field] = clamped;
+  const col = document.querySelector(`.history-table col[data-field="${field}"]`);
+  if (col) col.style.width = `${clamped}px`;
+  applyStickyOffsets();
+  if (persist) saveColumns();
+}
+
+function bindColumnResizer(grip, field) {
+  let origin = null;
+  grip.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    origin = { x: event.clientX, width: state.columns.widths[field] };
+    try { grip.setPointerCapture(event.pointerId); } catch { /* Synthetic or stale pointer. */ }
+    grip.classList.add("is-dragging");
+    document.body.classList.add("is-resizing-x");
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  grip.addEventListener("pointermove", (event) => {
+    if (!origin) return;
+    setColumnWidth(field, origin.width + (event.clientX - origin.x), false);
+  });
+  const finish = () => {
+    if (!origin) return;
+    origin = null;
+    grip.classList.remove("is-dragging");
+    document.body.classList.remove("is-resizing-x");
+    saveColumns();
+  };
+  grip.addEventListener("pointerup", finish);
+  grip.addEventListener("pointercancel", finish);
+  grip.addEventListener("lostpointercapture", finish);
+  grip.addEventListener("dblclick", (event) => { event.stopPropagation(); setColumnWidth(field, COLUMN_DEFAULTS[field], true); });
+  grip.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowRight") setColumnWidth(field, state.columns.widths[field] + 16, true);
+    else if (event.key === "ArrowLeft") setColumnWidth(field, state.columns.widths[field] - 16, true);
+    else if (event.key === "Home" || event.key === "Enter") setColumnWidth(field, COLUMN_DEFAULTS[field], true);
+    else return;
+    event.preventDefault();
+  });
+}
+
+function initColumns() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COLUMNS_KEY) || "{}");
+    if (saved.widths) columns.forEach(([field]) => { if (Number.isFinite(saved.widths[field])) state.columns.widths[field] = saved.widths[field]; });
+    if (Array.isArray(saved.hidden)) state.columns.hidden = saved.hidden.filter((field) => columns.some(([key]) => key === field));
+  } catch { /* Column memory is optional. */ }
+  if (columns.length - state.columns.hidden.length < MIN_VISIBLE_COLUMNS) state.columns.hidden = [];
+  renderColumnMenu();
+  $("columnsBtn").addEventListener("click", () => toggleColumnMenu());
+  document.addEventListener("click", (event) => {
+    if (!$("columnsPop").hidden && !$("columnsMenu").contains(event.target)) toggleColumnMenu(false);
+  });
+  $("columnsMenu").addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !$("columnsPop").hidden) { toggleColumnMenu(false); $("columnsBtn").focus(); }
+  });
+}
+
+function saveColumns() {
+  try { localStorage.setItem(COLUMNS_KEY, JSON.stringify(state.columns)); } catch { /* Column memory is optional. */ }
+}
+
+function toggleColumnMenu(open = $("columnsPop").hidden) {
+  $("columnsPop").hidden = !open;
+  $("columnsBtn").setAttribute("aria-expanded", String(open));
+  if (open) $("columnsPop").querySelector("button")?.focus();
+}
+
+function renderColumnMenu() {
+  const list = $("columnsList");
+  const visibleCount = columns.length - state.columns.hidden.length;
+  list.replaceChildren(...columns.map(([field, label]) => {
+    const visible = !state.columns.hidden.includes(field);
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = `toggle-chip column-toggle${visible ? " active" : ""}`;
+    item.setAttribute("role", "menuitemcheckbox");
+    item.setAttribute("aria-checked", String(visible));
+    item.disabled = visible && visibleCount <= MIN_VISIBLE_COLUMNS;
+    const text = document.createElement("span"); text.textContent = label;
+    item.append(text);
+    item.addEventListener("click", () => {
+      state.columns.hidden = visible
+        ? [...state.columns.hidden, field]
+        : state.columns.hidden.filter((key) => key !== field);
+      saveColumns();
+      renderColumnMenu();
+      buildTableHead();
+      if (state.records.length) renderTable();
+    });
+    return item;
+  }));
+  const hiddenCount = state.columns.hidden.length;
+  $("columnsBtn").querySelector("span").textContent = hiddenCount ? `Columns · ${visibleCount} of ${columns.length}` : "Columns";
+  $("columnsReset").disabled = !hiddenCount && columns.every(([field]) => state.columns.widths[field] === COLUMN_DEFAULTS[field]);
+}
+
+function resetColumns() {
+  state.columns = { widths: { ...COLUMN_DEFAULTS }, hidden: [] };
+  saveColumns();
+  renderColumnMenu();
+  buildTableHead();
+  if (state.records.length) renderTable();
+}
+
+function initDensity() {
+  let saved = "comfortable";
+  try { saved = localStorage.getItem(DENSITY_KEY) || "comfortable"; } catch { /* Preference storage is optional. */ }
+  setDensity(["comfortable", "compact"].includes(saved) ? saved : "comfortable", false);
+  $("densityControl").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-density]");
+    if (button) setDensity(button.dataset.density, true);
+  });
+}
+
+function setDensity(mode, persist) {
+  state.density = mode;
+  document.body.dataset.density = mode;
+  $("densityControl").querySelectorAll("[data-density]").forEach((button) => {
+    const active = button.dataset.density === mode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-checked", String(active));
+  });
+  if (persist) {
+    try { localStorage.setItem(DENSITY_KEY, mode); } catch { /* Preference storage is optional. */ }
+  }
+}
+
+// On wide screens the pricing analysis becomes a persistent side panel, so the
+// details element stays open and the collapsed summary is hidden by CSS.
+function initWideLayout() {
+  const query = window.matchMedia(WIDE_LAYOUT);
+  const apply = () => {
+    document.body.classList.toggle("layout-wide", query.matches);
+    if (query.matches) $("pricingAnalysis").open = true;
+    if (state.records.length) requestAnimationFrame(renderChart);
+  };
+  query.addEventListener("change", apply);
+  apply();
 }
 
 function updateSortHeaders() {
@@ -831,7 +1021,7 @@ function renderTable() {
     ? `Showing ${whole.format(PAGE_SIZE)} ${mostRecentSort ? "most recent " : ""}source lines of ${whole.format(state.filtered.length)} — filter to narrow`
     : `${whole.format(state.filtered.length)} complete source line${state.filtered.length === 1 ? "" : "s"}`;
   if (!showing.length) {
-    const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = columns.length; td.className = "empty-cell"; td.textContent = "No line items match these filters."; tr.append(td); $("tableBody").replaceChildren(tr); renderRecordPane(null); return;
+    const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = visibleColumns().length; td.className = "empty-cell"; td.textContent = "No line items match these filters."; tr.append(td); $("tableBody").replaceChildren(tr); renderRecordPane(null); return;
   }
   const selected = showing.find((record) => record.sourceRow === state.selectedRow) || showing[0];
   state.selectedRow = selected.sourceRow;
@@ -842,18 +1032,20 @@ function renderTable() {
     tr.dataset.sourceRow = String(record.sourceRow);
     tr.setAttribute("aria-selected", String(record.sourceRow === state.selectedRow));
     if (record.sourceRow === state.selectedRow) tr.classList.add("selected");
-    columns.forEach(([field]) => {
+    visibleColumns().forEach(([field], index) => {
       const td = document.createElement("td");
+      if (index < 3) td.classList.add(`sticky-${index + 1}`);
+      if (field === "wo" || field === "part") td.classList.add("mono-cell");
       let value = record[field];
-      if (field === "price") { td.className = record.price > 0 ? "number" : "number is-zero"; value = formatMoney(value); }
+      if (field === "price") { td.classList.add("number"); if (!(record.price > 0)) td.classList.add("is-zero"); value = formatMoney(value); }
       if (field === "date") value = formatDate(value);
       if (field === "router") {
-        td.className = "source-text";
+        td.classList.add("source-text");
         const chips = renderRouterChips(value, true);
         if (chips) { chips.title = value; td.append(chips); }
         else td.textContent = "—";
       } else if (["description", "process", "special"].includes(field)) {
-        td.className = "source-text";
+        td.classList.add("source-text");
         const preview = document.createElement("span");
         preview.className = "cell-preview";
         preview.textContent = value || "—";
