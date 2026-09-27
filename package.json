@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test --test-isolation=none tests/core.test.js",
-    "test:production": "node tests/production-workbook.mjs"
+    "test": "node --test --test-isolation=none tests/core.test.js tests/bot/*.test.js",
+    "test:production": "node tests/production-workbook.mjs",
+    "bot": "node bot/cli.js"
   }
 }
