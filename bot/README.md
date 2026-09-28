@@ -14,9 +14,12 @@ This repository is public. The code here holds no company data. Exports, emails,
   "priceLabDir": "…/work/price-lab-source-snapshot-2026-09-26",
   "calculatorHtml": "…/Documents/calculator/index.html",
   "monitorState": "…/work/rfq-monitor-state.json",
-  "outputsDir": "…/outputs"
+  "outputsDir": "…/outputs",
+  "quoteTemplate": "…/quote-template.txt"
 }
 ```
+
+`quoteTemplate` is the reviewer's own RFQ response wording. The page's Copy quote fills `{{parts}}` (P/N, Qty, Unit Price per part; tiers of one part at one price share an entry) and `{{process}}` (written once when every part shares it, otherwise under each part). Without it, Copy quote gives the parts and process alone.
 
 ## Commands
 
@@ -51,7 +54,7 @@ Before a commit, the privacy check runs over tracked files only (`git grep`), be
 | `lib/email-evidence.js` | Normalizes Outlook messages already retrieved by an authorized connector: newest authored text vs quoted history, price rows, terms, customer PO text with quantity/total cross-checks, and evidence types (RFQ, PO, sent estimate, acknowledgment, validity reply, internal…). |
 | `lib/methods/pricegpt-master-v2.js` | PriceGPT Master v2 SQ2 (non-tube), SQ3, SQ4, SQ5 in exact integer arithmetic. Anything the master leaves undefined (credible anchor, divergence denominator, bracket overlap) is an explicit input or a block, never a silent default. |
 | `lib/methods/price-lab-rules.js` | Loads the captured Price Lab package and refuses to run if a file's hash differs from its manifest. |
-| `lib/methods/online-calculator.js` | Runs the published calculator's own tables and helpers from `calculator/index.html` and flags formula drift. |
+| `lib/methods/online-calculator.js` | Runs the published calculator's own tables and helpers from `calculator/index.html` and flags formula drift. Under ruling `calculator-volume-v1` its price (Cavity $ always 0; holes and bores only through Complexity, with a stated `complexityReason`) is the volume price, rounded to $0.25; the master's SQ2 is kept as a reference. An unknown size, weight or complexity name blocks the price. |
 | `lib/recommend.js` | Named recommendation policies. `repeat-accepted-hold-v0` is a proposal awaiting approval; `chain-only-v0` is master v2 as written. |
 | `lib/decision.js` | Assembles the record: history timeline with a status per row (comparable, scope unverified, different, excluded), PO ↔ work order ↔ invoice cross-check by the customer's job number, calculations, recommendation, lifecycle and freshness. |
 | `lib/render.js` | Markdown and a self-contained HTML review page, including any recorded decisions. |

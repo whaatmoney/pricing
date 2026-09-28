@@ -17,7 +17,9 @@ test("the accepted PO for the same part, revision, scope and quantity band leads
   assert.equal(l1.recommendation.preferred.unitPrice, 8.5);
   assert.match(l1.recommendation.preferred.basis, /PO1-100/);
   assert.equal(l1.recommendation.alternatives[0].unitPrice, l1.calculations.sq5.settled);
-  assert.equal(l1.recommendation.lotMinimum.passes, true);
+  assert.equal(l1.recommendation.lotMinimum, undefined, "with more than one part the lot minimum is checked on the PO, not the line");
+  assert.equal(l1.recommendation.preferred.lotCharge, undefined);
+  assert.deepEqual(decision.poLotMinimum, { ruling: "lot-minimum-per-po-v1", lineIds: ["L1", "L3"], unpriced: ["L3"], extended: 4250, minimum: 200, passes: true, lotCharge: null });
 });
 
 test("another customer's record and a longer part token never enter the history", () => {

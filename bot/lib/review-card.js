@@ -42,6 +42,11 @@ export function methodPath(line) {
   const sq2 = calc.sq2;
   if (isBlocked(sq2)) {
     steps.push(`Volume (SQ2): blocked. ${sq2.blocked.join(" ")}`);
+  } else if (sq2.source === "calculator") {
+    const c = sq2.components;
+    const adders = [["length", c.length], ["spec", c.spec], ["packaging", c.packaging?.charge]].filter(([, value]) => value).map(([name, value]) => ` + ${name} ${usd(value)}`).join("");
+    const m = c.multipliers;
+    steps.push(`Volume (calculator) ${usd(sq2.price)}: ${num(c.rawVolume, 4)} in³ × 1.1 buffer = ${num(c.volume, 4)} in³ → base ${usd(c.base)}${adders}, × process ${m.process} × size ${m.size} × weight ${m.weight} × complexity ${m.complexity} (${c.complexityKey}${c.complexityReason ? `: ${c.complexityReason}` : ""}) = ${usd(sq2.unit)}, rounded to ${usd(sq2.price)}. No per-hole charges (ruling calculator-volume-v1).`);
   } else {
     const c = sq2.components;
     const adders = [["length", c.lengthSurcharge?.amount], ["spec", c.specFee?.amount], ["Aclar", c.aclar]].filter(([, value]) => value).map(([name, value]) => ` + ${name} ${usd(value)}`).join("");
@@ -119,28 +124,68 @@ export function approveAllLine(decision) {
   return `${decision.caseId} v${decision.lifecycle.recommendationVersion} all approve ${decision.lines.map((line) => line.recommendation.preferred.unitPrice.toFixed(2)).join("/")}`;
 }
 
-// The block a reviewer pastes into the RFQ response: one entry per line with
-// P/N, Qty, Unit Price and Process. It uses the recorded decision's price when
-// there is one (a correction leaves the line undecided) and otherwise the
-// suggested price, and says which it is outside the copied text.
-export function quoteSummary(decision, view) {
-  const entries = decision.lines.map((line) => {
-    const { request, recommendation: rec } = line;
+// The PO total against the lot minimum (ruling lot-minimum-per-po-v1) at the
+// recorded prices where there are any and the suggested ones otherwise. Null
+// for one-part cases, where each line is checked on its own.
+export function poTotal(decision, view) {
+  const po = decision.poLotMinimum;
+  if (!po) return null;
+  const counted = decision.lines.filter((line) => po.lineIds.includes(line.lineId));
+  const prices = counted.map((line) => {
     const recorded = view?.current.get(line.lineId);
     const decided = recorded && recorded.choice !== "correction" ? recorded : null;
-    const unitPrice = decided ? decided.unitPrice : rec.preferred?.unitPrice ?? null;
-    const minimum = rec.lotMinimum?.minimum ?? null;
-    const extended = unitPrice == null ? null : Math.round(unitPrice * request.quantity * 100) / 100;
-    const lotCharge = extended != null && minimum != null && extended < minimum ? minimum : null;
-    const price = unitPrice == null ? "not priced" : lotCharge != null
-      ? `${usd(unitPrice)}/ea (${usd(extended)} for ${request.quantity}; lot minimum applies: ${usd(lotCharge)} total)`
-      : `${usd(unitPrice)}/ea (${usd(extended)} total)`;
+    return { line, unitPrice: decided ? decided.unitPrice : line.recommendation.preferred?.unitPrice ?? null };
+  });
+  const unpriced = prices.filter((item) => item.unitPrice == null).map((item) => item.line.lineId);
+  const extended = prices.reduce((sum, item) => sum + (item.unitPrice == null ? 0 : Math.round(item.unitPrice * item.line.request.quantity * 100)), 0) / 100;
+  const charge = extended < po.minimum ? po.minimum : extended;
+  const text = `PO total for all parts at these prices: ${usd(extended)}${unpriced.length ? ` (${unpriced.join(", ")} not priced)` : ""}${extended < po.minimum ? `, under the ${usd(po.minimum)} lot minimum, so the PO is charged ${usd(po.minimum)}.` : ", at or above the lot minimum."}`;
+  return { extended, minimum: po.minimum, charge, below: extended < po.minimum, unpriced, text };
+}
+
+const joinQuantities =(items) => (items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} & ${items.at(-1)}`);
+
+// The text a reviewer pastes into the RFQ response. Lines of one part with the
+// same process and unit price share an entry ("Qty: 18, 54 & 72"). One process
+// shared by every entry is written once, where the template's {{process}}
+// sits; different processes go under each entry instead. The template (the
+// reviewer's own wording, terms and lot minimum) lives in private config;
+// without one the text is the entries and process alone. Prices are the
+// recorded decision's when there is one (a correction leaves the line
+// undecided) and otherwise the suggested ones; the page says which.
+export function quoteSummary(decision, view, { template = null } = {}) {
+  const lines = decision.lines.map((line) => {
+    const recorded = view?.current.get(line.lineId);
+    const decided = recorded && recorded.choice !== "correction" ? recorded : null;
     return {
+      line,
+      unitPrice: decided ? decided.unitPrice : line.recommendation.preferred?.unitPrice ?? null,
       lineId: line.lineId,
       state: decided ? `${decided.choice} by ${decided.decidedBy}` : recorded?.choice === "correction" ? "correction requested — not approved" : "suggested — not approved yet",
       approved: Boolean(decided),
-      text: [`P/N: ${request.partNumber} Rev. ${request.revision}`, `Qty: ${request.quantity} ${request.uom}`, `Unit Price: ${price}`, "", `Process: ${request.process.verbatim}`].join("\n"),
     };
   });
-  return { entries, text: entries.map((entry) => entry.text).join("\n\n"), allApproved: entries.every((entry) => entry.approved) };
+  const groups = new Map();
+  for (const item of lines) {
+    const { request } = item.line;
+    const key = JSON.stringify([request.partNumber, request.revision, request.process.verbatim, item.unitPrice]);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  const processes = new Set(lines.map((item) => item.line.request.process.verbatim));
+  const shared = processes.size === 1 ? [...processes][0] : null;
+  const blocks = [...groups.values()].map((group) => {
+    const { request } = group[0].line;
+    const quantities = group.map((item) => `${item.line.request.quantity}${item.line.request.uom && item.line.request.uom !== "EA" ? ` ${item.line.request.uom}` : ""}`);
+    const price = group[0].unitPrice == null ? "not priced" : usd(group[0].unitPrice);
+    const revision = request.revision && request.revision !== "-" ? ` Rev. ${request.revision}` : "";
+    return [`P/N: ${request.partNumber}${revision}`, `Qty: ${joinQuantities(quantities)}`, `Unit Price: ${price}`]
+      .concat(shared == null ? [`Process: ${request.process.verbatim}`] : []).join("\n");
+  });
+  const parts = blocks.join("\n\n");
+  const process = shared == null ? "" : `Process: ${shared}`;
+  const text = template
+    ? template.replace("{{parts}}", parts).replace("{{process}}", process).replace(/\n{3,}/g, "\n\n").trim()
+    : [parts, process].filter(Boolean).join("\n\n");
+  return { entries: lines.map(({ lineId, state, approved }) => ({ lineId, state, approved })), text, allApproved: lines.every((item) => item.approved) };
 }

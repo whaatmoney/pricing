@@ -18,6 +18,20 @@ export const RULINGS = [
     reason: "Approved after the first repeat-price case: the customer's own accepted POs for the same part, revision and scope are the most reliable price evidence.",
     rule: "The recommendation policy repeat-accepted-hold-v0 is approved: when the same customer issued a PO within 365 days for the exact part number, revision and process scope, at a quantity within ±25% of the request, recommend that PO's unit price and show the Price Lab chain beside it; otherwise recommend the chain.",
   },
+  {
+    id: "lot-minimum-per-po-v1",
+    date: "2026-09-28",
+    decidedBy: "Quality Manager (pricing owner)",
+    reason: "A lot minimum is for the entire PO, not per line item.",
+    rule: "When an RFQ covers more than one part, the lot minimum is checked once against the PO total (every part at its requested quantity), not against each line. Quantity tiers of a single part are alternative POs, so each tier is checked on its own.",
+  },
+  {
+    id: "calculator-volume-v1",
+    date: "2026-09-28",
+    decidedBy: "Quality Manager (pricing owner)",
+    reason: "The master's per-cavity charges overcharge the unit price; the nuance is missing. The published pricing calculator is preferred for volume pricing.",
+    rule: "On every first pass the volume price (the SQ2 slot used by the settle step and the band) is the published calculator's price, rounded to the nearest $0.25. Holes, bores and cavities enter only through the calculator's Complexity pick, which the case states with a reason; Cavity $ is always 0. The master's SQ2 is kept in the record as a reference only.",
+  },
 ];
 
 export const ACTIVE_RULINGS = RULINGS.map((ruling) => ruling.id);

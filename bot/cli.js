@@ -57,12 +57,16 @@ function printImport(result) {
 
 // Pages are rendered from the saved record plus its lifecycle file, so a
 // recorded decision shows without rebuilding (or changing) the record itself.
-function renderVersion(outputsDir, caseId, version) {
+// The quote text follows the reviewer's own RFQ response template, kept in
+// private config (config.quoteTemplate) because it carries company terms.
+function renderVersion(config, caseId, version) {
+  const { outputsDir } = config;
   const base = path.join(outputsDir, `CLAUDE-DECISION-${caseId}-v${version}`);
   const decision = readJson(`${base}.json`);
   const lifecycle = readLifecycle(lifecyclePath(outputsDir, caseId), caseId);
-  fs.writeFileSync(`${base}.md`, renderMarkdown(decision, { lifecycle }));
-  fs.writeFileSync(`${base}.html`, renderHtml(decision, { lifecycle }));
+  const quoteTemplate = config.quoteTemplate ? fs.readFileSync(config.quoteTemplate, "utf8") : null;
+  fs.writeFileSync(`${base}.md`, renderMarkdown(decision, { lifecycle, quoteTemplate }));
+  fs.writeFileSync(`${base}.html`, renderHtml(decision, { lifecycle, quoteTemplate }));
   return base;
 }
 
@@ -113,7 +117,7 @@ async function main() {
     decision.lifecycle.supersedes = supersedes;
     const base = path.join(config.outputsDir, `${stem}-v${version}`);
     fs.writeFileSync(`${base}.json`, JSON.stringify(decision, null, 2));
-    renderVersion(config.outputsDir, decision.caseId, version);
+    renderVersion(config, decision.caseId, version);
     console.log(`${reused ? "Rewrote" : "Wrote"} recommendation v${version}${supersedes ? ` (supersedes v${supersedes})` : ""}:\n  ${base}.json\n  ${base}.md\n  ${base}.html\nBoard: ${refreshBoard(config)}`);
     for (const line of decision.lines) {
       const preferred = line.recommendation.preferred;
@@ -145,7 +149,7 @@ async function main() {
       policyRuling: values.rule,
       approvers: config.approvers,
     });
-    const base = renderVersion(config.outputsDir, caseId, version);
+    const base = renderVersion(config, caseId, version);
     console.log(`Recorded decision #${entry.id} on ${caseId} v${entry.version} ${entry.lineId}: ${entry.choice}${entry.unitPrice != null ? ` ${money(entry.unitPrice)}/ea (${money(entry.extended)} for ${entry.quantity})` : ""} by ${entry.decidedBy}.`);
     for (const notice of notices) console.log(`  ! ${notice}`);
     console.log(`  ${file}\nRe-rendered:\n  ${base}.md\n  ${base}.html\nBoard: ${refreshBoard(config)}`);
@@ -163,7 +167,7 @@ async function main() {
       console.log(`Recorded #${entry.id} ${entry.lineId} v${entry.version}: ${what} by ${entry.decidedBy}.`);
       for (const notice of notices) console.log(`  ! ${notice}`);
     }
-    console.log(`Re-rendered: ${renderVersion(config.outputsDir, answer.caseId, answer.version)}.html\nBoard: ${refreshBoard(config)}`);
+    console.log(`Re-rendered: ${renderVersion(config, answer.caseId, answer.version)}.html\nBoard: ${refreshBoard(config)}`);
     return;
   }
   if (command === "render") {
@@ -173,7 +177,7 @@ async function main() {
     const caseId = target.endsWith(".json") ? readJson(path.resolve(target)).caseId : target;
     const version = values.version ? Number(values.version) : versionsOf(config.outputsDir, `CLAUDE-DECISION-${caseId}`)[0];
     if (!version) throw new Error(`No recommendation for ${caseId} in ${config.outputsDir}`);
-    console.log(`Re-rendered v${version} (record unchanged): ${renderVersion(config.outputsDir, caseId, version)}.html\nBoard: ${refreshBoard(config)}`);
+    console.log(`Re-rendered v${version} (record unchanged): ${renderVersion(config, caseId, version)}.html\nBoard: ${refreshBoard(config)}`);
     return;
   }
   if (command === "sync") {

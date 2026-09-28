@@ -113,14 +113,24 @@ test("an edited or removed entry breaks the chain and nothing more is recorded",
   assert.throws(() => saved(dir), /append-only/);
 });
 
-test("a decided price below the lot minimum is flagged", () => {
-  const dir = outputsWith([1, "fp-1"]);
+test("on a one-part RFQ a decided price below the lot minimum is flagged on its line", () => {
+  const dir = tempDir("qpc-lifecycle-");
+  const onePart = { ...asVersion(1, "fp-1"), poLotMinimum: null, lines: [{ ...l1, recommendation: { ...l1.recommendation, lotMinimum: { extended: 4250, minimum: 200, passes: true } } }] };
+  fs.writeFileSync(path.join(dir, `CLAUDE-DECISION-${base.caseId}-v1.json`), JSON.stringify(onePart));
   const { entry, notices } = decide(dir, { lineId: "L1", choice: "alternative", unitPrice: 0.1, note: "Sample price" });
   assert.equal(entry.belowLotMinimum, true);
   assert.match(notices[0], /below the \$200\.00 lot minimum/);
   assert.equal(entry.lotCharge, 200);
-  const lifecycle = saved(dir);
-  assert.match(renderMarkdown(asVersion(1, "fp-1"), { lifecycle }), /Under the lot minimum, so the quote is the \$200\.00 lot charge\./);
+  assert.match(renderMarkdown(onePart, { lifecycle: saved(dir) }), /Under the lot minimum, so the quote is the \$200\.00 lot charge\./);
+});
+
+test("on a multi-part RFQ a line carries no lot charge; the PO total is checked instead", () => {
+  const dir = outputsWith([1, "fp-1"]);
+  const { entry, notices } = decide(dir, { lineId: "L1", choice: "alternative", unitPrice: 0.1, note: "Sample price" });
+  assert.equal(entry.belowLotMinimum, null);
+  assert.equal(entry.lotCharge, null);
+  assert.deepEqual(notices, []);
+  assert.match(renderMarkdown(asVersion(1, "fp-1"), { lifecycle: saved(dir) }), /\*\*Lot minimum \(entire PO\):\*\* PO total for all parts at these prices: \$50\.00 \(L3 not priced\), under the \$200\.00 lot minimum, so the PO is charged \$200\.00\./);
 });
 
 test("a decision counts only for the version and inputs it was made on", () => {
@@ -175,19 +185,18 @@ test("a correction marks the version as not approvable", () => {
   assert.match(html, /class="recorded alert"/);
 });
 
-test("the quote block lists P/N, Qty, Unit Price and Process, using the decided price once there is one", () => {
+test("the quote block lists P/N, Qty and Unit Price per part and the shared process once, using the decided price once there is one", () => {
   const dir = outputsWith([1, "fp-1"]);
   const before = quoteSummary(asVersion(1, "fp-1"), lifecycleView(asVersion(1, "fp-1"), saved(dir)));
   assert.equal(before.allApproved, false);
   assert.equal(before.entries[0].state, "suggested — not approved yet");
-  assert.equal(before.entries[0].text, "P/N: ABC-100 Rev. B\nQty: 500 EA\nUnit Price: $8.50/ea ($4,250.00 total)\n\nProcess: LEVEL 300R4 NOT FOR OXYGEN SERVICE");
+  assert.equal(before.text, "P/N: ABC-100 Rev. B\nQty: 500\nUnit Price: $8.50\n\nP/N: ABC-100 Rev. B\nQty: 5000\nUnit Price: $5.00\n\nP/N: DEF-200 Rev. B\nQty: 10\nUnit Price: not priced\n\nProcess: LEVEL 300R4 NOT FOR OXYGEN SERVICE");
   decide(dir, { lineId: "L1", choice: "alternative", unitPrice: 0.3, note: "Sample price" });
   const after = quoteSummary(asVersion(1, "fp-1"), lifecycleView(asVersion(1, "fp-1"), saved(dir)));
   assert.equal(after.entries[0].state, "alternative by Pat Reviewer");
-  assert.match(after.entries[0].text, /Unit Price: \$0\.30\/ea \(\$150\.00 for 500; lot minimum applies: \$200\.00 total\)/);
-  assert.equal(after.entries[2].text.split("\n")[2], "Unit Price: not priced");
-  const html = renderHtml(asVersion(1, "fp-1"), { lifecycle: saved(dir) });
+  assert.match(after.text, /^P\/N: ABC-100 Rev\. B\nQty: 500\nUnit Price: \$0\.30\n/);
+  const html = renderHtml(asVersion(1, "fp-1"), { lifecycle: saved(dir), quoteTemplate: "Opening line:\n\n{{parts}}\n\n{{process}}\n" });
   assert.match(html, /<section id="quote" class="hero"/);
   assert.ok(html.indexOf('id="quote"') < html.indexOf('id="why"') && html.indexOf('id="why"') < html.indexOf('id="decision"') && html.indexOf('id="decision"') < html.indexOf('id="evidence"'), "the page reads quote, why, decision, evidence");
-  assert.match(html, /data-copy="P\/N: ABC-100 Rev\. B\nQty: 500 EA/);
+  assert.match(html, /data-copy="Opening line:\n\nP\/N: ABC-100 Rev\. B\nQty: 500/);
 });

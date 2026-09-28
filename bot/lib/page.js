@@ -1,7 +1,7 @@
 import { businessDaysSince } from "./board.js";
 import { lifecycleView } from "./lifecycle.js";
 import { describeDecision, describeReview, displayStatus, escapeHtml, sizeText, STATUS_LABEL, summarizeLine, whyNot } from "./render.js";
-import { answerLines, approveAllLine, assumptions, methodPath, quoteSummary, reviewCard } from "./review-card.js";
+import { answerLines, approveAllLine, assumptions, methodPath, poTotal, quoteSummary, reviewCard } from "./review-card.js";
 import { caseConfidence, reasonsText } from "./confidence.js";
 import { copyButton, ICON, SCRIPT as PAGE_SCRIPT, STYLE as PAGE_STYLE } from "./design.js";
 
@@ -52,6 +52,8 @@ function stateOf(decision, view) {
 
 // The reasoning in plain words, one short sentence per step. The method's own
 // notation stays in "Show the math".
+const num4 = (value) => Number(value).toFixed(2);
+
 function story(group, decision) {
   const first = group[0];
   const { recommendation: rec, calculations: calc } = first;
@@ -66,6 +68,10 @@ function story(group, decision) {
   }
   if (isBlocked(calc.sq2)) {
     steps.push(["Size", `Can't price by size yet: ${calc.sq2.blocked[0]}`]);
+  } else if (calc.sq2.source === "calculator") {
+    const c = calc.sq2.components;
+    const complexity = c.complexityKey !== "Standard" ? `, ${c.complexityKey.toLowerCase()} complexity${c.complexityReason ? ` (${c.complexityReason})` : ""}` : "";
+    steps.push(["Size", `By size the calculator prices it at ${usd(calc.sq2.price)}: ${num4(c.volume)} in³ with the 1.1 buffer${complexity}. Holes and bores count only through complexity.`]);
   } else {
     const c = calc.sq2.components;
     const geometry = c.geometry.multiplier !== 1 ? `, ${String(c.geometry.class).toLowerCase()} internal geometry` : "";
@@ -91,6 +97,7 @@ function story(group, decision) {
 
 function quoteSection(decision, view, groups, quote, state) {
   const byLine = new Map(quote.entries.map((entry) => [entry.lineId, entry]));
+  const po = poTotal(decision, view);
   const blocks = groups.map((group) => {
     const request = group[0].request;
     const rows = group.map((line) => {
@@ -106,7 +113,7 @@ function quoteSection(decision, view, groups, quote, state) {
     }).join("");
     return `<div class="quote-part">
       <dl class="facts">
-        <div><dt>P/N</dt><dd class="strong">${esc(request.partNumber)} Rev. ${esc(request.revision)}</dd></div>
+        <div><dt>P/N</dt><dd class="strong">${esc(request.partNumber)}${request.revision && request.revision !== "-" ? ` Rev. ${esc(request.revision)}` : ""}</dd></div>
         <div><dt>Process</dt><dd>${esc(request.process.verbatim)}</dd></div>
       </dl>
       <div class="scroll"><table class="tiers"><thead><tr><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Total</th><th class="col-state">State</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -140,6 +147,7 @@ function quoteSection(decision, view, groups, quote, state) {
     </div>
     ${quote.allApproved ? "" : `<p class="hint">${ICON.alert}<span>${state.tone === "alert" ? "A fact is being corrected. Don't send this version." : "Not approved yet. Copy only after you decide below."}</span></p>`}
     ${blocks}
+    ${po ? `<p class="po-total${po.below ? " below" : ""}"><b>${usd(po.charge)}</b> ${esc(po.text)} The lot minimum is for the entire PO, not per line.</p>` : ""}
     ${checklist}
   </section>`;
 }
@@ -153,7 +161,7 @@ function whySection(decision, groups) {
       const card = reviewCard(first, decision).filter((row) => !row.steps).map((row) => `<div><dt>${esc(row.label)}</dt><dd>${esc(row.value)}${row.source ? `<span class="source">${esc(row.source)}</span>` : ""}</dd></div>`).join("");
       const checks = assumptions(first);
       return `<div class="why-group">
-        ${groups.length > 1 ? `<h3>${esc(first.request.partNumber)} Rev. ${esc(first.request.revision)}</h3>` : ""}
+        ${groups.length > 1 ? `<h3>${esc(first.request.partNumber)}${first.request.revision && first.request.revision !== "-" ? ` Rev. ${esc(first.request.revision)}` : ""}</h3>` : ""}
         <ol class="story">${story(group, decision).map(([tag, text]) => `<li><span class="tag">${esc(tag)}</span><span>${Array.isArray(text) ? text.map((item) => `<span class="result">${esc(item)}</span>`).join("") : esc(text)}</span></li>`).join("")}</ol>
         ${flags.length ? `<div class="callout warn">${ICON.alert}<div><b>Worth knowing</b><ul>${flags.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div></div>` : ""}
         <details class="fold"><summary>${ICON.chevron}Facts and the math behind it</summary>
@@ -210,7 +218,9 @@ function calcBlock(line) {
   const sensitivity = (items) => items.map((item) => `${esc(item.label)} <b>${item.blocked ? "blocked" : usd(item.price)}</b>`).join(" · ");
   const options = [rec.preferred, ...rec.alternatives].filter(Boolean)
     .map((option, index) => `<tr${index === 0 ? " class=\"pick\"" : ""}><td>${esc(option.label)}${index === 0 ? ' <span class="chip ok">recommended</span>' : ""}</td><td class="num">${usd(option.unitPrice)}</td><td class="num">${usd(option.lotCharge ?? option.extended)}${option.lotCharge != null ? '<span class="note">lot minimum</span>' : ""}</td><td>${esc(option.basis)}</td></tr>`)
-    .concat(isBlocked(online) ? [] : [`<tr><td>Online calculator (reference)</td><td class="num">${usd(online.price)}</td><td class="num">${usd(online.price * line.request.quantity)}</td><td>${esc(online.method)}; no commercial rounding</td></tr>`]).join("");
+    .concat(calc.sq2.source === "calculator"
+      ? (calc.masterSq2 && !isBlocked(calc.masterSq2) ? [`<tr><td>PriceGPT master SQ2 (reference only)</td><td class="num">${usd(calc.masterSq2.price)}</td><td class="num">${usd(calc.masterSq2.price * line.request.quantity)}</td><td>per-cavity charges; not used (ruling calculator-volume-v1)</td></tr>`] : [])
+      : isBlocked(online) ? [] : [`<tr><td>Online calculator (reference)</td><td class="num">${usd(online.price)}</td><td class="num">${usd(online.price * line.request.quantity)}</td><td>${esc(online.method)}; no commercial rounding</td></tr>`]).join("");
   const steps = calc.sq3.steps.map((step) => `<tr><td>${esc(step.step)}</td><td>${esc(step.router)}</td><td>${esc(step.class)}</td><td class="num">${step.minutes}</td><td>${esc(step.basis)}</td></tr>`).join("");
   return `<h4>${esc(line.lineId)} · ${line.request.quantity} ${esc(line.request.uom)}</h4>
     <div class="scroll"><table><thead><tr><th>Option</th><th class="num">Unit</th><th class="num">Total</th><th>Basis</th></tr></thead><tbody>${options}</tbody></table></div>
@@ -256,11 +266,11 @@ function evidenceSection(decision, groups) {
   </section>`;
 }
 
-export function renderHtml(decision, { lifecycle, now = new Date() } = {}) {
+export function renderHtml(decision, { lifecycle, now = new Date(), quoteTemplate = null } = {}) {
   const view = lifecycleView(decision, lifecycle);
   const state = stateOf(decision, view);
   const groups = groupLines(decision.lines);
-  const quote = quoteSummary(decision, view);
+  const quote = quoteSummary(decision, view, { template: quoteTemplate });
   const first = decision.lines[0].request;
   const rfqRef = (decision.rfq.reference || "").match(/RFQ\s*#?\s*\d[\w-]*/i)?.[0] || "Email RFQ";
   const waiting = businessDaysSince(decision.rfq.initiatedAt, now);

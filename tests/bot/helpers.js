@@ -61,7 +61,7 @@ const VOL_BUFFER = 1.10;
 const PROCESS = { "300": 1.2 };
 const SIZE = { "Small (≤ 6 in)": 1.00, "Medium (> 6–12 in)": 1.5 };
 const WEIGHT = { "< 10 lb": 1.00 };
-const COMPLEXITY = { "Standard": 1.00 };
+const COMPLEXITY = { "Standard": 1.00, "Multi-port": 1.40 };
 const END_USER_FEE = { "None": 0, "ACME": 2 };
 const VOLUME_TABLE = [[0,1,4],[2,3,7],[3,4,9]];
 function lookupBasePrice(volume){ let chosen = VOLUME_TABLE[0][2]; for (const row of VOLUME_TABLE) { if (row[0] <= volume) chosen = row[2]; else break; } return chosen; }

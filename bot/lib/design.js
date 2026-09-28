@@ -95,6 +95,7 @@ code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12.
 .confidence .chip { justify-self:start; }
 .hint { display:flex; gap:var(--s2); align-items:flex-start; font-size:13px; color:var(--warn); }
 .quote-part { display:grid; gap:var(--s4); }
+.po-total { margin:0; padding:var(--s3) var(--s4); border-radius:var(--radius); background:var(--surface-2); } .po-total.below b { color:var(--warn); }
 .facts { margin:0; display:grid; gap:var(--s3); }
 .facts > div { display:grid; grid-template-columns:120px minmax(0,1fr); gap:var(--s4); }
 .facts dt { font-size:12px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-3); padding-top:2px; }

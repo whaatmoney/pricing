@@ -232,6 +232,29 @@ function pick(result) {
   return blocked(result) ? { blocked: result.blocked } : { price: result.price, unit: result.unit, flags: result.flags };
 }
 
+// The calculator's price in the volume (SQ2) slot, so the settle step, the
+// band and the page read it the way they read the master's volume price.
+function volumeFromCalculator(online, { line, sq2Input, quarter }) {
+  if (blocked(online)) return { method: online.method, source: "calculator", blocked: online.blocked };
+  const c = online.components;
+  const { length: L, width: W, height: H } = sq2Input.envelope;
+  const reason = line.calculator.complexityReason;
+  const flags = sq2Input.flags.filter((flag) => !/^GEOM:|^CAVITY CONFIDENCE/.test(flag))
+    .concat([`COMPLEXITY: ${c.complexityKey}${reason ? "" : " (no reason stated)"}`, "CAVITY $0 (ruling calculator-volume-v1)"], online.flags);
+  if (line.calculator.cavityDollars) flags.push(`CAVITY $${line.calculator.cavityDollars} IN CASE IGNORED (ruling calculator-volume-v1)`);
+  const price = quarter(online.unit);
+  return {
+    method: `${online.method} (ruling calculator-volume-v1)`,
+    source: "calculator",
+    blocked: [],
+    unit: online.unit,
+    price,
+    components: { ...c, rawVolume: L * W * H, complexityReason: reason || null },
+    trace: [`Raw volume ${L} x ${W} x ${H} = ${(L * W * H).toFixed(4)} in³`, ...online.trace, `→ rounded to nearest $0.25 = $${price.toFixed(2)}`],
+    flags,
+  };
+}
+
 function runCalculations(line, rules, calculator) {
   const sq1 = line.sq1;
   const envelope = { length: sq1.envelope.length, width: sq1.envelope.width, height: sq1.envelope.height };
@@ -246,11 +269,22 @@ function runCalculations(line, rules, calculator) {
     flags: [sq1.envelope.flag, sq1.cleanliness.flag, sq1.specGroup.flag, sq1.aclar.flag, sq1.weight.flag, `GEOM: ${sq1.geometry.class} (${sq1.geometry.confidence})`, `CAVITY CONFIDENCE ${sq1.cavities.confidence}`]
       .concat(sq1.lengthSurcharge.flag ? ["ASM: length surcharge assumed $0"] : []),
   };
-  const sq2 = sq2NonTube(sq2Input, rules);
-  const sq2Sensitivity = (line.sq2Sensitivity || []).map((item) => ({
+  const masterSq2 = sq2NonTube(sq2Input, rules);
+  const masterSq2Sensitivity = (line.sq2Sensitivity || []).map((item) => ({
     label: item.label,
     ...pick(sq2NonTube({ ...sq2Input, ...(item.geometry ? { geometry: item.geometry } : {}), ...(item.cavities ? { cavities: item.cavities } : {}) }, rules)),
   }));
+
+  // Ruling calculator-volume-v1: the volume price is the published calculator's,
+  // with holes, bores and cavities judged only through its Complexity pick
+  // (Cavity $ is always 0; per-hole charges overpriced repeated features).
+  // Rounded to the nearest $0.25 like the master's volume price.
+  const calculatorInput = { envelope, ...line.calculator, cavityDollars: 0 };
+  const online = calculatorPrice(calculatorInput, calculator);
+  const onlineAlternatives = (line.calculator.alternatives || []).map((item) => ({ label: item.label, ...pick(calculatorPrice({ ...calculatorInput, ...item, cavityDollars: 0 }, calculator)) }));
+  const quarter = (value) => Math.round(value * 4 + 1e-9) / 4;
+  const sq2 = volumeFromCalculator(online, { line, sq2Input, quarter });
+  const sq2Sensitivity = onlineAlternatives.map((item) => (item.blocked ? item : { ...item, price: quarter(item.unit) }));
 
   const sq3 = sq3Throughput({ quantity: line.quantity, batch: line.sq3.batch, steps: line.sq3.steps }, rules);
   const sq3Sensitivity = (line.sq3.sensitivity || []).map((item) => {
@@ -266,13 +300,11 @@ function runCalculations(line, rules, calculator) {
   const widen = ["100", "50", "25"].includes(String(sq1.cleanliness.level)) || /extensive|critical/i.test(sq1.geometry.class) || [6, 8, 9].includes(sq1.category.value) || Boolean(sq1.aclar.required);
   const sq4 = !blocked(sq2) && !blocked(sq3) ? sq4Band({ sq2: sq2.price, sq3: handsOn, anchor: line.sq5Anchor, widen, rules, inversion: false }) : { blocked: ["needs SQ2 and SQ3"] };
 
-  const calculatorInput = { envelope, ...line.calculator };
-  const online = calculatorPrice(calculatorInput, calculator);
-  const onlineAlternatives = (line.calculator.alternatives || []).map((item) => ({ label: item.label, ...pick(calculatorPrice({ ...calculatorInput, ...item }, calculator)) }));
-
   return {
     sq2,
     sq2Sensitivity,
+    masterSq2,
+    masterSq2Sensitivity,
     sq3: { ...sq3, handsOnPrice: handsOn, steps: line.sq3.steps, batch: line.sq3.batch, concurrency: line.sq3.concurrency, measuredTimeSearch: line.sq3.measuredTimeSearch },
     sq3Sensitivity,
     sq4,
@@ -280,6 +312,33 @@ function runCalculations(line, rules, calculator) {
     sq6: line.sq6 || { status: "not run — SQ6 is a reviewer's challenge step and is not automated" },
     onlineCalculator: online,
     onlineAlternatives,
+  };
+}
+
+// Ruling lot-minimum-per-po-v1: a lot minimum is for the entire PO, not per
+// line item. With more than one part, the minimum is checked once against the
+// PO total (each part at its requested quantity; a part with quantity tiers
+// counts its first tier) and no line carries a lot charge of its own. With one
+// part, each line is a whole PO (tiers are alternatives) and keeps its check.
+function applyPoLotMinimum(lines, rules) {
+  const parts = new Map();
+  for (const line of lines) if (!parts.has(line.request.partNumber)) parts.set(line.request.partNumber, line);
+  if (parts.size < 2) return null;
+  for (const line of lines) {
+    delete line.recommendation.lotMinimum;
+    if (line.recommendation.preferred) delete line.recommendation.preferred.lotCharge;
+  }
+  const counted = [...parts.values()];
+  const cents = counted.reduce((sum, line) => sum + (line.recommendation.preferred ? Math.round(line.recommendation.preferred.unitPrice * line.request.quantity * 100) : 0), 0);
+  const extended = cents / 100;
+  return {
+    ruling: "lot-minimum-per-po-v1",
+    lineIds: counted.map((line) => line.lineId),
+    unpriced: counted.filter((line) => !line.recommendation.preferred).map((line) => line.lineId),
+    extended,
+    minimum: rules.lotMinimum,
+    passes: extended >= rules.lotMinimum,
+    lotCharge: extended >= rules.lotMinimum ? null : rules.lotMinimum,
   };
 }
 
@@ -392,6 +451,7 @@ export function buildDecision({ casePath, storeDir, routerFolder, salesExportPat
       recommendation,
     };
   });
+  const poLotMinimum = applyPoLotMinimum(lines, rules);
 
   const engine = engineFingerprint();
   const fingerprint = sha256(JSON.stringify({
@@ -418,6 +478,7 @@ export function buildDecision({ casePath, storeDir, routerFolder, salesExportPat
     rfq: kase.rfq,
     commercial: kase.commercial,
     lines,
+    poLotMinimum,
     lifecycle: {
       recommendationVersion: null,
       approvedPrice: null,

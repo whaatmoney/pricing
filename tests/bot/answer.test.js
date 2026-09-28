@@ -63,7 +63,7 @@ test("the review card shows the six fields with their sources and the path the m
   const steps = methodPath(l1);
   assert.deepEqual(steps.map((step) => step.split(/[: ]/)[0]), ["History", "Volume", "Labor", "Settle", "Pick"]);
   assert.match(steps[0], /PO1-100/);
-  assert.match(steps[1], /bracket 0–1 in³ base \$5\.00, × cleanliness 1\.2 \(level 300\) × geometry 1\.1 \(Minimal\)/);
+  assert.match(steps[1], /^Volume \(calculator\) \$4\.75: .* × complexity 1 \(Standard\) = \$4\.80, rounded to \$4\.75\. No per-hole charges \(ruling calculator-volume-v1\)\.$/);
   assert.match(steps[4], /holds the accepted PO price/);
   assert.match(methodPath(base.lines[2])[1], /^Volume \(SQ2\): blocked/);
 });

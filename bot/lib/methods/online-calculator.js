@@ -36,9 +36,11 @@ export function calculatorPrice(input, calculator) {
   const blocked = [];
   if (!(L > 0 && W > 0 && H > 0)) blocked.push("Envelope L x W x H is required.");
   if (calculator.PROCESS[input.process] == null) blocked.push(`No process multiplier for "${input.process}".`);
+  const maxDim = L > 0 && W > 0 && H > 0 ? Math.max(L, W, H) : null;
+  const keys = [["size", calculator.SIZE, input.size || (maxDim ? calculator.autoSize(maxDim) : null)], ["weight", calculator.WEIGHT, input.weight || "< 10 lb"], ["complexity", calculator.COMPLEXITY, input.complexity || "Standard"]];
+  for (const [name, table, key] of keys) if (key != null && table[key] == null) blocked.push(`No ${name} multiplier for "${key}".`);
   if (blocked.length) return { method: METHOD_ID, blocked };
 
-  const maxDim = Math.max(L, W, H);
   const volume = L * W * H * calculator.VOL_BUFFER;
   const sizeKey = input.size || calculator.autoSize(maxDim);
   const weightKey = input.weight || "< 10 lb";

@@ -1,6 +1,6 @@
 import { caseConfidence, reasonsText } from "./confidence.js";
 import { lifecycleView } from "./lifecycle.js";
-import { answerLines, approveAllLine, quoteSummary, reviewCard } from "./review-card.js";
+import { answerLines, approveAllLine, poTotal, quoteSummary, reviewCard } from "./review-card.js";
 
 // The HTML review page lives in page.js and the shared design in design.js;
 // this module keeps the Markdown copy and the shared summary.
@@ -156,15 +156,17 @@ export function summarizeLine(line, decision) {
   return { why, flags, checks, decisionNeeded, flatExtended };
 }
 
-export function renderMarkdown(decision, { lifecycle } = {}) {
+export function renderMarkdown(decision, { lifecycle, quoteTemplate = null } = {}) {
   const view = lifecycleView(decision, lifecycle);
   const out = [];
   out.push(`# ${decision.caseId} — first-pass pricing decision v${decision.lifecycle.recommendationVersion}`);
   out.push("", `**${displayStatus(decision, view).text}**`, "");
   const approveAll = [...view.current.values()].some((entry) => entry.choice !== "correction") ? null : approveAllLine(decision);
-  const quote = quoteSummary(decision, view);
+  const quote = quoteSummary(decision, view, { template: quoteTemplate });
   const confidence = caseConfidence(decision.lines, view);
   out.push(`## Quote (${quote.allApproved ? "approved" : "not all lines approved"})`, "", "```", quote.text, "```", "", ...quote.entries.map((entry) => `- ${entry.lineId}: ${entry.state}`), "");
+  const po = poTotal(decision, view);
+  if (po) out.push(`**Lot minimum (entire PO):** ${po.text}`, "");
   out.push(`**Confidence: ${confidence.level}**${reasonsText(confidence.weakest).length ? ` — ${reasonsText(confidence.weakest).join(" ")}` : ""}`, "");
   if (approveAll) out.push("Approve every line at its suggested price:", "", "```", approveAll, "```", "");
   out.push(`Generated ${decision.generatedAt}. Mode ${decision.mode}. Inputs fingerprint \`${decision.inputsFingerprint.slice(0, 16)}\`.${decision.lifecycle.supersedes ? ` Supersedes v${decision.lifecycle.supersedes}.` : ""}`);
@@ -198,7 +200,9 @@ export function renderMarkdown(decision, { lifecycle } = {}) {
     out.push("", "### Before anything is sent", "", ...checks.map((item) => `- ${item}`));
     out.push("", "### Options", "", "| Option | Unit | Extended | Basis |", "|---|---:|---:|---|");
     for (const option of [rec.preferred, ...rec.alternatives].filter(Boolean)) out.push(`| ${option.label} | ${usd(option.unitPrice)} | ${usd(option.extended)} | ${option.basis} |`);
-    if (!isBlocked(online)) out.push(`| Online calculator (reference) | ${usd(online.price)} | ${usd(online.price * request.quantity)} | ${online.method}; no commercial rounding |`);
+    if (calc.sq2.source === "calculator") {
+      if (calc.masterSq2 && !isBlocked(calc.masterSq2)) out.push(`| PriceGPT master SQ2 (reference only) | ${usd(calc.masterSq2.price)} | ${usd(calc.masterSq2.price * request.quantity)} | per-cavity charges; not used (ruling calculator-volume-v1) |`);
+    } else if (!isBlocked(online)) out.push(`| Online calculator (reference) | ${usd(online.price)} | ${usd(online.price * request.quantity)} | ${online.method}; no commercial rounding |`);
 
     out.push("", "### Job cross-check (customer job number)", "", "| Job | First date | Sources | Prices | Agree? |", "|---|---|---|---|---|");
     for (const job of line.history.jobs) out.push(`| ${job.job} | ${job.date} | ${job.sources.map((source) => `${source.source.split(" (")[0]} ${source.evidence.split(",")[0]} ${usd(source.unitPrice)}${source.status === "excluded" ? " (excluded)" : ""}`).join("; ")} | ${job.prices.map(usd).join(", ")} | ${job.agree ? "yes" : "**NO**"} |`);
@@ -214,9 +218,16 @@ export function renderMarkdown(decision, { lifecycle } = {}) {
     for (const step of calc.sq2.trace || []) out.push(`- ${step}`);
     out.push(`- Flags: ${(calc.sq2.flags || []).join("; ")}`);
     out.push("", "Sensitivity:", ...calc.sq2Sensitivity.map((item) => `- ${item.label}: ${item.blocked ? `blocked (${item.blocked.join(" ")})` : usd(item.price)}`));
-    out.push("", `**Volume — ${online.method}**: ${isBlocked(online) ? `blocked: ${online.blocked.join(" ")}` : `${usd(online.price)} (unrounded ${usd(online.unit)})`}`);
-    for (const step of online.trace || []) out.push(`- ${step}`);
-    for (const item of calc.onlineAlternatives) out.push(`- ${item.label}: ${item.blocked ? "blocked" : usd(item.price)}`);
+    if (calc.sq2.source === "calculator") {
+      if (calc.masterSq2) {
+        out.push("", `**Reference only — ${calc.masterSq2.method}** (per-cavity charges; not used, ruling calculator-volume-v1): ${isBlocked(calc.masterSq2) ? `blocked: ${calc.masterSq2.blocked.join(" ")}` : usd(calc.masterSq2.price)}`);
+        for (const step of calc.masterSq2.trace || []) out.push(`- ${step}`);
+      }
+    } else {
+      out.push("", `**Volume — ${online.method}**: ${isBlocked(online) ? `blocked: ${online.blocked.join(" ")}` : `${usd(online.price)} (unrounded ${usd(online.unit)})`}`);
+      for (const step of online.trace || []) out.push(`- ${step}`);
+      for (const item of calc.onlineAlternatives) out.push(`- ${item.label}: ${item.blocked ? "blocked" : usd(item.price)}`);
+    }
     out.push("", `**Labor — ${calc.sq3.method}**: ${isBlocked(calc.sq3) ? `blocked: ${calc.sq3.blocked.join(" ")}` : `${usd(calc.sq3.price)} per part at $${calc.sq3.components.rate}/h, confidence ${calc.sq3.confidence}`}`);
     out.push(`- Batch ${calc.sq3.batch.size} (${calc.sq3.batch.basis}): ${calc.sq3.batch.reason}`);
     out.push("", "| Step | Router | Class | Minutes | Basis |", "|---|---|---|---:|---|");
