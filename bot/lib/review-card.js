@@ -126,6 +126,27 @@ export function approveAllLine(decision) {
   return `${decision.caseId} v${decision.lifecycle.recommendationVersion} all approve ${decision.lines.map((line) => line.recommendation.preferred.unitPrice.toFixed(2)).join("/")}`;
 }
 
+const longDate = (iso) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+
+// Where a suggested price came from. A price taken from history always carries
+// the date it was given (and the quantity it was given for), so the reviewer
+// sees how old it is without opening the reasoning.
+export function priceSource(preferred) {
+  if (!preferred) return null;
+  const basis = preferred.basis || "";
+  const date = basis.match(/\b(\d{4}-\d{2}-\d{2})\b/)?.[1] || null;
+  const when = date ? longDate(date) : "an unrecorded date";
+  if (basis.startsWith("REPEAT-ACCEPTED")) {
+    const qty = basis.match(/, (\d[\d,]*) pcs at/)?.[1];
+    return { kind: "po", date, text: `customer PO of ${when}${qty ? ` · ${qty} pcs` : ""}` };
+  }
+  if (basis.startsWith("PREVIOUS-QUOTE")) {
+    const qty = basis.match(/QPC quoted (\d[\d,]*) pcs/)?.[1];
+    return { kind: "quote", date, text: `QPC quote of ${when}${qty ? ` · ${qty} pcs` : ""}` };
+  }
+  return { kind: "method", date: null, text: "calculator · no price history" };
+}
+
 // The PO total against the lot minimum (ruling lot-minimum-per-po-v1) at the
 // recorded prices where there are any and the suggested ones otherwise. Null
 // for one-part cases, where each line is checked on its own.
@@ -163,6 +184,7 @@ export function quoteSummary(decision, view, { template = null } = {}) {
       line,
       unitPrice: decided ? decided.unitPrice : line.recommendation.preferred?.unitPrice ?? null,
       lineId: line.lineId,
+      source: decided && decided.unitPrice !== line.recommendation.preferred?.unitPrice ? null : priceSource(line.recommendation.preferred),
       state: decided ? `${decided.choice} by ${decided.decidedBy}` : recorded?.choice === "correction" ? "correction requested — not approved" : "suggested — not approved yet",
       approved: Boolean(decided),
     };
@@ -189,5 +211,5 @@ export function quoteSummary(decision, view, { template = null } = {}) {
   const text = template
     ? template.replace("{{parts}}", parts).replace("{{process}}", process).replace(/\n{3,}/g, "\n\n").trim()
     : [parts, process].filter(Boolean).join("\n\n");
-  return { entries: lines.map(({ lineId, state, approved }) => ({ lineId, state, approved })), text, allApproved: lines.every((item) => item.approved) };
+  return { entries: lines.map(({ lineId, source, state, approved }) => ({ lineId, source, state, approved })), text, allApproved: lines.every((item) => item.approved) };
 }

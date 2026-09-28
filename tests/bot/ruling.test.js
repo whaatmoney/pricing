@@ -80,3 +80,24 @@ test("an unknown calculator multiplier name blocks the price instead of producin
   assert.deepEqual(priced.calculations.sq2.blocked, ['No complexity multiplier for "Multiport".']);
   assert.deepEqual(priced.calculations.sq5.blocked, ["SQ2 is blocked"]);
 });
+
+test("a QPC quote that names no part counts only when the case links it and the price is in its text", () => {
+  const world = buildWorld();
+  const messagesFile = `${world.evidence}/messages.json`;
+  const saved = JSON.parse(fs.readFileSync(messagesFile, "utf8"));
+  saved.messages.push({ id: "bare-quote", mailbox: "sales@qpc.example", subject: "Re: RFQ for fittings", from: "e@qpc.example", to: ["buyer@acme.example"], cc: [], receivedAt: "2026-08-24T12:00:00Z", webLink: "https://mail.example/bare", bodyFormat: "text", attachments: [], body: "The unit price to clean and package these fittings is $35.00 each." });
+  fs.writeFileSync(messagesFile, JSON.stringify(saved));
+  const kase = JSON.parse(fs.readFileSync(world.casePath, "utf8"));
+  const line = { ...kase.lines[2], lineId: "L1", quoteLinks: [{ messageId: "bare-quote", unitPrice: 35, quantity: 12, reason: "the customer's 8/24 RFQ listed this part among the fittings" }] };
+  kase.lines = [line];
+  fs.writeFileSync(world.casePath, JSON.stringify(kase));
+  const [linked] = buildDecision(world.options).lines;
+  assert.equal(linked.recommendation.preferred.unitPrice, 35);
+  assert.match(linked.recommendation.preferred.basis, /^PREVIOUS-QUOTE: QPC quoted 12 pcs at \$35\.00 on 2026-08-24/);
+  assert.ok(linked.history.timeline.some((entry) => entry.notes.some((note) => /names no part number; the case ties it to this part/.test(note))));
+
+  kase.lines = [{ ...line, quoteLinks: [{ ...line.quoteLinks[0], unitPrice: 30 }] }];
+  fs.writeFileSync(world.casePath, JSON.stringify(kase));
+  const [rejected] = buildDecision(world.options).lines;
+  assert.equal(rejected.recommendation.quoteCandidates.length, 0, "a linked price that is not in the message is never used");
+});

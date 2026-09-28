@@ -168,7 +168,7 @@ export function renderMarkdown(decision, { lifecycle, quoteTemplate = null } = {
   const approveAll = [...view.current.values()].some((entry) => entry.choice !== "correction") ? null : approveAllLine(decision);
   const quote = quoteSummary(decision, view, { template: quoteTemplate });
   const confidence = caseConfidence(decision.lines, view);
-  out.push(`## Quote (${quote.allApproved ? "approved" : "not all lines approved"})`, "", "```", quote.text, "```", "", ...quote.entries.map((entry) => `- ${entry.lineId}: ${entry.state}`), "");
+  out.push(`## Quote (${quote.allApproved ? "approved" : "not all lines approved"})`, "", "```", quote.text, "```", "", ...quote.entries.map((entry) => `- ${entry.lineId}: ${entry.state}${entry.source ? ` — price from ${entry.source.text}` : ""}`), "");
   const po = poTotal(decision, view);
   if (po) out.push(`**Lot minimum (entire PO):** ${po.text}`, "");
   out.push(`**Confidence: ${confidence.level}**${reasonsText(confidence.weakest).length ? ` — ${reasonsText(confidence.weakest).join(" ")}` : ""}`, "");

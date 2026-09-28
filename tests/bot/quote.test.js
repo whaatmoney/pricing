@@ -42,3 +42,13 @@ test("the lot minimum is checked once on the PO total when the RFQ covers more t
   assert.deepEqual([decided.extended, decided.charge, decided.below], [342, 350, true]);
   assert.equal(poTotal({ lines: decision.lines, poLotMinimum: null }, view()), null);
 });
+
+test("a suggested price from history names the date it was given", () => {
+  const quoteLed = { ...line("L1", "ABC-100", 9, 18, "CLEAN"), recommendation: { preferred: { unitPrice: 18, basis: "PREVIOUS-QUOTE: QPC quoted 12 pcs at $18.00 on 2026-09-22 (e@qpc.example → buyer@acme.example); rule previous-quote-hold-v1" } } };
+  const poLed = { ...line("L2", "DEF-200", 500, 8.5, "CLEAN"), recommendation: { preferred: { unitPrice: 8.5, basis: "REPEAT-ACCEPTED: customer PO PO1-100 dated 2026-03-05, 500 pcs at $8.50, same part, revision and process scope" } } };
+  const chain = { ...line("L3", "GHI-300", 5, 11, "CLEAN"), recommendation: { preferred: { unitPrice: 11, basis: "SQ2/SQ3 stabilized per master v2" } } };
+  const entries = quoteSummary({ lines: [quoteLed, poLed, chain] }, view()).entries;
+  assert.deepEqual(entries.map((entry) => entry.source.text), ["QPC quote of Sep 22, 2026 · 12 pcs", "customer PO of Mar 5, 2026 · 500 pcs", "calculator · no price history"]);
+  const overridden = quoteSummary({ lines: [quoteLed] }, view([{ lineId: "L1", choice: "alternative", unitPrice: 20, decidedBy: "Pat Reviewer" }])).entries[0];
+  assert.equal(overridden.source, null, "a recorded different price is not labelled with the old source");
+});

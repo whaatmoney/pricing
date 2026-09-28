@@ -6,6 +6,7 @@ import { isSameCustomer, partNumberMatch } from "./part-history.js";
 import { copyButton, ICON, SCRIPT, STYLE } from "./design.js";
 import { displayStatus, escapeHtml } from "./render.js";
 import { readManifest } from "./router-snapshot.js";
+import { priceSource } from "./review-card.js";
 
 // The pricing front door. One page joins the mail monitor's view of every RFQ
 // with the pricing side's work on it: which RFQs have a decision page, what
@@ -160,6 +161,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
         quantity: line.request.quantity,
         suggested: line.recommendation.preferred?.unitPrice ?? null,
         lotCharge: line.recommendation.preferred?.lotCharge ?? null,
+        source: priceSource(line.recommendation.preferred),
         decided: view.current.get(line.lineId) || null,
       })),
       partNumbers,
@@ -204,7 +206,8 @@ function linesHtml(kase) {
     const decided = line.decided && line.decided.choice !== "correction" ? line.decided : null;
     const unit = decided ? decided.unitPrice : line.suggested;
     const total = line.lotCharge != null && (!decided || decided.unitPrice === line.suggested) ? line.lotCharge : unit == null ? null : Math.round(unit * line.quantity * 100) / 100;
-    return `<tr><td class="num">${line.quantity}</td><td class="num">${usd(unit)}</td><td class="num strong">${usd(total)}${line.lotCharge != null ? '<span class="note">lot minimum</span>' : ""}</td><td>${decided ? `<span class="chip ok">${ICON.check}${esc(decided.choice)}</span>` : '<span class="chip warn">open</span>'}</td></tr>`;
+    const source = line.source && (!decided || decided.unitPrice === line.suggested) ? `<span class="note source${line.source.kind === "method" ? "" : " dated"}">${esc(line.source.text)}</span>` : "";
+    return `<tr><td class="num">${line.quantity}</td><td class="num">${usd(unit)}${source}</td><td class="num strong">${usd(total)}${line.lotCharge != null ? '<span class="note">lot minimum</span>' : ""}</td><td>${decided ? `<span class="chip ok">${ICON.check}${esc(decided.choice)}</span>` : '<span class="chip warn">open</span>'}</td></tr>`;
   }).join("");
 }
 

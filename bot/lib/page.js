@@ -113,7 +113,8 @@ function quoteSection(decision, view, groups, quote, state) {
       const minimum = line.recommendation.lotMinimum?.minimum ?? null;
       const lot = extended != null && minimum != null && extended < minimum;
       const chip = `<span class="chip ${entry.approved ? "ok" : "warn"}">${entry.approved ? `${ICON.check}approved` : "not approved"}</span>`;
-      return `<tr><td class="num">${line.request.quantity} <span class="unit">${esc(line.request.uom)}</span></td><td class="num">${usd(unit)}</td><td class="num strong">${usd(lot ? minimum : extended)}${lot ? `<span class="note">lot minimum</span>` : ""}<span class="state-inline">${chip}</span></td><td class="col-state">${chip}</td></tr>`;
+      const source = entry.source ? `<span class="note source${entry.source.kind === "method" ? "" : " dated"}">${esc(entry.source.text)}</span>` : "";
+      return `<tr><td class="num">${line.request.quantity} <span class="unit">${esc(line.request.uom)}</span></td><td class="num">${usd(unit)}${source}</td><td class="num strong">${usd(lot ? minimum : extended)}${lot ? `<span class="note">lot minimum</span>` : ""}<span class="state-inline">${chip}</span></td><td class="col-state">${chip}</td></tr>`;
     }).join("");
     return `<div class="quote-part">
       <dl class="facts">

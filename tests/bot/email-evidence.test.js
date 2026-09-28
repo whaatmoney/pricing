@@ -111,3 +111,11 @@ test("a customer's RFQ sheet sent back by QPC with prices filled in is a quote; 
   const internal = classifyMessage(message({ from: "e@qpc.example", to: ["pat@qpc.example"], body: "fyi", attachments: [{ name: "RFQ 1 clean pack.xlsx", text: sheet }] }), context);
   assert.deepEqual(internal.prices, []);
 });
+
+test("Outlook table cells that wrap their text in divs still read as one row", () => {
+  const html = '<table><tbody><tr><td style="x"><div class="c">1</div></td><td><div>ABC-100</div></td><td><div><span>$9.00</span></div></td></tr></tbody></table>';
+  assert.match(htmlToText(html), /1 \| ABC-100 \| \$9\.00 \|/);
+  const quote = classifyMessage(message({ from: "e@qpc.example", to: ["buyer@acme.example"], bodyFormat: "html", body: `<div>Please see your estimated pricing below:</div>${html}` }), context);
+  assert.equal(quote.type, "qpc-sent-estimate");
+  assert.equal(quote.prices[0].unitPrice, 9);
+});

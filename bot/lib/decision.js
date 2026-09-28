@@ -137,6 +137,7 @@ function buildTimeline(line, { dbMatches, invoiceMatches, emails, purchaseOrders
         const notes = [];
         const rule = sizeRuleNote(email.terms.sizeRule, line);
         if (rule) notes.push(rule);
+        if (price.style === "linked-by-case") notes.push(`The quote names no part number; the case ties it to this part: ${price.line}`);
         if (email.subjectScopeConflict) notes.push("subject line states a different oxygen scope than the authored text");
         entries.push(historyEntry({
           date: email.receivedAt.slice(0, 10),
@@ -342,6 +343,24 @@ function applyPoLotMinimum(lines, rules) {
   };
 }
 
+// A QPC quote whose text names no part number ("these fittings are $35.00
+// each") can be tied to a line by the case (line.quoteLinks: messageId,
+// unitPrice, quantity, reason). It counts only when the message is from QPC to
+// the customer and its newest authored text shows that exact price; otherwise
+// the link is recorded as rejected and nothing is priced from it.
+function linkQuote(email, line, kase) {
+  const link = (line.quoteLinks || []).find((item) => item.messageId === email.id);
+  if (!link) return email;
+  const fromQpc = kase.internalDomains.includes(String(email.from).toLowerCase().split("@")[1]);
+  const price = Number(link.unitPrice);
+  const shown = new RegExp(`\\$\\s*${Math.trunc(price).toLocaleString("en-US").replace(/,/g, ",?")}(?:\\.${(price % 1).toFixed(2).slice(2)})${price % 1 ? "" : "?"}(?![\\d.])`).test(email.latest);
+  if (!fromQpc || !email.customerRecipients.length || !shown) {
+    return { ...email, linkedQuote: { ...link, accepted: false, why: !fromQpc ? "not sent by QPC" : !email.customerRecipients.length ? "no customer recipient" : `$${price.toFixed(2)} is not in the message's authored text` } };
+  }
+  const row = { unitPrice: price, quantity: link.quantity ?? null, style: "linked-by-case", matchKind: "linked", line: link.reason };
+  return { ...email, type: "qpc-sent-estimate", typeReason: `QPC quote tied to this part by the case: ${link.reason}`, prices: [...email.prices, row], linkedQuote: { ...link, accepted: true } };
+}
+
 function readMonitorFreshness(monitorStatePath) {
   if (!monitorStatePath || !fs.existsSync(monitorStatePath)) return null;
   const state = readJson(monitorStatePath);
@@ -366,8 +385,8 @@ export function buildDecision({ casePath, storeDir, routerFolder, salesExportPat
     const dbMatches = matchLineHistory(snapshot.records, line, kase.customer);
     const invoiceMatches = matchLineHistory(sales.records, line, kase.customer, { partText: ["description"], scopeText: ["description"] });
     const emails = messages
-      .map((message) => ({ message, classified: classifyMessage(message, { partNumber: line.partNumber, aliases: line.aliases, customerDomains: kase.customer.emailDomains, internalDomains: kase.internalDomains }) }))
-      .filter(({ message, classified }) => Object.values(classified.mentions).some(Boolean)
+      .map((message) => ({ message, classified: linkQuote(classifyMessage(message, { partNumber: line.partNumber, aliases: line.aliases, customerDomains: kase.customer.emailDomains, internalDomains: kase.internalDomains }), line, kase) }))
+      .filter(({ message, classified }) => classified.linkedQuote || Object.values(classified.mentions).some(Boolean)
         || (message.searchQueries || []).some((query) => partNumberMatch(query, line.partNumber, line.aliases)))
       .map(({ classified }) => classified)
       .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));

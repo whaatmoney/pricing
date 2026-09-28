@@ -12,6 +12,8 @@ const ENTITIES = { "&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot
 export function htmlToText(html) {
   return normalizeText(String(html || "")
     .replace(/<(script|style)[\s\S]*?<\/\1>/gi, "")
+    // Outlook wraps each table cell's text in a <div>; keep a row on one line.
+    .replace(/<t([dh])\b[^>]*>([\s\S]*?)<\/t\1>/gi, (_, cell, inner) => `${inner.replace(/<br\s*\/?>|<\/?(?:div|p|span)\b[^>]*>/gi, " ")}</t${cell}>`)
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<hr[^>]*>/gi, "\n________________________________\n")
     .replace(/<\/t[dh]>/gi, " | ")
