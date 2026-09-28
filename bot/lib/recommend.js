@@ -4,7 +4,8 @@
 
 export const POLICIES = {
   "repeat-accepted-hold-v0": {
-    status: "PROPOSED — not yet approved",
+    status: "APPROVED 2026-09-27 by the Quality Manager (pricing owner)",
+    approved: { date: "2026-09-27", by: "Quality Manager (pricing owner)" },
     rule: "When the same customer issued a purchase order within 365 days for the exact part number, same revision and same process scope, at a quantity within ±25% of the request, recommend that PO's unit price and show the Price Lab chain beside it. Otherwise recommend the Price Lab chain result. When neither exists, leave the price uncalculated and name the missing fact.",
   },
   "chain-only-v0": {

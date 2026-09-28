@@ -167,7 +167,9 @@ function divergence(sq2, sq3) {
 // SQ5: <=15% midpoint; 15-30% 70/30 credible/other; >30% credible anchor.
 // The master says to "select credible anchor by category" but defines no
 // category table, so the anchor is an explicit input with a stated reason.
-export function sq5Stabilize({ sq2, sq3, anchor }) {
+// `inversion: false` applies QPC's ruling that labor above volume never
+// overrides the price by itself; the divergence bands then run both ways.
+export function sq5Stabilize({ sq2, sq3, anchor, inversion = true }) {
   const flags = ["DIVERGENCE = |SQ2 - SQ3| / SQ2 (denominator not specified in master)"];
   if (sq3 == null) {
     const rounding = roundToStep(Math.round(sq2 * MICRO), sq2 <= 50 ? 0.5 : 1);
@@ -181,7 +183,7 @@ export function sq5Stabilize({ sq2, sq3, anchor }) {
   if (diff <= 0.15) {
     blendedMicro = (a + b) * 5000;
     rule = "divergence <= 15%: midpoint";
-  } else if (sq2 < sq3) {
+  } else if (inversion && sq2 < sq3) {
     blendedMicro = b * 10000;
     rule = "model inversion (SQ2 < SQ3)";
   } else {
@@ -199,7 +201,7 @@ export function sq5Stabilize({ sq2, sq3, anchor }) {
     }
   }
   let settledMicro = blendedMicro;
-  if (sq2 < sq3) {
+  if (inversion && sq2 < sq3) {
     settledMicro = b * 10000;
     if (!rule.startsWith("model inversion")) rule += "; model inversion (SQ2 < SQ3) → SQ3";
     flags.push("INV");
@@ -210,8 +212,8 @@ export function sq5Stabilize({ sq2, sq3, anchor }) {
 }
 
 // SQ4 is negotiation context only; it never sets the quote unit.
-export function sq4Band({ sq2, sq3, anchor, widen, rules }) {
-  const stabilized = sq5Stabilize({ sq2, sq3, anchor });
+export function sq4Band({ sq2, sq3, anchor, widen, rules, inversion = true }) {
+  const stabilized = sq5Stabilize({ sq2, sq3, anchor, inversion });
   if (stabilized.blocked?.length) return { blocked: stabilized.blocked };
   const flags = [];
   const blended = stabilized.blended ?? stabilized.settled;

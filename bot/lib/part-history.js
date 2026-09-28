@@ -24,10 +24,30 @@ function partPatterns(partNumber) {
   const compact = compactPartNumber(partNumber);
   return {
     compact,
-    exact: new RegExp(`(?<![A-Z0-9])${escapeRegex(exact)}(?![A-Z0-9])`),
+    // A dash or dot joining more characters after the P/N makes a different
+    // part ("ABC-100-1", "0000111222-C01-T1"); before it, see joinedPrefix.
+    exact: new RegExp(`(?<![A-Z0-9])${escapeRegex(exact)}(?![A-Z0-9]|[\\-.][A-Z0-9])`, "g"),
+    extended: new RegExp(`(?:[A-Z0-9]+[\\-.])*${escapeRegex(exact)}(?:[\\-.][A-Z0-9]+)*`),
     // PDF text extraction and people insert spaces, dashes or dots ("704 C4T1 H").
-    spaced: new RegExp(`(?<![A-Z0-9])${compact.split("").map(escapeRegex).join("[\\s\\-.]{0,3}")}(?![A-Z0-9])`),
+    spaced: new RegExp(`(?<![A-Z0-9])${compact.split("").map(escapeRegex).join("[\\s\\-.]{0,3}")}(?![A-Z0-9]|[\\-.][A-Z0-9])`, "g"),
   };
+}
+
+// Labels people join to a P/N with a dash ("RFQ-ABC100", "PN-ABC-100"). Any
+// other characters joined by a dash or dot make a longer, different part
+// ("X-ABC-100").
+const JOINED_LABELS = new Set(["RFQ", "PN", "P/N", "PO", "NO", "REF", "SN", "S/N"]);
+function joinedPrefix(upper, index) {
+  const before = upper.slice(Math.max(0, index - 12), index).match(/([A-Z0-9/]+)[-.]$/);
+  return before && !JOINED_LABELS.has(before[1]) ? before[1] : null;
+}
+
+function firstStandalone(pattern, upper) {
+  pattern.lastIndex = 0;
+  for (let match = pattern.exec(upper); match; match = pattern.exec(upper)) {
+    if (!joinedPrefix(upper, match.index)) return match;
+  }
+  return null;
 }
 
 // Returns how `text` refers to the part, or null. Kinds, strongest first:
@@ -36,15 +56,17 @@ export function partNumberMatch(text, partNumber, aliases = []) {
   const upper = normalizeText(text).toUpperCase();
   if (!upper) return null;
   const patterns = partPatterns(partNumber);
-  let match = patterns.exact.exec(upper);
+  let match = firstStandalone(patterns.exact, upper);
   if (match) return { kind: "exact", matched: match[0], index: match.index };
-  match = patterns.spaced.exec(upper);
+  match = firstStandalone(patterns.spaced, upper);
   if (match) return { kind: "formatting-variant", matched: match[0], index: match.index };
   for (const alias of aliases) {
     const aliasValue = typeof alias === "string" ? alias : alias.value;
-    match = partPatterns(aliasValue).exact.exec(upper);
+    match = firstStandalone(partPatterns(aliasValue).exact, upper);
     if (match) return { kind: "known-alias", matched: match[0], index: match.index, reason: alias.reason || "" };
   }
+  match = patterns.extended.exec(upper);
+  if (match && match[0] !== normalizePartNumber(partNumber)) return { kind: "partial-token", matched: match[0], index: match.index };
   const token = upper.split(/[^A-Z0-9]+/).find((word) => word !== patterns.compact && word.includes(patterns.compact));
   if (token) return { kind: "partial-token", matched: token, index: upper.indexOf(token) };
   return null;

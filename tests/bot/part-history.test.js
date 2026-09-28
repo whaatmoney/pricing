@@ -70,3 +70,19 @@ test("another customer's record for the same P/N is kept apart", () => {
   assert.deepEqual(matches.map((match) => match.comparable), [true, false, false, false]);
   assert.equal(summarizeMatches(matches).comparable, 1);
 });
+
+test("a longer part with a dash or dot suffix is a different part, never an exact match", () => {
+  assert.equal(partNumberMatch("P/N: ABC-100-1 REV. B", "ABC-100").kind, "partial-token");
+  assert.equal(partNumberMatch("P/N: 0000111222-C01-T1 REV. 1", "0000111222-C01").kind, "partial-token");
+  assert.equal(partNumberMatch("P/N: ABC-100.2", "ABC-100").kind, "partial-token");
+  assert.equal(partNumberMatch("P/N: ABC-100 REV. B", "ABC-100").kind, "exact");
+  assert.equal(partNumberMatch("Clean ABC-100. Thanks", "ABC-100").kind, "exact");
+  assert.equal(partNumberMatch("P/N: ABC-100-B", "ABC-100").kind, "partial-token");
+  assert.equal(partNumberMatch("P/N: X-ABC-100 REV. B", "ABC-100").kind, "partial-token");
+  assert.equal(partNumberMatch("P/N: 12.ABC-100", "ABC-100").kind, "partial-token");
+  assert.equal(partNumberMatch("P/N: X-ABC-100-1", "ABC-100").kind, "partial-token");
+  assert.equal(partNumberMatch("P/N:ABC-100 REV. B", "ABC-100").kind, "exact");
+  assert.equal(partNumberMatch("P/N: X-ABC-100", "X-ABC-100").kind, "exact");
+  assert.equal(partNumberMatch("PN-ABC-100 REV B", "ABC-100").kind, "exact");
+  assert.equal(partNumberMatch("X-ABC-100 and later ABC-100 REV B", "ABC-100").kind, "exact");
+});

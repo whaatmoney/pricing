@@ -1,10 +1,16 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { buildDecision } from "./lib/decision.js";
+import { parseArgs } from "node:util";
+import { applyAnswer } from "./lib/answer.js";
+import { writeBoard } from "./lib/board.js";
+import { readLastSync, runSync } from "./lib/sync.js";
+import { buildDecision, loadMessages } from "./lib/decision.js";
+import { customerJobs } from "./lib/job-numbers.js";
+import { lifecyclePath, readLifecycle, recordDecision } from "./lib/lifecycle.js";
 import { renderHtml, renderMarkdown } from "./lib/render.js";
-import { DEFAULT_LIMITS, importSnapshot, listExports, snapshotStatus } from "./lib/router-snapshot.js";
-import { nextVersion } from "./lib/versioning.js";
+import { DEFAULT_LIMITS, importSnapshot, listExports, loadSnapshotRecords, snapshotStatus } from "./lib/router-snapshot.js";
+import { nextVersion, versionsOf } from "./lib/versioning.js";
 
 // QPC first-pass pricing bot. Paths come from a private config file so no
 // company location, export or evidence is committed with the code:
@@ -15,13 +21,30 @@ const USAGE = `Usage:
   node bot/cli.js status                 Router History snapshot age and unimported exports
   node bot/cli.js import [file.xlsx]     Validate and import the newest (or given) weekly export
   node bot/cli.js import-all             Import every export in the folder, oldest first
-  node bot/cli.js decide <case.json>     Build the decision record (JSON, Markdown, HTML)`;
+  node bot/cli.js decide <case.json>     Build the decision record (JSON, Markdown, HTML)
+  node bot/cli.js approve <case.json|case id> --version N [--line L1]
+        --choice approved|alternative|correction [--price 8.50] --by NAME
+        [--at ISO-TIME] [--note TEXT] [--rule approved|rejected]
+                                         Record a person's decision as a separate lifecycle
+                                         entry and re-render that version's page
+  node bot/cli.js answer --by NAME "<answer line>"
+                                         Record a reviewer's pasted answer line exactly as given
+                                         (see bot/lib/answer.js for the forms it accepts)
+  node bot/cli.js render <case.json|case id> [--version N]
+                                         Redraw a saved version's page (the record is not rebuilt)
+  node bot/cli.js sync [--trigger NAME]  Import any new Router History export and rebuild the board
+                                         (what the background job runs; safe to repeat)
+  node bot/cli.js board                  Rewrite the open-decisions page
+  node bot/cli.js jobs <case.json>       The customer's job numbers for each line, from Router
+                                         History, and which ones the saved evidence mentions`;
+
+const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
 
 function loadConfig() {
   const candidates = [process.env.QPC_BOT_CONFIG, new URL("./config.local.json", import.meta.url).pathname].filter(Boolean);
   const file = candidates.find((candidate) => fs.existsSync(candidate));
   if (!file) throw new Error("No config found. Set QPC_BOT_CONFIG or create bot/config.local.json (see bot/README.md).");
-  return JSON.parse(fs.readFileSync(file, "utf8"));
+  return readJson(file);
 }
 
 function printImport(result) {
@@ -31,6 +54,24 @@ function printImport(result) {
   for (const warning of result.warnings || []) console.log(`  ! ${warning.code}: ${warning.detail}`);
   if (result.summary) console.log(`  rows ${result.summary.rows}, received ${result.summary.receivedMin}…${result.summary.receivedMax}, blank dates ${result.summary.blankDates}, repeated occurrences ${result.summary.repeatedSharedOccurrences}`);
 }
+
+// Pages are rendered from the saved record plus its lifecycle file, so a
+// recorded decision shows without rebuilding (or changing) the record itself.
+function renderVersion(outputsDir, caseId, version) {
+  const base = path.join(outputsDir, `CLAUDE-DECISION-${caseId}-v${version}`);
+  const decision = readJson(`${base}.json`);
+  const lifecycle = readLifecycle(lifecyclePath(outputsDir, caseId), caseId);
+  fs.writeFileSync(`${base}.md`, renderMarkdown(decision, { lifecycle }));
+  fs.writeFileSync(`${base}.html`, renderHtml(decision, { lifecycle }));
+  return base;
+}
+
+function refreshBoard(config) {
+  const { file, board } = writeBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, lastSync: readLastSync(config) });
+  return `${file} (${board.cases.filter((kase) => kase.open).length} waiting)`;
+}
+
+const money = (value) => `$${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 async function main() {
   const [command, argument] = process.argv.slice(2);
@@ -72,12 +113,97 @@ async function main() {
     decision.lifecycle.supersedes = supersedes;
     const base = path.join(config.outputsDir, `${stem}-v${version}`);
     fs.writeFileSync(`${base}.json`, JSON.stringify(decision, null, 2));
-    fs.writeFileSync(`${base}.md`, renderMarkdown(decision));
-    fs.writeFileSync(`${base}.html`, renderHtml(decision));
-    console.log(`${reused ? "Rewrote" : "Wrote"} recommendation v${version}${supersedes ? ` (supersedes v${supersedes})` : ""}:\n  ${base}.json\n  ${base}.md\n  ${base}.html`);
+    renderVersion(config.outputsDir, decision.caseId, version);
+    console.log(`${reused ? "Rewrote" : "Wrote"} recommendation v${version}${supersedes ? ` (supersedes v${supersedes})` : ""}:\n  ${base}.json\n  ${base}.md\n  ${base}.html\nBoard: ${refreshBoard(config)}`);
     for (const line of decision.lines) {
       const preferred = line.recommendation.preferred;
       console.log(`  ${line.lineId} ${line.request.partNumber} x ${line.request.quantity}: ${preferred ? `$${preferred.unitPrice.toFixed(2)} (${preferred.label})` : "uncalculated"}`);
+    }
+    return;
+  }
+  if (command === "approve") {
+    const { values, positionals } = parseArgs({
+      args: process.argv.slice(3),
+      allowPositionals: true,
+      options: { version: { type: "string" }, line: { type: "string" }, choice: { type: "string" }, price: { type: "string" }, by: { type: "string" }, at: { type: "string" }, note: { type: "string" }, rule: { type: "string" } },
+    });
+    const target = positionals[0];
+    if (!target) throw new Error("approve needs the case file or case id");
+    const caseId = target.endsWith(".json") ? readJson(path.resolve(target)).caseId : target;
+    const version = Number(values.version);
+    if (!Number.isInteger(version) || version < 1) throw new Error("approve needs --version N: the recommendation version the person reviewed");
+    const { entry, file, notices } = recordDecision({
+      outputsDir: config.outputsDir,
+      caseId,
+      version,
+      lineId: values.line,
+      choice: values.choice,
+      unitPrice: values.price == null ? null : Number(values.price.replace(/^\$/, "")),
+      decidedBy: values.by,
+      decidedAt: values.at,
+      note: values.note,
+      policyRuling: values.rule,
+      approvers: config.approvers,
+    });
+    const base = renderVersion(config.outputsDir, caseId, version);
+    console.log(`Recorded decision #${entry.id} on ${caseId} v${entry.version} ${entry.lineId}: ${entry.choice}${entry.unitPrice != null ? ` ${money(entry.unitPrice)}/ea (${money(entry.extended)} for ${entry.quantity})` : ""} by ${entry.decidedBy}.`);
+    for (const notice of notices) console.log(`  ! ${notice}`);
+    console.log(`  ${file}\nRe-rendered:\n  ${base}.md\n  ${base}.html\nBoard: ${refreshBoard(config)}`);
+    return;
+  }
+  if (command === "answer") {
+    const { values, positionals } = parseArgs({ args: process.argv.slice(3), allowPositionals: true, options: { by: { type: "string" }, at: { type: "string" } } });
+    const text = positionals.join(" ").trim();
+    if (!text) throw new Error("answer needs the reviewer's answer line in quotes");
+    const { answer, results } = applyAnswer({ text, outputsDir: config.outputsDir, decidedBy: values.by, decidedAt: values.at, approvers: config.approvers });
+    for (const { entry, notices } of results) {
+      const what = entry.type === "method-review"
+        ? `method ${entry.verdict}${entry.field ? ` (${entry.field})` : ""}`
+        : `${entry.choice}${entry.unitPrice != null ? ` ${money(entry.unitPrice)}/ea (${money(entry.extended)} for ${entry.quantity})` : ""}`;
+      console.log(`Recorded #${entry.id} ${entry.lineId} v${entry.version}: ${what} by ${entry.decidedBy}.`);
+      for (const notice of notices) console.log(`  ! ${notice}`);
+    }
+    console.log(`Re-rendered: ${renderVersion(config.outputsDir, answer.caseId, answer.version)}.html\nBoard: ${refreshBoard(config)}`);
+    return;
+  }
+  if (command === "render") {
+    const { values, positionals } = parseArgs({ args: process.argv.slice(3), allowPositionals: true, options: { version: { type: "string" } } });
+    const target = positionals[0];
+    if (!target) throw new Error("render needs the case file or case id");
+    const caseId = target.endsWith(".json") ? readJson(path.resolve(target)).caseId : target;
+    const version = values.version ? Number(values.version) : versionsOf(config.outputsDir, `CLAUDE-DECISION-${caseId}`)[0];
+    if (!version) throw new Error(`No recommendation for ${caseId} in ${config.outputsDir}`);
+    console.log(`Re-rendered v${version} (record unchanged): ${renderVersion(config.outputsDir, caseId, version)}.html\nBoard: ${refreshBoard(config)}`);
+    return;
+  }
+  if (command === "sync") {
+    const { values } = parseArgs({ args: process.argv.slice(3), options: { trigger: { type: "string" } } });
+    const record = runSync({ config, limits, trigger: values.trigger || "manual" });
+    console.log(`${record.at} sync (${record.trigger}): ${record.imports.length ? record.imports.map((item) => `${item.fileName} ${item.outcome}${item.failures.length ? ` [${item.failures.join(", ")}]` : ""}`).join("; ") : "no new Router History export"}; board ${record.board ? `${record.board.waiting} waiting, ${record.board.withoutPage ?? "?"} unanswered RFQs without a page, mail checked ${record.board.monitorCutoff}` : "not written"}${record.errors.length ? `; ERRORS: ${record.errors.join("; ")}` : ""}`);
+    if (record.errors.length) process.exitCode = 1;
+    return;
+  }
+  if (command === "board") {
+    console.log(`Board: ${refreshBoard(config)}`);
+    return;
+  }
+  if (command === "jobs") {
+    if (!argument) throw new Error("jobs needs a case file path");
+    const casePath = path.resolve(argument);
+    const kase = readJson(casePath);
+    const messagesPath = path.resolve(path.dirname(casePath), kase.evidence.messages);
+    const messages = fs.existsSync(messagesPath) ? loadMessages(messagesPath) : [];
+    const snapshot = loadSnapshotRecords(config.storeDir);
+    console.log(`Router History ${snapshot.meta.fileName}; ${messages.length} saved evidence messages${fs.existsSync(messagesPath) ? "" : " (no evidence file yet)"}.`);
+    for (const part of customerJobs({ records: snapshot.records, lines: kase.lines, customer: kase.customer, messages })) {
+      console.log(`\n${part.lineIds.join(", ")} ${part.partNumber}: ${part.jobs.length} customer job number(s)${part.recordsWithoutJobNumber ? `; ${part.recordsWithoutJobNumber} exact-part record(s) carry none` : ""}`);
+      for (const job of part.jobs) {
+        const orders = job.workOrders.map((order) => `WO ${order.wo} ${order.unitPrice == null ? "no price" : money(order.unitPrice)}${order.category !== "ordinary" ? ` (${order.category})` : ""}`).join(", ");
+        const evidence = job.mentionedIn.length ? `in evidence: ${job.mentionedIn.map((message) => `${message.receivedAt?.slice(0, 10)} "${message.subject}"`).join("; ")}` : "NOT IN EVIDENCE";
+        console.log(`  ${job.job.padEnd(10)} ${job.firstReceived || "no date   "}  ${orders}  ${evidence}`);
+      }
+      if (!part.jobs.length) console.log("  No work order for this customer and part carries a job number; search by part number only.");
+      else console.log(part.searchNext.length ? `  Search next, in every mailbox the case covers: ${part.searchNext.map((job) => `"${job}"`).join(", ")}` : "  Every job number is already mentioned in the saved evidence.");
     }
     return;
   }

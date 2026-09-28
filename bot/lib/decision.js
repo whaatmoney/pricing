@@ -4,6 +4,7 @@ import path from "node:path";
 import { classifyMessage } from "./email-evidence.js";
 import { compareScope, matchLineHistory, partNumberMatch, summarizeMatches } from "./part-history.js";
 import { recommend } from "./recommend.js";
+import { RULINGS } from "./rulings.js";
 import { loadSnapshotRecords, snapshotStatus } from "./router-snapshot.js";
 import { readSalesExport } from "./sales-export.js";
 import { calculatorPrice, loadCalculator } from "./methods/online-calculator.js";
@@ -22,7 +23,7 @@ const blocked = (result) => Boolean(result?.blocked?.length);
 
 // The code that shapes the decision record. A change here produces a new
 // recommendation version, so a reviewed version is never silently rewritten.
-const ENGINE_FILES = ["decision.js", "email-evidence.js", "part-history.js", "recommend.js", "router-snapshot.js", "sales-export.js", "xlsx.js", "methods/online-calculator.js", "methods/price-lab-rules.js", "methods/pricegpt-master-v2.js", "../../core.js"];
+const ENGINE_FILES = ["decision.js", "email-evidence.js", "part-history.js", "recommend.js", "rulings.js", "router-snapshot.js", "sales-export.js", "xlsx.js", "methods/online-calculator.js", "methods/price-lab-rules.js", "methods/pricegpt-master-v2.js", "../../core.js"];
 
 export function engineFingerprint() {
   const hash = crypto.createHash("sha256");
@@ -251,9 +252,12 @@ function runCalculations(line, rules, calculator) {
     return { label: item.label, ...pick(sq3Throughput({ quantity: line.quantity, batch, steps }, rules)) };
   });
 
-  const sq5 = blocked(sq2) ? { blocked: ["SQ2 is blocked"] } : sq5Stabilize({ sq2: sq2.price, sq3: blocked(sq3) ? null : sq3.price, anchor: line.sq5Anchor });
+  // Ruling hands-on-labor-no-inversion-v1: SQ5 compares SQ2 with hands-on
+  // labor only (lot setup is recovered by the lot minimum) and never inverts.
+  const handsOn = blocked(sq3) ? null : Math.round((sq3.components.partTechMinutes / 60) * sq3.components.rate * 100) / 100;
+  const sq5 = blocked(sq2) ? { blocked: ["SQ2 is blocked"] } : sq5Stabilize({ sq2: sq2.price, sq3: handsOn, anchor: line.sq5Anchor, inversion: false });
   const widen = ["100", "50", "25"].includes(String(sq1.cleanliness.level)) || /extensive|critical/i.test(sq1.geometry.class) || [6, 8, 9].includes(sq1.category.value) || Boolean(sq1.aclar.required);
-  const sq4 = !blocked(sq2) && !blocked(sq3) ? sq4Band({ sq2: sq2.price, sq3: sq3.price, anchor: line.sq5Anchor, widen, rules }) : { blocked: ["needs SQ2 and SQ3"] };
+  const sq4 = !blocked(sq2) && !blocked(sq3) ? sq4Band({ sq2: sq2.price, sq3: handsOn, anchor: line.sq5Anchor, widen, rules, inversion: false }) : { blocked: ["needs SQ2 and SQ3"] };
 
   const calculatorInput = { envelope, ...line.calculator };
   const online = calculatorPrice(calculatorInput, calculator);
@@ -262,7 +266,7 @@ function runCalculations(line, rules, calculator) {
   return {
     sq2,
     sq2Sensitivity,
-    sq3: { ...sq3, steps: line.sq3.steps, batch: line.sq3.batch, concurrency: line.sq3.concurrency, measuredTimeSearch: line.sq3.measuredTimeSearch },
+    sq3: { ...sq3, handsOnPrice: handsOn, steps: line.sq3.steps, batch: line.sq3.batch, concurrency: line.sq3.concurrency, measuredTimeSearch: line.sq3.measuredTimeSearch },
     sq3Sensitivity,
     sq4,
     sq5,
@@ -319,11 +323,15 @@ export function buildDecision({ casePath, storeDir, routerFolder, salesExportPat
     }));
     const calculations = runCalculations(line, rules, calculator);
     const recommendation = recommend({ policyId: kase.recommendationPolicy, line, requestDate, purchaseOrders, chain: blocked(calculations.sq5) ? null : calculations.sq5 });
-    if (recommendation.preferred) recommendation.lotMinimum = lotMinimumCheck(recommendation.preferred.unitPrice, line.quantity, rules);
+    if (recommendation.preferred) {
+      recommendation.lotMinimum = lotMinimumCheck(recommendation.preferred.unitPrice, line.quantity, rules);
+      if (!recommendation.lotMinimum.passes) recommendation.preferred.lotCharge = recommendation.lotMinimum.minimum;
+    }
     const timeline = buildTimeline(line, { dbMatches, invoiceMatches, emails, purchaseOrders });
 
     return {
       lineId: line.lineId,
+      rulings: RULINGS.map((ruling) => ruling.id),
       request: {
         partNumber: line.partNumber,
         aliases: line.aliases,
@@ -398,6 +406,7 @@ export function buildDecision({ casePath, storeDir, routerFolder, salesExportPat
     inputsFingerprint: fingerprint,
     engine: { sourceSha256: engine, files: ENGINE_FILES },
     status: `RECOMMENDATION ONLY — not approved, not sent. ${kase.approvers || "An authorized reviewer"} must review before any quote goes to the customer.`,
+    rulings: RULINGS,
     customer: kase.customer,
     rfq: kase.rfq,
     commercial: kase.commercial,

@@ -3,90 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { buildDecision } from "../../bot/lib/decision.js";
-import { renderHtml, renderMarkdown } from "../../bot/lib/render.js";
+import { renderHtml, renderMarkdown, summarizeLine } from "../../bot/lib/render.js";
 import { importSnapshot } from "../../bot/lib/router-snapshot.js";
 import { nextVersion } from "../../bot/lib/versioning.js";
-import { CALCULATOR_HTML, purchaseOrderText, routerRow, tempDir, workbookBuffer, writeRouterExport, writeRulesPackage } from "./helpers.js";
-
-// One synthetic RFQ world that contains every trap the handoff lists:
-// another customer on the same P/N, a longer token, changed revision, changed
-// process, returned work, a lot-priced PO, an old quoted estimate, an internal
-// forward, a quantity alternative and a line with no usable inputs.
-function buildWorld() {
-  const root = tempDir("qpc-world-");
-  const folder = path.join(root, "router");
-  const store = path.join(root, "store");
-  const evidence = path.join(root, "evidence");
-  fs.mkdirSync(folder);
-  fs.mkdirSync(evidence);
-  const router = [
-    routerRow({ wo: "5001WA", description: "P/N: ABC-100 REV. B\nWO NO: W1-100" }),
-    routerRow({ wo: "5002WA", customer: "OTHER AEROSPACE INC", price: 5 }),
-    routerRow({ wo: "5003WA", description: "P/N: ABC100X REV. B", price: 6 }),
-    routerRow({ wo: "4001WA", received: "01/10/2026", description: "P/N: ABC-100 REV. B\nWO NO: W1-090", price: 7.5, special: "FOR OXYGEN SERVICE" }),
-    routerRow({ wo: "5001WA", description: "P/N: ABC-100 REV. B\nWO NO: W1-100\n**RETURN TO CUSTOMER**", price: 4.25 }),
-    routerRow({ wo: "3001WA", received: "03/01/2026", description: "P/N: ABC-100 REV. C\nWO NO: W1-080", price: 9 }),
-    routerRow({ wo: "2001WA", received: "02/01/2026", description: "P/N: ABC-100 REV. B\nWO NO: W1-070", price: 8, process: "CLEAN PER CC1246 LEVEL 100" }),
-    routerRow({ wo: "1001WA", received: "12/01/2025", description: "P/N: ABC-100 REV. B\nWO NO: W1-060", price: 6 }),
-  ];
-  const exportFile = writeRouterExport(folder, "092126 - LineItems_with_RouterHistory.xlsx", router);
-  assert.equal(importSnapshot(exportFile, { storeDir: store }).outcome, "accepted");
-
-  const sales = path.join(root, "sales.xlsx");
-  fs.writeFileSync(sales, workbookBuffer({ Sheet1: [
-    ["SERVICE", "DATE", "INVOICE", "CUSTOMER", "DESCRIPTION", "QTY", "UNIT PRICE"],
-    ["Cleaning", "12/05/2025", "INV-1", "Acme <Precision> Corp.", "P/N: ABC-100 REV. B\nWO NO: W1-060\nLEVEL 300R4 NOT FOR OXYGEN SERVICE", 400, 7.5],
-  ] }));
-
-  const rulesDir = writeRulesPackage(fs.mkdtempSync(path.join(root, "rules-")));
-  const calculatorHtml = path.join(root, "calculator.html");
-  fs.writeFileSync(calculatorHtml, CALCULATOR_HTML);
-
-  const customerMail = { from: "buyer@acme.example", to: ["sales@qpc.example"], cc: [], bodyFormat: "text", attachments: [], mailbox: "sales@qpc.example" };
-  fs.writeFileSync(path.join(evidence, "messages.json"), JSON.stringify({
-    searchQueries: ["ABC-100"],
-    messages: [
-      { ...customerMail, id: "rfq", subject: "RFQ ABC-100", receivedAt: "2026-09-24T12:00:00Z", webLink: "https://mail.example/rfq", body: "Can you please provide pricing for:\nABC-100 Rev. B\nQty: 500\nCLEAN PER CC1246 LEVEL 300R4 NOT FOR OXYGEN SERVICE" },
-      { ...customerMail, id: "po", subject: "PO1-100", receivedAt: "2026-05-27T12:00:00Z", webLink: "https://mail.example/po", body: "Please see attached PO", attachments: [{ name: "PO1-100.pdf", text: purchaseOrderText() }] },
-      { ...customerMail, id: "lot-po", subject: "PO1-200", receivedAt: "2026-06-15T12:00:00Z", webLink: "https://mail.example/lot", body: "Please see attached PO", attachments: [{ name: "PO1-200.pdf", text: purchaseOrderText({ po: "PO1-200", uom: "Lot", unit: "350.00", extended: "350.00", quantity: 1, job: "W1- 110" }) }] },
-      { id: "estimate", mailbox: "sales@qpc.example", subject: "Re: Pricing for Oxygen Service", from: "e@qpc.example", to: ["buyer@acme.example"], cc: [], receivedAt: "2026-02-27T12:00:00Z", webLink: "https://mail.example/est", bodyFormat: "text", attachments: [], body: "Without oxygen service, see the estimated pricing below:\nABC-100 | 5000 | $7.00\n\n* * *\n\n**From:** Estimator\n**Sent:** Monday\n\nFor oxygen service:\nABC-100 | 5000 | $9.00" },
-      { id: "internal", mailbox: "sales@qpc.example", subject: "fwd ABC-100", from: "e@qpc.example", to: ["jay@qpc.example"], cc: [], receivedAt: "2026-02-20T12:00:00Z", webLink: "https://mail.example/int", bodyFormat: "text", attachments: [], body: "ABC-100 | 500 | $6.00" },
-    ],
-  }));
-  fs.writeFileSync(path.join(evidence, "search-log.json"), JSON.stringify({ searchedAt: "2026-09-27T00:00:00Z", searches: [{ mailbox: "sales@qpc.example", query: "ABC-100", results: 5, complete: true }], gaps: ["Synthetic gap"] }));
-
-  const sq1 = {
-    category: { value: 4 },
-    envelope: { length: 0.7, width: 0.7, height: 0.12, flag: "DIM: DRAWING" },
-    geometry: { class: "Minimal", confidence: "MED" },
-    cavities: { counts: { A: 0, B: 0, C: 0, D: 0 }, confidence: "MED" },
-    cleanliness: { level: "300", flag: "CLN" },
-    specGroup: { flag: "FEE: $0" },
-    aclar: { required: false, flag: "ACLAR: N" },
-    weight: { flag: "WT: NOT PROVIDED" },
-    lengthSurcharge: { amount: 0, basis: "test" },
-    specFee: { amount: 0, basis: "test" },
-  };
-  const sq3 = { batch: { size: 100, basis: "assumed", reason: "test" }, steps: [{ step: "setup", router: "-", class: "LOT", minutes: 60, basis: "estimate" }, { step: "handle", router: "-", class: "PER-PART", minutes: 0.5, basis: "estimate" }], measuredTimeSearch: "none" };
-  const shared = { revision: "B", uom: "EA", currency: "USD", scope: { oxygen: "not-for", level: "300R4" }, process: { verbatim: "LEVEL 300R4 NOT FOR OXYGEN SERVICE", source: "rfq" }, material: { value: "A286", source: "test" }, drawing: { number: "1", revision: "B", title: "SEAL", caveat: "test", dimensions: { maxOdAfterCoating: 0.7, F_max: 0.12, source: "test" } }, packaging: { requirement: "bag", sources: ["test"], status: "extracted" }, sq1, sq3, sq5Anchor: { choice: "SQ2", reason: "test" }, calculator: { process: "300" } };
-  const casePath = path.join(root, "case.json");
-  fs.writeFileSync(casePath, JSON.stringify({
-    caseId: "TEST-ABC-100",
-    mode: "FIRST-PASS",
-    customer: { name: "Acme <Precision> Corp.", aliases: ["ACME PRECISION CORP"], emailDomains: ["acme.example"] },
-    internalDomains: ["qpc.example"],
-    rfq: { initiatedAt: "2026-09-24T12:00:00Z", initiatedBy: "buyer@acme.example", latestAskAt: "2026-09-24T12:00:00Z", latestAskSummary: "RFQ", lastQpcResponse: "none", urgency: null },
-    evidence: { messages: "evidence/messages.json", searchLog: "evidence/search-log.json" },
-    lines: [
-      { lineId: "L1", partNumber: "ABC-100", aliases: [], description: "Seal", quantity: 500, ...shared },
-      { lineId: "L2", partNumber: "ABC-100", aliases: [], description: "Seal", quantity: 5000, ...shared },
-      { lineId: "L3", partNumber: "DEF-200", aliases: [], description: "Unknown part", quantity: 10, ...shared, sq1: { ...sq1, envelope: { length: 0, width: 0, height: 0 } }, sq3: { ...sq3, steps: [] } },
-    ],
-    recommendationPolicy: "repeat-accepted-hold-v0",
-  }));
-  const options = { casePath, storeDir: store, routerFolder: folder, salesExportPath: sales, priceLabDir: rulesDir, calculatorHtml, now: new Date("2026-09-27T12:00:00Z") };
-  return { root, exportFile, store, options };
-}
+import { buildWorld, tempDir } from "./helpers.js";
 
 const world = buildWorld();
 const decision = buildDecision(world.options);
@@ -160,6 +80,21 @@ test("replaying the export and rebuilding gives the same inputs fingerprint and 
   assert.deepEqual(nextVersion(outputs, stem, "changed"), { version: 2, reused: false, supersedes: 1 });
 });
 
+test("when labor outweighs volume the page says so and offers the volume price with the lot minimum", () => {
+  const inverted = structuredClone(l2);
+  inverted.request.quantity = 20;
+  inverted.recommendation.preferred = { label: "Price Lab chain (SQ5, SQ6 pending)", unitPrice: 26, extended: 520, basis: "SQ2/SQ3 stabilized per master v2" };
+  inverted.recommendation.lotMinimum = { extended: 520, minimum: 200, passes: true };
+  inverted.calculations.sq5 = { ...inverted.calculations.sq5, rule: "model inversion (SQ2 < SQ3)", settled: 26 };
+  inverted.history.timeline = [];
+  const { why, checks, decisionNeeded } = summarizeLine(inverted, decision);
+  assert.match(why[0], /No price history/);
+  assert.ok(why.some((item) => /takes the labor figure when it is higher/.test(item)));
+  assert.match(decisionNeeded, new RegExp(`or quote the volume price \\$${inverted.calculations.sq2.price.toFixed(2)}/ea with the \\$200\\.00 lot minimum`));
+  assert.ok(checks.some((item) => /and they set this price/.test(item)));
+  assert.ok(summarizeLine(l1, decision).checks.some((item) => /They do not set the recommended price/.test(item)));
+});
+
 test("the review page escapes source text and never claims approval", () => {
   decision.lifecycle.recommendationVersion = 1;
   const html = renderHtml(decision);
@@ -168,4 +103,13 @@ test("the review page escapes source text and never claims approval", () => {
   const markdown = renderMarkdown(decision);
   assert.match(markdown, /RECOMMENDATION ONLY — not approved, not sent/);
   assert.match(markdown, /Recommend \$8\.50\/ea/);
+});
+
+test("the repeat-price rule is recorded as approved, and the page stops asking about it", () => {
+  assert.match(l1.recommendation.policy.status, /^APPROVED 2026-09-27/);
+  assert.deepEqual(l1.recommendation.policy.approved, { date: "2026-09-27", by: "Quality Manager (pricing owner)" });
+  assert.ok(decision.rulings.some((ruling) => ruling.id === "repeat-accepted-hold-v0-approved"));
+  const { decisionNeeded } = summarizeLine(l1, decision);
+  assert.match(decisionNeeded, /^Approve \$8\.50\/ea/);
+  assert.ok(!/open rule/.test(decisionNeeded));
 });
