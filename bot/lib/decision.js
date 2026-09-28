@@ -61,9 +61,16 @@ export function loadMessages(messagesPath) {
   return messages;
 }
 
+// The customer's own job number in either form the Router History export uses:
+// "WO NO: W1-100" or "JOB NO: 1234-1". It lives here, inside the engine
+// fingerprint, because the job cross-check depends on it.
+const JOB_NO = /\bJOB\s*(?:NO|NUMBER|#)\.?\s*:?\s*([A-Z0-9]+(?:\s*-\s*[A-Z0-9]+)*)/i;
+
 export function customerWorkOrder(text) {
   const match = String(text || "").match(/\bWO\s*(?:NO|NUMBER)\.?\s*:?\s*(W\d)\s*-\s*(\d+)/i);
-  return match ? `${match[1].toUpperCase()}-${match[2]}` : null;
+  if (match) return `${match[1].toUpperCase()}-${match[2]}`;
+  const job = String(text || "").match(JOB_NO);
+  return job ? job[1].replace(/\s+/g, "").toUpperCase() : null;
 }
 
 function withinQuantity(quantity, requested) {

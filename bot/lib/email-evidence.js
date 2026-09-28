@@ -193,7 +193,7 @@ export function classifyMessage(message, context) {
   } else if (fromCustomer && /\bfollow(?:ing)?[\s-]*up\b/i.test(latest)) {
     type = "customer-followup";
     reason = "customer sender follows up in the newest authored text";
-  } else if (fromCustomer && /\b(?:provide|advise|send|confirm)\b[^.\n]{0,40}\b(?:pricing|quote|price)\b|\bquote for\b|\bRFQ\b/i.test(latest)) {
+  } else if (fromCustomer && /\b(?:provide|advise|send|confirm)\b[^.\n]{0,40}\b(?:pricing|quote|price)\b|\bquote for\b|\bplease quote\b|\bquote (?:the )?following\b|\bRFQ\b/i.test(latest)) {
     type = "customer-rfq";
     reason = "customer sender asks for pricing or price confirmation in the newest authored text";
   } else if (fromCustomer && /\b(?:need|needs|require[sd]?|must)\b[^.\n]{0,40}\b(?:aclar|packag\w*|oxygen|spec\w*|level|clean\w*)\b/i.test(latest)) {

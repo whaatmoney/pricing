@@ -4,17 +4,10 @@ import { matchLineHistory } from "./part-history.js";
 // The customer's own job numbers on QPC work orders for a part, so each one can
 // be searched in mail. A customer PO whose subject and file name leave out the
 // part number (or whose PDF spaces it out) is still found by its job number.
-// "WO NO: W1-100" is read by the decision's own parser; "JOB NO: 1234-1" is the
-// other form the Router History export uses.
+// Both forms ("WO NO: W1-100", "JOB NO: 1234-1") are read by the decision's own
+// parser, so this list and the job cross-check always agree.
 
-const JOB_NO = /\bJOB\s*(?:NO|NUMBER|#)\.?\s*:?\s*([A-Z0-9]+(?:\s*-\s*[A-Z0-9]+)*)/i;
-
-export function customerJobNumber(text) {
-  const workOrder = customerWorkOrder(text);
-  if (workOrder) return workOrder;
-  const match = String(text || "").match(JOB_NO);
-  return match ? match[1].replace(/\s+/g, "").toUpperCase() : null;
-}
+export const customerJobNumber = customerWorkOrder;
 
 // PDF text often spaces out hyphens ("W1- 100"), so both sides are compared
 // with the space around hyphens removed and the job read as a whole token.

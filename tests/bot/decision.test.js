@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { buildDecision } from "../../bot/lib/decision.js";
+import { buildDecision, customerWorkOrder } from "../../bot/lib/decision.js";
 import { renderHtml, renderMarkdown, summarizeLine } from "../../bot/lib/render.js";
 import { importSnapshot } from "../../bot/lib/router-snapshot.js";
 import { nextVersion } from "../../bot/lib/versioning.js";
@@ -56,6 +56,12 @@ test("PO, work order and invoice are cross-checked by the customer's job number"
   const job060 = l1.history.jobs.find((job) => job.job === "W1-060");
   assert.equal(job060.agree, false);
   assert.deepEqual(job060.prices.sort(), [6, 7.5]);
+});
+
+test("the job cross-check reads both job-number forms the export uses", () => {
+  assert.equal(customerWorkOrder("P/N: ABC-100 REV. B\nWO NO: W1- 100"), "W1-100");
+  assert.equal(customerWorkOrder("P/N: ABC-100 REV. 02\nMANIFOLD\nJOB NO: 2786-1"), "2786-1");
+  assert.equal(customerWorkOrder("P/N: ABC-100 REV. B"), null);
 });
 
 test("a quantity alternative is priced as its own line", () => {

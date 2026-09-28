@@ -89,5 +89,7 @@ test("customer POs, drawings, holds and unread revisions are typed", () => {
   assert.equal(classifyMessage(message({ body: "see attached for PO qty has been revised", attachments: [{ name: "revised PO", text: null }] }), context).type, "customer-po-unread");
   assert.equal(classifyMessage(message({ body: "please see attached drawing", attachments: [{ name: "dwg.pdf", text: "SEAL (TABULATED) DWG. NO. 1" }] }), context).type, "customer-drawing");
   assert.equal(classifyMessage(message({ body: "Can you please provide pricing for ABC-100 Qty: 500" }), context).type, "customer-rfq");
+  assert.equal(classifyMessage(message({ body: "Please quote the following:\nABC-100 Rev B  Qty 500" }), context).type, "customer-rfq");
+  assert.equal(classifyMessage(message({ body: "Kindly quote the following part, drawing attached for reference." }), context).type, "customer-rfq");
   assert.equal(classifyMessage(message({ body: "Following up on the below." }), context).type, "customer-followup");
 });
