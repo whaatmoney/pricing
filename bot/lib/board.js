@@ -229,7 +229,7 @@ function caseCard(kase) {
     <div class="scroll"><table class="tiers compact"><thead><tr><th class="num">Qty</th><th class="num">Unit</th><th class="num">Total</th><th>Decision</th></tr></thead><tbody>${linesHtml(kase)}</tbody></table></div>
     ${kase.open && kase.confidence.level !== "High" && kase.confidence.reasons.length ? `<p class="small">${ICON.alert} ${esc(kase.confidence.reasons[0])}</p>` : ""}
     <p class="muted small">${monitor}</p>
-    ${kase.staleSnapshot ? `<p class="hint">${ICON.alert}<span>Priced on ${esc(kase.priceSnapshot)}; newer Router History is in. Ask to rebuild.</span></p>` : ""}
+    ${kase.open && kase.staleSnapshot ? `<p class="hint">${ICON.alert}<span>Priced on ${esc(kase.priceSnapshot)}; newer Router History is in. Ask to rebuild.</span></p>` : ""}
     <div class="case-actions"><a class="btn ghost" href="${esc(kase.page)}">Open decision page ${ICON.chevron}</a></div>
   </article>`;
 }
@@ -249,7 +249,9 @@ export function renderBoard(board) {
   const rejected = (sync?.imports || []).filter((item) => item.outcome !== "accepted" && item.outcome !== "replay-noop" && item.outcome !== "archived-older");
   const alerts = [
     ...(monitor?.stale ? [`Mail data is STALE: the monitor's last successful check was ${monitor.cutoff ? when(monitor.cutoff) : "never recorded"}. The monitor may have stopped; "no reply found" rows may be out of date.`] : []),
-    ...rejected.map((item) => `Router History export ${item.fileName} was ${item.outcome}${item.failures.length ? ` (${item.failures.join(", ")})` : ""}. Prices still use the last good snapshot.`),
+    ...rejected.map((item) => item.outcome === "not-downloaded"
+      ? `Router History export ${item.fileName} is in OneDrive but not downloaded to this Mac, so the background sync can't read it. Open the ROUTER HISTORY folder in Finder (or set it to "Always Keep on This Device"), or ask Claude to import it. Prices still use the last good snapshot.`
+      : `Router History export ${item.fileName} was ${item.outcome}${item.failures.length ? ` (${item.failures.join(", ")})` : ""}. Prices still use the last good snapshot.`),
     ...(sync?.errors || []).map((error) => `Sync error: ${error}`),
   ];
   const pill = alerts.length ? ["alert", "Needs attention"] : open.length ? ["warn", `${open.length} waiting on you`] : ["ok", "Nothing waiting"];

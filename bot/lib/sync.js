@@ -22,12 +22,24 @@ export function readLastSync(config) {
   return lines.length ? JSON.parse(lines.at(-1)) : null;
 }
 
-export function runSync({ config, limits, trigger = "manual", now = new Date() }) {
+// OneDrive's Files On-Demand can leave a new export listed but not downloaded
+// (st_blocks 0). A background job cannot make macOS fetch it, so such a file
+// is reported as waiting rather than read and failed.
+export function isCloudOnly(file, statFile = fs.statSync) {
+  const stat = statFile(file);
+  return stat.size > 0 && stat.blocks === 0;
+}
+
+export function runSync({ config, limits, trigger = "manual", now = new Date(), statFile = fs.statSync }) {
   const record = { at: now.toISOString(), trigger, imports: [], board: null, errors: [] };
   try {
     const status = snapshotStatus(config.storeDir, { folder: config.routerHistoryFolder, limits, now });
     const waiting = new Set(status.unimportedNewerExports);
     for (const item of listExports(config.routerHistoryFolder).filter((entry) => waiting.has(entry.name))) {
+      if (isCloudOnly(item.path, statFile)) {
+        record.imports.push({ fileName: item.name, outcome: "not-downloaded", failures: [] });
+        continue;
+      }
       const result = importSnapshot(item.path, { storeDir: config.storeDir, limits, now });
       record.imports.push({ fileName: result.fileName, outcome: result.outcome, failures: (result.failures || []).map((failure) => failure.code) });
     }

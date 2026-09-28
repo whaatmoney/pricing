@@ -5,7 +5,7 @@ import test from "node:test";
 import { buildBoard, monitorLink, quoteSentStatus, renderBoard } from "../../bot/lib/board.js";
 import { buildDecision } from "../../bot/lib/decision.js";
 import { readManifest } from "../../bot/lib/router-snapshot.js";
-import { readLastSync, runSync } from "../../bot/lib/sync.js";
+import { isCloudOnly, readLastSync, runSync } from "../../bot/lib/sync.js";
 import { buildWorld, routerRow, tempDir, workbookBuffer, writeRouterExport } from "./helpers.js";
 
 function syncedWorld(monitorQueue) {
@@ -148,4 +148,18 @@ test("a stopped monitor shows as stale even when its own file says it is fresh, 
   assert.match(html, /Mail data is STALE: the monitor&#39;s last successful check was/);
   assert.match(html, /const generated = Date\.parse\("2026-09-28T06:00:00\.000Z"\)/);
   assert.match(html, /The pricing sync or this Mac may have stopped/);
+});
+
+test("an export OneDrive has not downloaded is reported as waiting, not read and failed", () => {
+  const { world, config } = syncedWorld([]);
+  const before = readManifest(config.storeDir).current;
+  const file = writeRouterExport(world.options.routerFolder, "092826 - LineItems_with_RouterHistory.xlsx", [routerRow({ received: "09/25/2026" })]);
+  const cloudOnly = (target) => (target === file ? { size: 1000, blocks: 0 } : fs.statSync(target));
+  assert.equal(isCloudOnly(file, cloudOnly), true);
+  assert.equal(isCloudOnly(file), false);
+  const record = runSync({ config, trigger: "test", statFile: cloudOnly });
+  assert.deepEqual(record.imports, [{ fileName: "092826 - LineItems_with_RouterHistory.xlsx", outcome: "not-downloaded", failures: [] }]);
+  assert.deepEqual(record.errors, []);
+  assert.equal(readManifest(config.storeDir).current, before);
+  assert.match(fs.readFileSync(record.board.file, "utf8"), /is in OneDrive but not downloaded to this Mac/);
 });
