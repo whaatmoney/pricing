@@ -15,6 +15,7 @@ function sized({ buffered, bracket, dimFlag = "DIM: DRAWING", caveat = "test", h
     ...l2,
     request: { ...l2.request, drawing: { ...l2.request.drawing, caveat } },
     history: { ...l2.history, timeline: [] },
+    recommendation: { ...l2.recommendation, preferred: { ...l2.recommendation.preferred, label: "Price Lab chain (SQ5, SQ6 pending)", basis: "SQ2/SQ3 stabilized per master v2" }, quoteCandidates: [] },
     calculations: {
       ...l2.calculations,
       sq2: { ...l2.calculations.sq2, flags: [dimFlag], components: { ...l2.calculations.sq2.components, bufferedVolume: buffered, bracket } },
@@ -58,4 +59,10 @@ test("a case takes its weakest line's grade, and the page and Markdown show it w
   assert.match(html, /<span class="chip alert">Confidence: Low<\/span>/);
   assert.match(html, /Weakest line: L3\./);
   assert.match(renderMarkdown(v1), /\*\*Confidence: Low\*\* — /);
+});
+
+test("a price that matches QPC's previous quote is graded on that quote, not on size", () => {
+  const graded = lineConfidence(l2);
+  assert.ok(graded.factors.some((factor) => factor.label === "History" && factor.weight === 1 && /already quoted this customer \$7\.00/.test(factor.text)));
+  assert.ok(!graded.factors.some((factor) => ["Size margin", "Sensitivity", "Dimensions"].includes(factor.label)));
 });

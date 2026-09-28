@@ -32,6 +32,13 @@ export const RULINGS = [
     reason: "The master's per-cavity charges overcharge the unit price; the nuance is missing. The published pricing calculator is preferred for volume pricing.",
     rule: "On every first pass the volume price (the SQ2 slot used by the settle step and the band) is the published calculator's price, rounded to the nearest $0.25. Holes, bores and cavities enter only through the calculator's Complexity pick, which the case states with a reason; Cavity $ is always 0. The master's SQ2 is kept in the record as a reference only.",
   },
+  {
+    id: "previous-quote-hold-v1",
+    date: "2026-09-28",
+    decidedBy: "Quality Manager (pricing owner)",
+    reason: "If there is a previous quote then it should match that and that should be the suggestion.",
+    rule: "When no accepted PO applies, the newest quote QPC sent the same customer for the exact part within 365 days is the suggested price (any quantity; the closest quantity on that quote is used). A quote that differs in scope or oxygen service does not qualify. An accepted PO still leads; the calculator chain is shown beside it.",
+  },
 ];
 
 export const ACTIVE_RULINGS = RULINGS.map((ruling) => ruling.id);

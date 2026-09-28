@@ -25,6 +25,7 @@ function smallLotWorld() {
   const world = buildWorld();
   const kase = JSON.parse(fs.readFileSync(world.casePath, "utf8"));
   const line = kase.lines[1];
+  kase.recommendationPolicy = "chain-only-v0";
   kase.lines = [{ ...line, lineId: "L1", quantity: 12, sq3: { ...line.sq3, batch: { size: 12, basis: "assumed", reason: "test" }, steps: [{ step: "setup", router: "-", class: "LOT", minutes: 240, basis: "estimate" }, { step: "handle", router: "-", class: "PER-PART", minutes: 0.5, basis: "estimate" }] } }];
   fs.writeFileSync(world.casePath, JSON.stringify(kase));
   return buildDecision(world.options);

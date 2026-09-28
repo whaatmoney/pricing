@@ -29,12 +29,33 @@ export function acceptedRepeatPrice(purchaseOrders, line, requestDate) {
   return { latest: eligible[0] || null, eligible };
 }
 
+// Ruling previous-quote-hold-v1: when QPC already quoted this customer this
+// exact part, the newest such quote (within 365 days) is matched. Any quantity
+// qualifies; among the newest quote's rows the closest quantity is used. A quote
+// that differs in anything but quantity (scope, oxygen service) does not.
+export function previousQuote(sentQuotes, line, requestDate) {
+  const eligible = sentQuotes.filter((quote) => {
+    const ageDays = (Date.parse(requestDate) - Date.parse(quote.date)) / DAY;
+    return quote.unitPrice > 0
+      && ageDays >= 0 && ageDays <= 365
+      && quote.status !== "excluded"
+      && quote.differences.every((item) => item.startsWith("quantity "));
+  });
+  if (!eligible.length) return { latest: null, eligible };
+  const newest = eligible.reduce((date, quote) => (quote.date > date ? quote.date : date), "");
+  const distance = (quote) => (quote.quantity == null ? Number.POSITIVE_INFINITY : Math.abs(quote.quantity - line.quantity));
+  const latest = eligible.filter((quote) => quote.date === newest).sort((a, b) => distance(a) - distance(b))[0];
+  return { latest, eligible };
+}
+
 const money = (value) => Math.round(value * 100) / 100;
 
-export function recommend({ policyId, line, requestDate, purchaseOrders, chain }) {
+export function recommend({ policyId, line, requestDate, purchaseOrders, sentQuotes = [], chain }) {
   const policy = POLICIES[policyId];
   if (!policy) throw new Error(`Unknown recommendation policy "${policyId}"`);
   const repeat = acceptedRepeatPrice(purchaseOrders, line, requestDate);
+  const quoted = previousQuote(sentQuotes, line, requestDate);
+  const quoteOption = (quote) => option(`Match QPC's previous quote (${quote.date})`, quote.unitPrice, `PREVIOUS-QUOTE: QPC quoted ${quote.quantity ?? "an unstated quantity of"} pcs at $${quote.unitPrice.toFixed(2)} on ${quote.date} (${quote.evidence}); rule previous-quote-hold-v1`);
   const chainPrice = chain?.settled ?? null;
   const alternatives = [];
   const option = (label, unitPrice, basis) => ({ label, unitPrice, extended: money(unitPrice * line.quantity), basis });
@@ -43,7 +64,11 @@ export function recommend({ policyId, line, requestDate, purchaseOrders, chain }
   if (policyId === "repeat-accepted-hold-v0" && repeat.latest) {
     const po = repeat.latest;
     preferred = option(`Hold the customer's accepted price from ${po.poNumber}${po.revision ? ` Rev. ${po.revision}` : ""}`, po.unitPrice, `REPEAT-ACCEPTED: customer PO ${po.poNumber} dated ${po.date}, ${po.quantity} pcs at $${po.unitPrice.toFixed(2)}, same part, revision and process scope`);
+    if (quoted.latest) alternatives.push(quoteOption(quoted.latest));
     if (chainPrice != null) alternatives.push(option("Price Lab chain (SQ5, SQ6 pending)", chainPrice, "SQ2 MODEL anchored; history excluded per master v2"));
+  } else if (policyId === "repeat-accepted-hold-v0" && quoted.latest) {
+    preferred = quoteOption(quoted.latest);
+    if (chainPrice != null) alternatives.push(option("Price Lab chain (SQ5, SQ6 pending)", chainPrice, "SQ2/SQ3 stabilized per master v2"));
   } else if (chainPrice != null) {
     preferred = option("Price Lab chain (SQ5, SQ6 pending)", chainPrice, "SQ2/SQ3 stabilized per master v2");
     if (repeat.latest) alternatives.push(option(`Customer's accepted price on ${repeat.latest.poNumber}`, repeat.latest.unitPrice, "REPEAT-ACCEPTED (shown for comparison only)"));
@@ -54,7 +79,8 @@ export function recommend({ policyId, line, requestDate, purchaseOrders, chain }
     preferred,
     alternatives,
     repeatCandidates: repeat.eligible.map((po) => ({ poNumber: po.poNumber, revision: po.revision, date: po.date, quantity: po.quantity, unitPrice: po.unitPrice })),
+    quoteCandidates: quoted.eligible.map((quote) => ({ date: quote.date, quantity: quote.quantity, unitPrice: quote.unitPrice, evidence: quote.evidence })),
     deltaVsChain: preferred && chainPrice != null ? { dollars: money(preferred.unitPrice - chainPrice), percent: (preferred.unitPrice - chainPrice) / chainPrice } : null,
-    uncalculated: preferred ? null : "No comparable accepted PO and the Price Lab chain is blocked; see the missing facts.",
+    uncalculated: preferred ? null : "No comparable accepted PO, no previous QPC quote, and the Price Lab chain is blocked; see the missing facts.",
   };
 }

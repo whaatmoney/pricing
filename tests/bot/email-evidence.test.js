@@ -93,3 +93,21 @@ test("customer POs, drawings, holds and unread revisions are typed", () => {
   assert.equal(classifyMessage(message({ body: "Kindly quote the following part, drawing attached for reference." }), context).type, "customer-rfq");
   assert.equal(classifyMessage(message({ body: "Following up on the below." }), context).type, "customer-followup");
 });
+
+test("a quote in the reviewer's template is read, one row per listed quantity", () => {
+  const body = "Thank you for your RFQ. Please see your estimated pricing below:\n\nP/N: ABC-100 Rev. B\nQty: 18, 54 & 72\nUnit Price: $7.00\n\nP/N: DEF-200\nQty: 9\nUnit Price: $11.00\n\nProcess: CLEAN TO LEVEL 300\n\nLot Minimum Charge: $350";
+  const result = classifyMessage(message({ from: "e@qpc.example", to: ["buyer@acme.example"], body }), context);
+  assert.equal(result.type, "qpc-sent-estimate");
+  assert.deepEqual(result.prices.map((row) => [row.quantity, row.unitPrice, row.style]), [[18, 7, "quote-template"], [54, 7, "quote-template"], [72, 7, "quote-template"]]);
+  const inline = classifyMessage(message({ from: "e@qpc.example", to: ["buyer@acme.example"], body: "P/N: ABC-100 Qty: 116 Unit Price: $19.50 Process: CLEAN" }), context);
+  assert.deepEqual(inline.prices.map((row) => [row.quantity, row.unitPrice]), [[116, 19.5]]);
+});
+
+test("a customer's RFQ sheet sent back by QPC with prices filled in is a quote; the same sheet sent internally is not", () => {
+  const sheet = "Request for Quotation\nQty\t\t\t\tDescription\t\t\t\tPrice EA\t\tDelivery\n12\tABC-100 BRACKET, LOWER\t\t\t\t\t\t\t18\t\t6-8 days\n12\tPlease separately quote the DEF-200 INSERT within this part:\t\t\t\t\t\t\t10\t\t6-8 days\nQUOTE IS VALID FOR\t\t\t\t90 days";
+  const sent = classifyMessage(message({ from: "e@qpc.example", to: ["buyer@acme.example"], body: "Hi, attached is our quote.", attachments: [{ name: "RFQ 1 clean pack.xlsx", text: sheet }] }), context);
+  assert.equal(sent.type, "qpc-sent-estimate");
+  assert.deepEqual(sent.prices.map((row) => [row.quantity, row.unitPrice, row.style, row.attachment]), [[12, 18, "rfq-sheet", "RFQ 1 clean pack.xlsx"]]);
+  const internal = classifyMessage(message({ from: "e@qpc.example", to: ["pat@qpc.example"], body: "fyi", attachments: [{ name: "RFQ 1 clean pack.xlsx", text: sheet }] }), context);
+  assert.deepEqual(internal.prices, []);
+});

@@ -68,6 +68,42 @@ export function extractPriceRows(text, partNumber, aliases = []) {
   return rows;
 }
 
+// Quotes in the reviewer's own template: "P/N: X Rev. R", then "Qty: 18, 54 &
+// 72" and "Unit Price: $7.00" (on the next lines or the same one). Every listed
+// quantity gets the price.
+export function extractTemplateQuotes(text, partNumber, aliases = []) {
+  const rows = [];
+  for (const segment of normalizeText(text).split(/(?=\bP\/N:)/i).filter((item) => /^P\/N:/i.test(item))) {
+    const head = segment.match(/^P\/N:\s*([^\n]*?)(?=\s*(?:Qty:|Unit Price:|\n|$))/i);
+    const found = head && partNumberMatch(head[1], partNumber, aliases);
+    if (!found || found.kind === "partial-token") continue;
+    const price = segment.match(/Unit Price:\s*\$\s*([\d,]+(?:\.\d{1,2})?)/i);
+    if (!price) continue;
+    const qty = segment.match(/Qty:\s*([^\n]*?)(?=\s*(?:Unit Price:|Process:|\n|$))/i);
+    const quantities = qty ? [...qty[1].matchAll(/\d[\d,]*/g)].map((match) => money(match[0])) : [];
+    const line = segment.split(/\n\s*\n/)[0].replace(/\s*\n\s*/g, " / ").trim();
+    for (const quantity of quantities.length ? quantities : [null]) rows.push({ unitPrice: money(price[1]), quantity, style: "quote-template", matchKind: found.kind, line });
+  }
+  return rows;
+}
+
+// A customer's RFQ sheet sent back by QPC with prices filled in: tab-separated
+// cells Qty, a description naming the part, Price EA (often without "$") and
+// delivery. Only read on messages QPC sent to the customer.
+export function extractSheetQuotes(text, partNumber, aliases = []) {
+  const rows = [];
+  for (const raw of normalizeText(text).split("\n")) {
+    const cells = raw.split("\t").map((cell) => cell.trim()).filter(Boolean);
+    if (cells.length < 3 || !/^\d[\d,]*$/.test(cells[0])) continue;
+    const found = partNumberMatch(cells[1], partNumber, aliases);
+    if (!found || found.kind === "partial-token") continue;
+    const priceCell = cells.slice(2).find((cell) => /^\$?\s*\d[\d,]*(?:\.\d{1,2})?$/.test(cell));
+    if (!priceCell) continue;
+    rows.push({ unitPrice: money(priceCell.replace(/[$\s]/g, "")), quantity: money(cells[0]), style: "rfq-sheet", matchKind: found.kind, line: cells.join(" | ") });
+  }
+  return rows;
+}
+
 export function extractTerms(text) {
   const source = normalizeText(text);
   const terms = {};
@@ -164,7 +200,13 @@ export function classifyMessage(message, context) {
   const fromCustomer = customerDomains.includes(senderDomain);
   const fromQpc = internalDomains.includes(senderDomain);
 
-  const prices = extractPriceRows(latest, partNumber, aliases);
+  const templateRows = extractTemplateQuotes(latest, partNumber, aliases);
+  const sheetRows = fromQpc && customerRecipients.length
+    ? (message.attachments || []).filter((attachment) => attachment.text).flatMap((attachment) => extractSheetQuotes(attachment.text, partNumber, aliases).map((row) => ({ ...row, attachment: attachment.name })))
+    : [];
+  const prices = extractPriceRows(latest, partNumber, aliases)
+    .filter((row) => !(templateRows.length && /Unit Price:/i.test(row.line)))
+    .concat(templateRows, sheetRows);
   const terms = extractTerms(latest);
   const scopeLatest = scopeFlags(latest);
   const scopeSubject = scopeFlags(message.subject || "");

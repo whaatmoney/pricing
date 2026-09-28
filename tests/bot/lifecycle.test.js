@@ -190,7 +190,7 @@ test("the quote block lists P/N, Qty and Unit Price per part and the shared proc
   const before = quoteSummary(asVersion(1, "fp-1"), lifecycleView(asVersion(1, "fp-1"), saved(dir)));
   assert.equal(before.allApproved, false);
   assert.equal(before.entries[0].state, "suggested — not approved yet");
-  assert.equal(before.text, "P/N: ABC-100 Rev. B\nQty: 500\nUnit Price: $8.50\n\nP/N: ABC-100 Rev. B\nQty: 5000\nUnit Price: $5.00\n\nP/N: DEF-200 Rev. B\nQty: 10\nUnit Price: not priced\n\nProcess: LEVEL 300R4 NOT FOR OXYGEN SERVICE");
+  assert.equal(before.text, "P/N: ABC-100 Rev. B\nQty: 500\nUnit Price: $8.50\n\nP/N: ABC-100 Rev. B\nQty: 5000\nUnit Price: $7.00\n\nP/N: DEF-200 Rev. B\nQty: 10\nUnit Price: not priced\n\nProcess: LEVEL 300R4 NOT FOR OXYGEN SERVICE");
   decide(dir, { lineId: "L1", choice: "alternative", unitPrice: 0.3, note: "Sample price" });
   const after = quoteSummary(asVersion(1, "fp-1"), lifecycleView(asVersion(1, "fp-1"), saved(dir)));
   assert.equal(after.entries[0].state, "alternative by Pat Reviewer");

@@ -83,6 +83,10 @@ function story(group, decision) {
     steps.push(["Labor", `Hands-on labor is ${usd(handsOn)} a part${below ? ", under the size price, so it doesn't raise it" : ""}.${calc.sq3.handsOnPrice != null ? " Setup time is covered by the lot minimum." : ""}`]);
   }
   if (!isBlocked(calc.sq5) && !isBlocked(calc.sq2) && calc.sq5.settled !== calc.sq2.price) steps.push(["Balance", `Weighing size against labor settles at ${usd(calc.sq5.settled)}.`]);
+  if (rec.preferred?.basis.startsWith("PREVIOUS-QUOTE")) {
+    const quote = rec.quoteCandidates?.find((item) => item.unitPrice === rec.preferred.unitPrice);
+    steps.push(["Pick", `Match QPC's previous quote to ${customer}, ${usd(rec.preferred.unitPrice)}${quote ? ` (${quote.quantity ?? "?"} pcs, ${day(quote.date)})` : ""}. The method alone gives ${usd(calc.sq5.settled)}.`]);
+  }
   if (rec.preferred?.basis.startsWith("REPEAT-ACCEPTED")) steps.push(["Pick", `Hold the price ${customer} already accepted, ${usd(rec.preferred.unitPrice)}. The method alone gives ${usd(calc.sq5.settled)}.`]);
   const results = group.map((line) => {
     const p = line.recommendation.preferred;

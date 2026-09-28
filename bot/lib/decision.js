@@ -388,12 +388,13 @@ export function buildDecision({ casePath, storeDir, routerFolder, salesExportPat
       };
     }));
     const calculations = runCalculations(line, rules, calculator);
-    const recommendation = recommend({ policyId: kase.recommendationPolicy, line, requestDate, purchaseOrders, chain: blocked(calculations.sq5) ? null : calculations.sq5 });
+    const timeline = buildTimeline(line, { dbMatches, invoiceMatches, emails, purchaseOrders });
+    const sentQuotes = timeline.filter((entry) => entry.source === "QPC sent estimate");
+    const recommendation = recommend({ policyId: kase.recommendationPolicy, line, requestDate, purchaseOrders, sentQuotes, chain: blocked(calculations.sq5) ? null : calculations.sq5 });
     if (recommendation.preferred) {
       recommendation.lotMinimum = lotMinimumCheck(recommendation.preferred.unitPrice, line.quantity, rules);
       if (!recommendation.lotMinimum.passes) recommendation.preferred.lotCharge = recommendation.lotMinimum.minimum;
     }
-    const timeline = buildTimeline(line, { dbMatches, invoiceMatches, emails, purchaseOrders });
 
     return {
       lineId: line.lineId,

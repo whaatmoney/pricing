@@ -74,7 +74,9 @@ export function methodPath(line) {
     const chain = calc.sq5?.settled;
     steps.push(rec.preferred.basis.startsWith("REPEAT-ACCEPTED")
       ? `Pick ${usd(rec.preferred.unitPrice)}: rule ${rec.policy.id} (${rec.policy.status}) holds the accepted PO price over the chain's ${usd(chain)}.`
-      : `Pick ${usd(rec.preferred.unitPrice)}: no accepted PO applies, so the chain's settled price stands (rule ${rec.policy.id}).`);
+      : rec.preferred.basis.startsWith("PREVIOUS-QUOTE")
+        ? `Pick ${usd(rec.preferred.unitPrice)}: no accepted PO applies; rule previous-quote-hold-v1 matches QPC's previous quote over the chain's ${usd(chain)}.`
+        : `Pick ${usd(rec.preferred.unitPrice)}: no accepted PO or previous quote applies, so the chain's settled price stands (rule ${rec.policy.id}).`);
   } else {
     steps.push(`Pick: none. ${rec.uncalculated}`);
   }

@@ -16,7 +16,8 @@ const byEvidence = (line, text) => line.history.timeline.filter((entry) => entry
 test("the accepted PO for the same part, revision, scope and quantity band leads, with the chain beside it", () => {
   assert.equal(l1.recommendation.preferred.unitPrice, 8.5);
   assert.match(l1.recommendation.preferred.basis, /PO1-100/);
-  assert.equal(l1.recommendation.alternatives[0].unitPrice, l1.calculations.sq5.settled);
+  assert.equal(l1.recommendation.alternatives.find((option) => option.label.startsWith("Price Lab chain")).unitPrice, l1.calculations.sq5.settled);
+  assert.ok(l1.recommendation.alternatives.some((option) => option.basis.startsWith("PREVIOUS-QUOTE")), "an accepted PO outranks a previous quote, which is shown beside it");
   assert.equal(l1.recommendation.lotMinimum, undefined, "with more than one part the lot minimum is checked on the PO, not the line");
   assert.equal(l1.recommendation.preferred.lotCharge, undefined);
   assert.deepEqual(decision.poLotMinimum, { ruling: "lot-minimum-per-po-v1", lineIds: ["L1", "L3"], unpriced: ["L3"], extended: 4250, minimum: 200, passes: true, lotCharge: null });
@@ -66,9 +67,11 @@ test("the job cross-check reads both job-number forms the export uses", () => {
   assert.equal(customerWorkOrder("P/N: ABC-100 REV. B"), null);
 });
 
-test("a quantity alternative is priced as its own line", () => {
+test("a quantity alternative with no accepted PO matches QPC's previous quote, with the chain beside it", () => {
   assert.equal(l2.recommendation.repeatCandidates.length, 0);
-  assert.equal(l2.recommendation.preferred.label, "Price Lab chain (SQ5, SQ6 pending)");
+  assert.equal(l2.recommendation.preferred.unitPrice, 7);
+  assert.match(l2.recommendation.preferred.basis, /^PREVIOUS-QUOTE: QPC quoted 5000 pcs at \$7\.00 on 2026-02-27/);
+  assert.equal(l2.recommendation.alternatives[0].unitPrice, l2.calculations.sq5.settled);
   assert.equal(byEvidence(l2, "e@qpc.example")[0].status, "unverified");
 });
 
@@ -94,6 +97,9 @@ test("when labor outweighs volume the page says so and offers the volume price w
   inverted.recommendation.preferred = { label: "Price Lab chain (SQ5, SQ6 pending)", unitPrice: 26, extended: 520, basis: "SQ2/SQ3 stabilized per master v2" };
   inverted.recommendation.lotMinimum = { extended: 520, minimum: 200, passes: true };
   inverted.calculations.sq5 = { ...inverted.calculations.sq5, rule: "model inversion (SQ2 < SQ3)", settled: 26 };
+  inverted.recommendation.alternatives = [];
+  inverted.recommendation.quoteCandidates = [];
+  inverted.recommendation.deltaVsChain = null;
   inverted.history.timeline = [];
   const { why, checks, decisionNeeded } = summarizeLine(inverted, decision);
   assert.match(why[0], /No price history/);

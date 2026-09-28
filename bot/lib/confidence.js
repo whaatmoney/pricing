@@ -35,6 +35,8 @@ export function lineConfidence(line, { recorded = null } = {}) {
     add(2, "History", `The customer accepted ${usd(rec.preferred.unitPrice)} on ${orders.length === 1 ? "a PO" : `${orders.length} POs`} for this exact part, revision and scope in the last 12 months.`);
     const jobs = line.history.jobs.filter((job) => rec.repeatCandidates.some((po) => po.poNumber && job.sources.some((source) => source.evidence.startsWith(po.poNumber))));
     if (jobs.length && jobs.every((job) => job.agree)) add(1, "Work orders", "QPC's own work orders for those jobs carry the same price.");
+  } else if (rec.preferred.basis.startsWith("PREVIOUS-QUOTE")) {
+    add(1, "History", `QPC already quoted this customer ${usd(rec.preferred.unitPrice)} for this exact part; the suggestion matches it (a quote, not a customer PO).`);
   } else if (line.history.timeline.some((entry) => entry.status === "comparable")) {
     add(0, "History", "Comparable history exists but did not set the price.");
   } else {
@@ -42,7 +44,7 @@ export function lineConfidence(line, { recorded = null } = {}) {
   }
 
   // Size only matters when the size method sets the price.
-  if (!repeatLed) {
+  if (!repeatLed && !rec.preferred.basis.startsWith("PREVIOUS-QUOTE")) {
     if (isBlocked(calc.sq2)) {
       add(-3, "Size", "The size method could not run.");
     } else {
