@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { caseConfidence, reasonsText } from "./confidence.js";
 import { lifecyclePath, lifecycleView, readLifecycle } from "./lifecycle.js";
 import { isSameCustomer, partNumberMatch } from "./part-history.js";
 import { copyButton, ICON, SCRIPT, STYLE } from "./design.js";
@@ -162,6 +163,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
         decided: view.current.get(line.lineId) || null,
       })),
       partNumbers,
+      confidence: (() => { const grade = caseConfidence(decision.lines, view); return { level: grade.level, reasons: reasonsText(grade.weakest) }; })(),
       feedback: lifecycle.entries.filter((entry) => entry.type === "method-review" || entry.choice === "correction").map((entry) => ({ ...entry, caseId })),
     };
   });
@@ -216,7 +218,7 @@ function caseCard(kase) {
   return `<article class="case ${kase.tone}">
     <div class="case-head">
       <div class="case-title"><a class="case-link" href="${esc(kase.page)}">${esc(kase.customer)}</a><span class="muted small">${esc(kase.reference || kase.caseId)} · v${kase.version}</span></div>
-      <span class="pill ${kase.tone}">${esc(kase.state)}</span>
+      <div class="case-pills"><span class="chip ${{ High: "ok", Medium: "warn", Low: "alert" }[kase.confidence.level]}" title="${esc(kase.confidence.reasons.join(" "))}">Confidence: ${esc(kase.confidence.level)}</span><span class="pill ${kase.tone}">${esc(kase.state)}</span></div>
     </div>
     <ul class="meta">
       <li class="strong-chip">${esc(kase.partNumbers.join(", "))}</li>
@@ -225,6 +227,7 @@ function caseCard(kase) {
       ${kase.open && kase.waitingBusinessDays != null ? `<li class="${late ? "late" : ""}">${kase.waitingBusinessDays} business day${kase.waitingBusinessDays === 1 ? "" : "s"} waiting</li>` : ""}
     </ul>
     <div class="scroll"><table class="tiers compact"><thead><tr><th class="num">Qty</th><th class="num">Unit</th><th class="num">Total</th><th>Decision</th></tr></thead><tbody>${linesHtml(kase)}</tbody></table></div>
+    ${kase.open && kase.confidence.level !== "High" && kase.confidence.reasons.length ? `<p class="small">${ICON.alert} ${esc(kase.confidence.reasons[0])}</p>` : ""}
     <p class="muted small">${monitor}</p>
     ${kase.staleSnapshot ? `<p class="hint">${ICON.alert}<span>Priced on ${esc(kase.priceSnapshot)}; newer Router History is in. Ask to rebuild.</span></p>` : ""}
     <div class="case-actions"><a class="btn ghost" href="${esc(kase.page)}">Open decision page ${ICON.chevron}</a></div>
@@ -334,6 +337,7 @@ const BOARD_STYLE = `
 .case:hover { border-color:var(--line-2); box-shadow:var(--shadow-hover); }
 .case.ok { border-left-color:var(--ok); } .case.alert { border-left-color:var(--alert); }
 .case-head { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--s3); }
+.case-pills { display:flex; gap:var(--s2); align-items:center; flex-wrap:wrap; justify-content:flex-end; }
 .case-title { display:grid; gap:2px; min-width:0; }
 .case-link { font-size:17px; font-weight:650; color:var(--ink); text-decoration:none; letter-spacing:-.01em; }
 .case-link:hover { text-decoration:underline; }

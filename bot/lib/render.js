@@ -1,3 +1,4 @@
+import { caseConfidence, reasonsText } from "./confidence.js";
 import { lifecycleView } from "./lifecycle.js";
 import { answerLines, approveAllLine, quoteSummary, reviewCard } from "./review-card.js";
 
@@ -162,7 +163,9 @@ export function renderMarkdown(decision, { lifecycle } = {}) {
   out.push("", `**${displayStatus(decision, view).text}**`, "");
   const approveAll = [...view.current.values()].some((entry) => entry.choice !== "correction") ? null : approveAllLine(decision);
   const quote = quoteSummary(decision, view);
+  const confidence = caseConfidence(decision.lines, view);
   out.push(`## Quote (${quote.allApproved ? "approved" : "not all lines approved"})`, "", "```", quote.text, "```", "", ...quote.entries.map((entry) => `- ${entry.lineId}: ${entry.state}`), "");
+  out.push(`**Confidence: ${confidence.level}**${reasonsText(confidence.weakest).length ? ` — ${reasonsText(confidence.weakest).join(" ")}` : ""}`, "");
   if (approveAll) out.push("Approve every line at its suggested price:", "", "```", approveAll, "```", "");
   out.push(`Generated ${decision.generatedAt}. Mode ${decision.mode}. Inputs fingerprint \`${decision.inputsFingerprint.slice(0, 16)}\`.${decision.lifecycle.supersedes ? ` Supersedes v${decision.lifecycle.supersedes}.` : ""}`);
   for (const line of decision.lines) {

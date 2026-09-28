@@ -90,6 +90,9 @@ code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12.
 .hero { border-top:3px solid var(--warn); } .hero.approved { border-top-color:var(--ok); }
 .hero-head { display:flex; align-items:flex-end; justify-content:space-between; gap:var(--s4); }
 .hero-head h2 { font-size:24px; margin-top:2px; }
+.confidence { display:grid; gap:var(--s2); padding:var(--s3) var(--s4); border-radius:var(--radius-sm); background:var(--surface-2); }
+.confidence ul { margin:0; padding-left:var(--s5); display:grid; gap:2px; font-size:13.5px; color:var(--ink-2); }
+.confidence .chip { justify-self:start; }
 .hint { display:flex; gap:var(--s2); align-items:flex-start; font-size:13px; color:var(--warn); }
 .quote-part { display:grid; gap:var(--s4); }
 .facts { margin:0; display:grid; gap:var(--s3); }

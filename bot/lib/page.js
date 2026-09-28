@@ -2,6 +2,7 @@ import { businessDaysSince } from "./board.js";
 import { lifecycleView } from "./lifecycle.js";
 import { describeDecision, describeReview, displayStatus, escapeHtml, sizeText, STATUS_LABEL, summarizeLine, whyNot } from "./render.js";
 import { answerLines, approveAllLine, assumptions, methodPath, quoteSummary, reviewCard } from "./review-card.js";
+import { caseConfidence, reasonsText } from "./confidence.js";
 import { copyButton, ICON, SCRIPT as PAGE_SCRIPT, STYLE as PAGE_STYLE } from "./design.js";
 
 // The decision page, laid out in the order a reviewer works: what is being
@@ -124,10 +125,18 @@ function quoteSection(decision, view, groups, quote, state) {
       }).join("")}
     </div>` : "";
 
+  const confidence = caseConfidence(decision.lines, view);
+  const reasons = reasonsText(confidence.weakest);
+  const tone = { High: "ok", Medium: "warn", Low: "alert" }[confidence.level];
   return `<section id="quote" class="hero${quote.allApproved ? " approved" : ""}" aria-labelledby="quote-title">
     <div class="hero-head">
       <div><p class="eyebrow">${quote.allApproved ? "Ready to send" : "Suggested quote"}</p><h2 id="quote-title">Quote</h2></div>
       ${copyButton(quote.text, "Copy quote", "primary")}
+    </div>
+    <div class="confidence ${tone}">
+      <span class="chip ${tone}">Confidence: ${confidence.level}</span>
+      ${reasons.length ? `<ul>${reasons.map((reason) => `<li>${esc(reason)}</li>`).join("")}</ul>` : ""}
+      ${confidence.lines.length > 1 && new Set(confidence.lines.map((item) => item.level)).size > 1 ? `<p class="muted small">Weakest line: ${esc(confidence.weakest.lineId)}.</p>` : ""}
     </div>
     ${quote.allApproved ? "" : `<p class="hint">${ICON.alert}<span>${state.tone === "alert" ? "A fact is being corrected. Don't send this version." : "Not approved yet. Copy only after you decide below."}</span></p>`}
     ${blocks}
