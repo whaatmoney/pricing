@@ -163,3 +163,31 @@ test("an export OneDrive has not downloaded is reported as waiting, not read and
   assert.equal(readManifest(config.storeDir).current, before);
   assert.match(fs.readFileSync(record.board.file, "utf8"), /is in OneDrive but not downloaded to this Mac/);
 });
+
+test("the board shows the plan and a dated history that merges the session log with recorded events", () => {
+  const { config } = syncedWorld([]);
+  const trackerPath = path.join(config.outputsDir, "tracker.json");
+  fs.writeFileSync(trackerPath, JSON.stringify({
+    workingTowards: [{ status: "now", title: "Price the next batch", detail: "Section-1 requests", since: "2026-09-28" }, { status: "done", title: "Old item" }],
+    history: [{ at: "2026-09-27", kind: "ruling", text: "Lot minimum is per PO" }],
+  }));
+  const board = buildBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, trackerPath });
+  assert.equal(board.plan.length, 2);
+  assert.deepEqual(board.history.map((item) => item.kind), ["priced", "ruling"], "newest first; the page build comes from the record");
+  const html = renderBoard(board);
+  assert.match(html, /<h2 id="plan-title">Working towards<\/h2><span class="count">1<\/span>/);
+  assert.match(html, /Working on now[\s\S]*Price the next batch/);
+  assert.match(html, /<h2 id="history-title">History<\/h2>[\s\S]*Lot minimum is per PO/);
+  assert.equal(buildBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState }).plan.length, 0, "no tracker file, no plan panel");
+});
+
+test("each case and unpriced RFQ links to its RFQ email in Outlook", () => {
+  const board = boardFor([
+    { customer: "Acme Precision Corp", reference: "77 / ABC-100 Rev B", priority_section: 1, status: "New RFQ", evidence_ids: ["rfq"], evidence_links: ["https://outlook.example/rfq"] },
+    { customer: "Other Co", reference: "RFQ9", priority_section: 1, status: "New RFQ", evidence_ids: ["AAMk_a-b="] },
+  ]);
+  assert.ok(board.cases[0].rfqLink);
+  const other = board.monitor.withoutPage.find((item) => item.customer === "Other Co");
+  assert.equal(other.rfqLink, "https://outlook.office365.com/owa/?ItemID=AAMk%2Ba%2Fb%3D&exvsurl=1&viewmodel=ReadMessageItem");
+  assert.match(renderBoard(board), /Open RFQ email/);
+});

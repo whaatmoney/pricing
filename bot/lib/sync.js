@@ -47,7 +47,7 @@ export function runSync({ config, limits, trigger = "manual", now = new Date(), 
     record.errors.push(`import: ${error.message}`);
   }
   try {
-    const { file, board } = writeBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, now, lastSync: record, storeDir: config.storeDir });
+    const { file, board } = writeBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, now, lastSync: record, storeDir: config.storeDir, trackerPath: config.trackerFile || null });
     record.board = { file, waiting: board.cases.filter((kase) => kase.open).length, withoutPage: board.monitor?.withoutPage.length ?? null, monitorCutoff: board.monitor?.cutoff ?? null };
   } catch (error) {
     record.errors.push(`board: ${error.message}`);

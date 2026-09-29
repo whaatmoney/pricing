@@ -119,7 +119,37 @@ export const PRICING_REQUEST = /\bRFQ\b|\bquot|\bpric|\bestimat|\bbudgetary\b|\b
 
 const SECTION = { 1: "no customer-facing reply found", 2: "acknowledged, no quote found", 3: "quote or later activity" };
 
-export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, now = new Date() }) {
+// The plan and the log of rulings, builds and commits live in a private
+// tracker file (config.trackerFile), kept by the Claude session; the board
+// adds what it can see itself: pages built, recorded decisions, quotes sent.
+// Outlook-on-the-web link for a Graph message id (URL-safe base64 → standard).
+export function owaLink(messageId) {
+  if (!messageId) return null;
+  return `https://outlook.office365.com/owa/?ItemID=${encodeURIComponent(messageId.replace(/_/g, "+").replace(/-/g, "/"))}&exvsurl=1&viewmodel=ReadMessageItem`;
+}
+
+function readTracker(trackerPath) {
+  if (!trackerPath || !fs.existsSync(trackerPath)) return { workingTowards: [], history: [] };
+  const tracker = JSON.parse(fs.readFileSync(trackerPath, "utf8"));
+  return { workingTowards: tracker.workingTowards || [], history: tracker.history || [] };
+}
+
+function caseEvents({ caseId, version, decision, lifecycle, monitor, sent }) {
+  const name = `${decision.customer.name.replace(/\.$/, "")} ${decision.rfq.reference || caseId}`;
+  const events = [{ at: decision.generatedAt, kind: "priced", text: `${name}: price page v${version} built`, caseId }];
+  for (const entry of lifecycle.entries) {
+    if (entry.type === "method-review") events.push({ at: entry.decidedAt, kind: "review", text: `${name} ${entry.lineId}: method ${entry.verdict}${entry.note ? ` (“${entry.note}”)` : ""} — ${entry.decidedBy}`, caseId });
+    else if (entry.type === "decision") {
+      const price = entry.unitPrice != null ? ` $${Number(entry.unitPrice).toFixed(2)}` : "";
+      const words = entry.reply || entry.note;
+      events.push({ at: entry.decidedAt, kind: entry.choice === "correction" ? "correction" : "decision", text: `${name} ${entry.lineId} v${entry.version}: ${entry.choice}${price} — ${entry.decidedBy}${words ? ` (“${words}”)` : ""}`, caseId });
+    }
+  }
+  if (sent) events.push({ at: monitor.last_observed_activity_at || null, kind: "sent", text: `${name}: quote seen sent by the mail monitor (“${monitor.status}”)`, caseId });
+  return events;
+}
+
+export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, now = new Date() }) {
   const state = monitorStatePath && fs.existsSync(monitorStatePath) ? JSON.parse(fs.readFileSync(monitorStatePath, "utf8")) : null;
   const queue = state?.operational_queue || [];
   const currentSnapshot = storeDir ? readManifest(storeDir).current : null;
@@ -167,6 +197,8 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       partNumbers,
       confidence: (() => { const grade = caseConfidence(decision.lines, view); return { level: grade.level, reasons: reasonsText(grade.weakest) }; })(),
       feedback: lifecycle.entries.filter((entry) => entry.type === "method-review" || entry.choice === "correction").map((entry) => ({ ...entry, caseId })),
+      events: caseEvents({ caseId, version, decision, lifecycle, monitor, sent }),
+      rfqLink: monitor?.evidence_links?.[0] || owaLink(decision.rfq.sourceMessageIds?.[0]),
     };
   });
   cases.sort((a, b) => Number(b.open) - Number(a.open) || (a.askedAt || "").localeCompare(b.askedAt || ""));
@@ -193,10 +225,15 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
         dueDate: item.explicit_due_date || null,
         dueBasis: item.due_basis || item.due_date_basis || null,
         ask: `Price RFQ: ${item.customer} ${item.reference}`,
+        rfqLink: item.evidence_links?.[0] || owaLink(item.evidence_ids?.[0]),
       })).sort((a, b) => (a.lastActivityAt ? 0 : 1) - (b.lastActivityAt ? 0 : 1) || (a.lastActivityAt || "").localeCompare(b.lastActivityAt || "")),
     };
   }
-  return { generatedAt: now.toISOString(), cases, monitor, lastSync };
+  const tracker = readTracker(trackerPath);
+  const history = [...tracker.history.map((item) => ({ ...item, source: "log" })), ...cases.flatMap((kase) => kase.events)]
+    .filter((item) => item.at)
+    .sort((a, b) => b.at.localeCompare(a.at));
+  return { generatedAt: now.toISOString(), cases, monitor, lastSync, plan: tracker.workingTowards, history };
 }
 
 const esc = (value) => escapeHtml(value);
@@ -233,14 +270,41 @@ function caseCard(kase) {
     ${kase.open && kase.confidence.level !== "High" && kase.confidence.reasons.length ? `<p class="small">${ICON.alert} ${esc(kase.confidence.reasons[0])}</p>` : ""}
     <p class="muted small">${monitor}</p>
     ${kase.open && kase.staleSnapshot ? `<p class="hint">${ICON.alert}<span>Priced on ${esc(kase.priceSnapshot)}; newer Router History is in. Ask to rebuild.</span></p>` : ""}
-    <div class="case-actions"><a class="btn ghost" href="${esc(kase.page)}">Open decision page ${ICON.chevron}</a></div>
+    <div class="case-actions">${kase.rfqLink ? `<a class="btn ghost" href="${esc(kase.rfqLink)}" target="_blank" rel="noopener">Open RFQ email</a>` : ""}<a class="btn ghost" href="${esc(kase.page)}">Open decision page ${ICON.chevron}</a></div>
   </article>`;
 }
 
 function monitorTable(items, title, open) {
   if (!items.length) return "";
-  const rows = items.map((item) => `<tr><td><span class="strong">${esc(item.customer)}</span><div class="why-not">${esc(item.reference)}</div></td><td>${esc(item.status)}</td><td class="date">${item.lastActivityAt ? day(item.lastActivityAt) : "unknown"}</td><td class="date">${item.dueDate ? `${day(item.dueDate)}<div class="why-not">${esc(item.dueBasis ?? "basis not stated")}</div>` : '<span class="muted">none stated</span>'}</td><td>${copyButton(item.ask, "Copy")}</td></tr>`).join("");
+  const rows = items.map((item) => `<tr><td><span class="strong">${esc(item.customer)}</span><div class="why-not">${esc(item.reference)}</div>${item.rfqLink ? `<a class="small" href="${esc(item.rfqLink)}" target="_blank" rel="noopener">Open RFQ email</a>` : ""}</td><td>${esc(item.status)}</td><td class="date">${item.lastActivityAt ? day(item.lastActivityAt) : "unknown"}</td><td class="date">${item.dueDate ? `${day(item.dueDate)}<div class="why-not">${esc(item.dueBasis ?? "basis not stated")}</div>` : '<span class="muted">none stated</span>'}</td><td>${copyButton(item.ask, "Copy")}</td></tr>`).join("");
   return `<details class="fold"${open ? " open" : ""}><summary>${ICON.chevron}<h3>${esc(title)} <small>${items.length}</small></h3></summary><div class="scroll"><table><thead><tr><th>Customer · reference</th><th>Monitor status</th><th>Last activity</th><th>Date flagged</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
+}
+
+const PLAN_GROUPS = [["now", "Working on now"], ["waiting on you", "Waiting on you"], ["next", "Next"], ["blocked", "Blocked"], ["done", "Done recently"]];
+
+function planPanel(plan) {
+  if (!plan.length) return "";
+  const groups = PLAN_GROUPS.map(([status, title]) => [title, plan.filter((item) => item.status === status)]).filter(([, items]) => items.length);
+  return `<section id="plan" class="panel" aria-labelledby="plan-title">
+    <div class="panel-head"><h2 id="plan-title">Working towards</h2><span class="count">${plan.filter((item) => item.status !== "done").length}</span></div>
+    ${groups.map(([title, items]) => `<h3 class="plan-group">${esc(title)}</h3><ul class="plan">${items.map((item) => `<li><span class="strong">${esc(item.title)}</span>${item.since ? ` <span class="muted small">since ${day(item.since)}</span>` : ""}${item.detail ? `<p>${esc(item.detail)}</p>` : ""}</li>`).join("")}</ul>`).join("")}
+  </section>`;
+}
+
+const KIND_TONE = { ruling: "warn", decision: "ok", sent: "ok", correction: "alert", priced: "muted", commit: "muted", build: "muted", review: "muted", note: "muted" };
+
+function historyPanel(history) {
+  if (!history.length) return "";
+  const row = (item) => `<tr><td class="nowrap">${day(item.at)}</td><td><span class="chip ${KIND_TONE[item.kind] || "muted"}">${esc(item.kind)}</span></td><td>${esc(item.text)}</td></tr>`;
+  const head = "<thead><tr><th>Date</th><th>Kind</th><th>What happened</th></tr></thead>";
+  const recent = history.slice(0, 25);
+  const older = history.slice(25);
+  return `<section id="history" class="panel" aria-labelledby="history-title">
+    <div class="panel-head"><h2 id="history-title">History</h2><span class="count">${history.length}</span></div>
+    <p class="muted small">Newest first. Rulings, builds and commits come from the session log; decisions, price pages and sends come from the records and the mail monitor.</p>
+    <div class="scroll"><table>${head}<tbody>${recent.map(row).join("")}</tbody></table></div>
+    ${older.length ? `<details class="fold"><summary>${ICON.chevron}<h3>Older <small>${older.length}</small></h3></summary><div class="scroll"><table>${head}<tbody>${older.map(row).join("")}</tbody></table></div></details>` : ""}
+  </section>`;
 }
 
 export function renderBoard(board) {
@@ -276,7 +340,7 @@ ${BOARD_STYLE}
     <div class="who"><span class="customer">RFQ pricing</span><span class="sep">·</span><span>QPC</span></div>
     <span class="pill ${pill[0]}">${esc(pill[1])}</span>
   </div>
-  <nav class="tabs" aria-label="Sections"><a href="#waiting">Waiting</a>${monitor ? '<a href="#unpriced">Unpriced RFQs</a>' : ""}${done.length ? '<a href="#decided">Decided</a>' : ""}<a href="#feedback">Feedback</a></nav>
+  <nav class="tabs" aria-label="Sections"><a href="#waiting">Waiting</a>${board.plan.length ? '<a href="#plan">Working towards</a>' : ""}${monitor ? '<a href="#unpriced">Unpriced RFQs</a>' : ""}${done.length ? '<a href="#decided">Decided</a>' : ""}<a href="#feedback">Feedback</a><a href="#history">History</a></nav>
 </header>
 <main>
   <div class="intro">
@@ -295,6 +359,8 @@ ${BOARD_STYLE}
     <div class="panel-head"><h2 id="waiting-title">Waiting on you</h2><span class="count">${open.length}</span></div>
     ${open.length ? `<div class="cases">${open.map(caseCard).join("")}</div>` : `<p class="empty">${ICON.check}<span>Nothing waiting. Every priced RFQ has a decision.</span></p>`}
   </section>
+
+  ${planPanel(board.plan)}
 
   ${monitor ? `<section id="unpriced" class="panel" aria-labelledby="unpriced-title">
     <div class="panel-head"><h2 id="unpriced-title">Unanswered RFQs without a price page</h2><span class="count">${unpriced.length} of ${monitor.waiting}</span></div>
@@ -315,6 +381,8 @@ ${BOARD_STYLE}
       return `<li><span class="chip ${verdict === "ok" ? "ok" : "alert"}">${verdict === "ok" ? `${ICON.check}method ok` : verdict === "wrong" ? "method wrong" : "correction"}</span><div><span class="strong">${esc(entry.caseId)} ${esc(entry.lineId)}</span> <span class="muted small">v${entry.version}${entry.field ? ` · ${esc(entry.field)}` : ""} · ${esc(entry.decidedBy)}, ${day(entry.decidedAt)}</span>${entry.note ? `<p>${esc(entry.note)}</p>` : ""}</div></li>`;
     }).join("")}</ul>` : `<p class="muted">No method reviews recorded yet. Add <code>; method ok</code> or <code>; method wrong why: …</code> to an answer.</p>`}
   </section>
+
+  ${historyPanel(board.history)}
 </main>
 <div class="toast" role="status" aria-live="polite">${ICON.check}<span>Copied to clipboard</span></div>
 <script>
@@ -335,6 +403,11 @@ ${SCRIPT}
 }
 
 const BOARD_STYLE = `
+.plan-group { margin:var(--s4) 0 var(--s2); font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-3); }
+.plan { list-style:none; margin:0; padding:0; display:grid; gap:var(--s2); }
+.plan li { padding:var(--s3) var(--s4); border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); }
+.plan li p { margin:var(--s1) 0 0; color:var(--ink-2); }
+td.nowrap { white-space:nowrap; }
 .panel-head { display:flex; align-items:center; gap:var(--s3); }
 .panel-head .count { margin-left:0; }
 .cases { display:grid; gap:var(--s3); }
@@ -349,7 +422,7 @@ const BOARD_STYLE = `
 .meta li.strong-chip { font-weight:650; color:var(--ink); }
 .meta li.stale { color:var(--alert); background:var(--alert-bg); font-weight:600; }
 .tiers.compact td { padding-top:var(--s2); padding-bottom:var(--s2); font-size:14px; }
-.case-actions { display:flex; justify-content:flex-end; }
+.case-actions { display:flex; justify-content:flex-end; gap:var(--s2); flex-wrap:wrap; }
 .case-actions .btn .chevron { order:2; }
 a.btn { text-decoration:none; }
 td.date { white-space:nowrap; } td.date .why-not { white-space:normal; }
@@ -362,9 +435,9 @@ td.date { white-space:nowrap; } td.date .why-not { white-space:normal; }
 @media (max-width:640px) { .case-head { flex-direction:column; } .case-actions { justify-content:stretch; } .case-actions .btn { width:100%; justify-content:center; } }
 `;
 
-export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, now }) {
+export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath = null, now }) {
   const file = path.join(outputsDir, BOARD_FILE);
-  const board = buildBoard({ outputsDir, monitorStatePath, storeDir, lastSync, now });
+  const board = buildBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath, now });
   fs.writeFileSync(file, renderBoard(board));
   return { file, board };
 }
