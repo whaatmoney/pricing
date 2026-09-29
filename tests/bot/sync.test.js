@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { buildBoard, monitorLink, quoteSentStatus, renderBoard } from "../../bot/lib/board.js";
+import { buildBoard, caseGroup, monitorLink, quoteSentStatus, readBrandBadge, renderBoard } from "../../bot/lib/board.js";
 import { buildDecision } from "../../bot/lib/decision.js";
 import { readManifest } from "../../bot/lib/router-snapshot.js";
 import { isCloudOnly, readLastSync, runSync } from "../../bot/lib/sync.js";
@@ -164,21 +164,27 @@ test("an export OneDrive has not downloaded is reported as waiting, not read and
   assert.match(fs.readFileSync(record.board.file, "utf8"), /is in OneDrive but not downloaded to this Mac/);
 });
 
-test("the board shows the plan and a dated history that merges the session log with recorded events", () => {
+test("the board's log holds a dated history that merges the session log with recorded events", () => {
   const { config } = syncedWorld([]);
   const trackerPath = path.join(config.outputsDir, "tracker.json");
-  fs.writeFileSync(trackerPath, JSON.stringify({
-    workingTowards: [{ status: "now", title: "Price the next batch", detail: "Section-1 requests", since: "2026-09-28" }, { status: "done", title: "Old item" }],
-    history: [{ at: "2026-09-27", kind: "ruling", text: "Lot minimum is per PO" }],
-  }));
+  fs.writeFileSync(trackerPath, JSON.stringify({ history: [{ at: "2026-09-27", kind: "ruling", text: "Lot minimum is per PO" }] }));
   const board = buildBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, trackerPath });
-  assert.equal(board.plan.length, 2);
   assert.deepEqual(board.history.map((item) => item.kind), ["priced", "ruling"], "newest first; the page build comes from the record");
-  const html = renderBoard(board);
-  assert.match(html, /<h2 id="plan-title">Working towards<\/h2><span class="count">1<\/span>/);
-  assert.match(html, /Working on now[\s\S]*Price the next batch/);
-  assert.match(html, /<h2 id="history-title">History<\/h2>[\s\S]*Lot minimum is per PO/);
-  assert.equal(buildBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState }).plan.length, 0, "no tracker file, no plan panel");
+  assert.match(renderBoard(board), /<h3 id="history-title">History <small>2<\/small><\/h3>[\s\S]*Lot minimum is per PO/);
+});
+
+test("open cases split into ready-for-your-yes and needs-facts, soonest due first, naming the missing fact", () => {
+  const board = boardFor([{ customer: "Acme Precision Corp", reference: "77 / ABC-100 Rev B", priority_section: 1, status: "New RFQ", evidence_ids: ["rfq"], explicit_due_date: "2026-09-28" }]);
+  const [kase] = board.cases;
+  const priced = { ...kase, lines: kase.lines.map((line) => ({ ...line, suggested: 8.5 })) };
+  const blocked = { ...kase, caseId: "B", customer: "Beta Corp", dueDate: null, lines: kase.lines.map((line) => ({ ...line, suggested: null, missing: "part size (L × W × H)" })) };
+  assert.equal(caseGroup(priced), "ready");
+  assert.equal(caseGroup(blocked), "facts");
+  assert.equal(caseGroup({ ...kase, open: false, tone: "ok", state: "Quote sent (per monitor status)" }), "sent");
+  const html = renderBoard({ ...board, generatedAt: "2026-09-28T18:00:00Z", cases: [blocked, priced] });
+  assert.match(html, /id="ready"[\s\S]*Acme &lt;Precision&gt; Corp\.[\s\S]*Due today[\s\S]*id="facts"[\s\S]*Beta Corp[\s\S]*Needs part size \(L × W × H\)/);
+  assert.match(html, /<b>1<\/b> ready for your yes/);
+  assert.ok(!html.includes("Working towards"), "the plan lives in the RFQ Pricing list, not on the board");
 });
 
 test("each case and unpriced RFQ links to its RFQ email in Outlook", () => {
@@ -211,4 +217,18 @@ test("rows show the company, the sender and the email subject of the original RF
   const html = renderBoard(board);
   assert.match(html, /Pat Buyer<\/span><div class="why-not">pat@other.example/);
   assert.match(html, /RFQ 9 for brackets/);
+});
+
+test("the company badge comes from a private file, is embedded as an image, and is optional", () => {
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(process.env.TMPDIR || "/tmp"), "badge-"));
+  const badge = path.join(dir, "badge.svg");
+  fs.writeFileSync(badge, '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="5"/></svg>');
+  const uri = readBrandBadge(badge);
+  assert.match(uri, /^data:image\/svg\+xml;base64,[A-Za-z0-9+/=]+$/);
+  fs.writeFileSync(path.join(dir, "not.svg"), "<html><script>alert(1)</script></html>");
+  assert.equal(readBrandBadge(path.join(dir, "not.svg")), null, "only an SVG is used");
+  assert.equal(readBrandBadge(null), null);
+  const board = boardFor([]);
+  assert.match(renderBoard(board, { badge: uri }), /<img class="badge" src="data:image\/svg\+xml;base64,/);
+  assert.ok(!renderBoard(board).includes('class="badge"'), "no badge configured, no image");
 });

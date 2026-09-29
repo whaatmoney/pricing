@@ -3,16 +3,16 @@ import path from "node:path";
 import { caseConfidence, reasonsText } from "./confidence.js";
 import { lifecyclePath, lifecycleView, readLifecycle } from "./lifecycle.js";
 import { isSameCustomer, partNumberMatch } from "./part-history.js";
-import { copyButton, ICON, SCRIPT, STYLE } from "./design.js";
+import { ICON, SCRIPT, STYLE } from "./design.js";
 import { displayStatus, escapeHtml } from "./render.js";
 import { readManifest } from "./router-snapshot.js";
 import { priceSource } from "./review-card.js";
 
-// The pricing front door. One page joins the mail monitor's view of every RFQ
-// with the pricing side's work on it: which RFQs have a decision page, what
-// was decided, whether the monitor has since seen the quote go out, how long
-// customers have waited, method feedback, and every unanswered RFQ still
-// without a page. Reads only; the monitor state belongs to its own scheduler
+// The pricing front door: where the price pages live. One page joins the mail
+// monitor's view of every RFQ with the pricing side's work on it: which RFQs
+// have a price page, what was decided, whether the monitor has since seen the
+// quote go out, how long customers have waited, method feedback, and every
+// unanswered RFQ still without a page. Reads only; the monitor state belongs to its own scheduler
 // and is never written.
 
 export const BOARD_FILE = "CLAUDE-DECISIONS-OPEN.html";
@@ -117,9 +117,7 @@ export function quoteSentStatus(status) {
 // Section 1 also holds acknowledgment, timing and technical follow-ups.
 export const PRICING_REQUEST = /\bRFQ\b|\bquot|\bpric|\bestimat|\bbudgetary\b|\binquir/i;
 
-const SECTION = { 1: "no customer-facing reply found", 2: "acknowledged, no quote found", 3: "quote or later activity" };
-
-// The plan and the log of rulings, builds and commits live in a private
+// The log of rulings, builds and commits lives in a private
 // tracker file (config.trackerFile), kept by the Claude session; the board
 // adds what it can see itself: pages built, recorded decisions, quotes sent.
 // Outlook-on-the-web link for a Graph message id (URL-safe base64 → standard).
@@ -146,9 +144,8 @@ function originalEmail(ids, known, isCustomer = () => true) {
 const domainOf = (address) => String(address || "").toLowerCase().split("@")[1] || "";
 
 function readTracker(trackerPath) {
-  if (!trackerPath || !fs.existsSync(trackerPath)) return { workingTowards: [], history: [] };
-  const tracker = JSON.parse(fs.readFileSync(trackerPath, "utf8"));
-  return { workingTowards: tracker.workingTowards || [], history: tracker.history || [] };
+  if (!trackerPath || !fs.existsSync(trackerPath)) return { history: [] };
+  return { history: JSON.parse(fs.readFileSync(trackerPath, "utf8")).history || [] };
 }
 
 function caseEvents({ caseId, version, decision, lifecycle, monitor, sent }) {
@@ -203,6 +200,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       monitorAmbiguous: link.ambiguous,
       staleSnapshot: Boolean(currentSnapshot && priceSnapshot && priceSnapshot.id !== currentSnapshot),
       priceSnapshot: priceSnapshot?.fileName || null,
+      dueDate: monitor?.explicit_due_date || null,
       lines: decision.lines.map((line) => ({
         lineId: line.lineId,
         partNumber: line.request.partNumber,
@@ -211,6 +209,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
         lotCharge: line.recommendation.preferred?.lotCharge ?? null,
         source: priceSource(line.recommendation.preferred),
         decided: view.current.get(line.lineId) || null,
+        missing: line.recommendation.preferred ? null : missingFact(line),
       })),
       partNumbers,
       confidence: (() => { const grade = caseConfidence(decision.lines, view); return { level: grade.level, reasons: reasonsText(grade.weakest) }; })(),
@@ -264,87 +263,157 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
   const history = [...tracker.history.map((item) => ({ ...item, source: "log" })), ...cases.flatMap((kase) => kase.events)]
     .filter((item) => item.at)
     .sort((a, b) => b.at.localeCompare(a.at));
-  return { generatedAt: now.toISOString(), cases, monitor, lastSync, plan: tracker.workingTowards, history };
+  return { generatedAt: now.toISOString(), cases, monitor, lastSync, history };
+}
+
+// The first reason a line has no price, in the reviewer's words.
+const PLAIN_MISSING = [[/envelope/i, "part size (L × W × H)"], [/weight/i, "part weight"], [/complexity/i, "part complexity"], [/process|cleanliness/i, "cleanliness level"]];
+function missingFact(line) {
+  const reason = line.calculations?.sq2?.blocked?.[0] || line.calculations?.onlineCalculator?.blocked?.[0] || line.recommendation.uncalculated || "a fact the price needs";
+  return PLAIN_MISSING.find(([pattern]) => pattern.test(reason))?.[1] || reason.replace(/\.$/, "");
+}
+
+// Where a case sits in the reviewer's day: a price to say yes to, a fact to
+// find first, a correction to rebuild, or already decided or sent.
+export function caseGroup(kase) {
+  if (!kase.open) return kase.tone === "ok" && kase.state.startsWith("Quote sent") ? "sent" : "decided";
+  if (kase.tone === "alert") return "facts";
+  const priced = kase.lines.every((line) => line.suggested != null || (line.decided && line.decided.choice !== "correction"));
+  return priced ? "ready" : "facts";
 }
 
 const esc = (value) => escapeHtml(value);
 
-function linesHtml(kase) {
-  return kase.lines.map((line) => {
+// The page tells one story, top to bottom: what to say yes to, what to find
+// out first, what is already out the door, and what has no page yet. Each
+// case is one card with its price or its missing fact up front; everything
+// else is one click away on the price page.
+
+const localDay = (iso) => new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00` : iso).toLocaleDateString("en-CA");
+// Past this many business days a customer's wait is flagged, not just shown.
+const WAITING_TOO_LONG = 5;
+function dueChip(kase, now) {
+  if (kase.dueDate) {
+    const days = Math.round((Date.parse(`${localDay(kase.dueDate)}T12:00:00Z`) - Date.parse(`${localDay(now.toISOString())}T12:00:00Z`)) / 86400000);
+    if (days < 0) return `<span class="chip alert">Past due · ${day(kase.dueDate)}</span>`;
+    if (days === 0) return '<span class="chip alert">Due today</span>';
+    if (days === 1) return '<span class="chip warn">Due tomorrow</span>';
+    return `<span class="chip muted">Due ${day(kase.dueDate)}</span>`;
+  }
+  if (kase.open && kase.waitingBusinessDays >= 3) return `<span class="chip ${kase.waitingBusinessDays >= WAITING_TOO_LONG ? "warn" : "muted"}">${kase.waitingBusinessDays} business days waiting</span>`;
+  return "";
+}
+// Soonest due first, then longest waiting.
+const byUrgency = (a, b) => (a.dueDate ? 0 : 1) - (b.dueDate ? 0 : 1) || (a.dueDate || "").localeCompare(b.dueDate || "") || (a.askedAt || "").localeCompare(b.askedAt || "");
+
+const LINE_LIMIT = 4;
+const linePrice = (line) => (line.decided && line.decided.choice !== "correction" ? line.decided.unitPrice : line.suggested);
+function linesTable(kase) {
+  const rows = kase.lines.map((line, index) => {
     const decided = line.decided && line.decided.choice !== "correction" ? line.decided : null;
-    const unit = decided ? decided.unitPrice : line.suggested;
-    const total = line.lotCharge != null && (!decided || decided.unitPrice === line.suggested) ? line.lotCharge : unit == null ? null : Math.round(unit * line.quantity * 100) / 100;
-    const source = line.source && (!decided || decided.unitPrice === line.suggested) ? `<span class="note source${line.source.kind === "method" ? "" : " dated"}">${esc(line.source.text)}</span>` : "";
-    return `<tr><td class="num">${line.quantity}</td><td class="num">${usd(unit)}${source}</td><td class="num strong">${usd(total)}${line.lotCharge != null ? '<span class="note">lot minimum</span>' : ""}</td><td>${decided ? `<span class="chip ok">${ICON.check}${esc(decided.choice)}</span>` : '<span class="chip warn">open</span>'}</td></tr>`;
-  }).join("");
+    const unit = linePrice(line);
+    const matchesSuggestion = !decided || decided.unitPrice === line.suggested;
+    const total = line.lotCharge != null && matchesSuggestion ? line.lotCharge : unit == null ? null : Math.round(unit * line.quantity * 100) / 100;
+    const from = decided ? `<span class="chip ok">${ICON.check}${esc(decided.choice)}</span>` : line.source ? `<span class="${line.source.kind === "method" ? "muted" : "dated"}">${esc(line.source.text)}</span>` : `<span class="needs">needs ${esc(line.missing || "facts")}</span>`;
+    const samePart = index > 0 && kase.lines[index - 1].partNumber === line.partNumber;
+    return `<tr><td class="pn">${samePart ? "" : esc(line.partNumber)}</td><td class="num">${line.quantity}</td><td class="num strong">${usd(unit)}</td><td class="num">${usd(total)}${line.lotCharge != null && matchesSuggestion ? '<span class="note">lot minimum</span>' : ""}</td><td class="from">${from}</td></tr>`;
+  });
+  const shown = rows.slice(0, LINE_LIMIT).join("");
+  const more = rows.length > LINE_LIMIT ? `<tr class="more"><td colspan="5">+ ${rows.length - LINE_LIMIT} more line${rows.length - LINE_LIMIT === 1 ? "" : "s"} on the price page</td></tr>` : "";
+  return `<div class="scroll"><table class="lines"><colgroup><col class="c-part"><col class="c-qty"><col class="c-unit"><col class="c-total"><col class="c-from"></colgroup><thead><tr><th>Part</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Total</th><th>Price from</th></tr></thead><tbody>${shown}${more}</tbody></table></div>`;
 }
 
-function caseCard(kase) {
-  const monitor = kase.monitor
-    ? `Monitor section ${kase.monitor.section} (${esc(SECTION[kase.monitor.section] || "unknown")}): “${esc(kase.monitor.status)}”`
-    : kase.monitorAmbiguous.length
-      ? `Monitor link unresolved: ${kase.monitorAmbiguous.length} entries match (${esc(kase.monitorAmbiguous.join("; "))})`
-      : "No monitor entry verified (customer, part, revision and a shared email or RFQ number)";
-  const late = kase.open && kase.waitingBusinessDays >= 2;
-  return `<article class="case ${kase.tone}">
-    <div class="case-head">
-      <div class="case-title"><a class="case-link" href="${esc(kase.page)}">${esc(kase.customer)}</a><span class="muted small">${esc(kase.reference || kase.caseId)} · v${kase.version}</span></div>
-      <div class="case-pills"><span class="chip ${{ High: "ok", Medium: "warn", Low: "alert" }[kase.confidence.level]}" title="${esc(kase.confidence.reasons.join(" "))}">Confidence: ${esc(kase.confidence.level)}</span><span class="pill ${kase.tone}">${esc(kase.state)}</span></div>
+function partsSummary(kase) {
+  const quantities = [...new Set(kase.lines.map((line) => line.quantity))];
+  const qty = quantities.length === 1 ? `${quantities[0]} pcs${kase.partNumbers.length > 1 ? " each" : ""}` : `qty ${Math.min(...quantities)}–${Math.max(...quantities)}`;
+  const parts = kase.partNumbers.length > 3 ? `${kase.partNumbers.slice(0, 3).join(", ")} + ${kase.partNumbers.length - 3} more` : kase.partNumbers.join(", ");
+  return `${esc(parts)} · ${qty}`;
+}
+
+// The one thing to decide, set against the customer's name: the price, or
+// what is missing before there can be one.
+function headline(kase, group) {
+  const lines = `${kase.lines.length} line${kase.lines.length === 1 ? "" : "s"}`;
+  if (group === "facts") {
+    if (kase.tone === "alert") return `<div class="headline needs"><span class="big">Correction requested</span><span class="sub">rebuild before pricing</span></div>`;
+    const blocked = kase.lines.filter((line) => linePrice(line) == null);
+    const facts = [...new Set(blocked.map((line) => line.missing).filter(Boolean))];
+    return `<div class="headline needs"><span class="big">Needs ${esc(facts.join(", ") || "facts")}</span><span class="sub">${blocked.length} of ${lines} unpriced</span></div>`;
+  }
+  const prices = kase.lines.map(linePrice).filter((price) => price != null);
+  const low = Math.min(...prices);
+  const high = Math.max(...prices);
+  const status = group === "sent" ? "quote sent" : group === "decided" ? "decided" : "per piece";
+  return `<div class="headline"><span class="big">${low === high ? usd(low) : `${usd(low)}–${usd(high)}`}</span><span class="sub">${status} · ${lines}</span></div>`;
+}
+
+function caseCard(kase, now) {
+  const group = caseGroup(kase);
+  const notes = [
+    kase.monitorAmbiguous.length ? `Monitor link unresolved: ${kase.monitorAmbiguous.length} entries match (${esc(kase.monitorAmbiguous.join("; "))})` : "",
+    kase.open && kase.staleSnapshot ? `Priced on ${esc(kase.priceSnapshot)}; newer Router History is in. Ask to rebuild.` : "",
+  ].filter(Boolean);
+  const from = kase.email.fromName || kase.email.from;
+  return `<article class="card is-${group}" data-page="${esc(kase.page)}">
+    <div class="card-head">
+      <div class="card-title">
+        <a class="card-link" href="${esc(kase.page)}">${esc(kase.customer)}</a>
+        <p class="ref">${esc(kase.reference || kase.caseId)}</p>
+        <p class="marks">${dueChip(kase, now)}<span class="chip muted opened-mark">${ICON.check}Opened</span></p>
+      </div>
+      ${headline(kase, group)}
     </div>
-    <ul class="meta">
-      <li class="strong-chip">${esc(kase.partNumbers.join(", "))}</li>
-      <li>Asked ${day(kase.askedAt)}</li>
-      ${kase.chasedAt && kase.chasedAt !== kase.askedAt ? `<li>Chased ${day(kase.chasedAt)}</li>` : ""}
-      ${kase.open && kase.waitingBusinessDays != null ? `<li class="${late ? "late" : ""}">${kase.waitingBusinessDays} business day${kase.waitingBusinessDays === 1 ? "" : "s"} waiting</li>` : ""}
-    </ul>
-    <p class="small case-email"><span class="muted">From</span> ${kase.email.fromName ? `${esc(kase.email.fromName)} &lt;${esc(kase.email.from)}&gt;` : esc(kase.email.from || "unknown")}${kase.email.subject ? ` · <span class="muted">Subject</span> “${esc(kase.email.subject)}”` : ""}</p>
-    <div class="scroll"><table class="tiers compact"><thead><tr><th class="num">Qty</th><th class="num">Unit</th><th class="num">Total</th><th>Decision</th></tr></thead><tbody>${linesHtml(kase)}</tbody></table></div>
-    ${kase.open && kase.confidence.level !== "High" && kase.confidence.reasons.length ? `<p class="small">${ICON.alert} ${esc(kase.confidence.reasons[0])}</p>` : ""}
-    <p class="muted small">${monitor}</p>
-    ${kase.open && kase.staleSnapshot ? `<p class="hint">${ICON.alert}<span>Priced on ${esc(kase.priceSnapshot)}; newer Router History is in. Ask to rebuild.</span></p>` : ""}
-    <div class="case-actions">${kase.rfqLink ? `<a class="btn ghost" href="${esc(kase.rfqLink)}" target="_blank" rel="noopener">Open RFQ email</a>` : ""}<a class="btn ghost" href="${esc(kase.page)}">Open decision page ${ICON.chevron}</a></div>
+    ${group === "facts" ? `<p class="parts">${partsSummary(kase)}</p>` : linesTable(kase)}
+    ${notes.map((note) => `<p class="hint">${ICON.alert}<span>${note}</span></p>`).join("")}
+    <div class="card-foot">
+      <p class="from" title="${esc(kase.email.from || "")}">${from ? `${esc(from)}${kase.email.subject ? ` · “${esc(kase.email.subject)}”` : ""}` : ""}</p>
+      ${kase.rfqLink ? `<a class="btn ghost above" href="${esc(kase.rfqLink)}" target="_blank" rel="noopener">Open RFQ email ${ICON.external}</a>` : ""}
+      <span class="go">Price page ${ICON.chevron}</span>
+    </div>
   </article>`;
 }
 
 const senderHtml = (email) => (email?.from ? `${email.fromName ? `<span class="strong">${esc(email.fromName)}</span><div class="why-not">${esc(email.from)}</div>` : esc(email.from)}` : '<span class="muted">not looked up</span>');
-const subjectHtml = (email) => (email?.subject ? esc(email.subject) : '<span class="muted">not looked up</span>');
 
-function monitorTable(items, title, open) {
+function monitorTable(items, title) {
   if (!items.length) return "";
-  const rows = items.map((item) => `<tr><td><span class="strong">${esc(item.customer)}</span><div class="why-not">${esc(item.reference)}</div></td><td>${senderHtml(item.email)}</td><td>${subjectHtml(item.email)}${item.rfqLink ? `<div><a class="small" href="${esc(item.rfqLink)}" target="_blank" rel="noopener">Open RFQ email</a></div>` : ""}</td><td>${esc(item.status)}</td><td class="date">${item.lastActivityAt ? day(item.lastActivityAt) : "unknown"}</td><td class="date">${item.dueDate ? `${day(item.dueDate)}<div class="why-not">${esc(item.dueBasis ?? "basis not stated")}</div>` : '<span class="muted">none stated</span>'}</td></tr>`).join("");
-  return `<details class="fold"${open ? " open" : ""}><summary>${ICON.chevron}<h3>${esc(title)} <small>${items.length}</small></h3></summary><div class="scroll"><table><thead><tr><th>Company · reference</th><th>Sender</th><th>Email subject</th><th>Monitor status</th><th>Last activity</th><th>Due</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
-}
-
-const PLAN_GROUPS = [["now", "Working on now"], ["waiting on you", "Waiting on you"], ["next", "Next"], ["blocked", "Blocked"], ["done", "Done recently"]];
-
-function planPanel(plan) {
-  if (!plan.length) return "";
-  const groups = PLAN_GROUPS.map(([status, title]) => [title, plan.filter((item) => item.status === status)]).filter(([, items]) => items.length);
-  return `<section id="plan" class="panel" aria-labelledby="plan-title">
-    <div class="panel-head"><h2 id="plan-title">Working towards</h2><span class="count">${plan.filter((item) => item.status !== "done").length}</span></div>
-    ${groups.map(([title, items]) => `<h3 class="plan-group">${esc(title)}</h3><ul class="plan">${items.map((item) => `<li><span class="strong">${esc(item.title)}</span>${item.since ? ` <span class="muted small">since ${day(item.since)}</span>` : ""}${item.detail ? `<p>${esc(item.detail)}</p>` : ""}</li>`).join("")}</ul>`).join("")}
-  </section>`;
+  const rows = items.map((item) => `<tr><td><span class="strong">${esc(item.customer)}</span><div class="why-not">${esc(item.reference)}</div></td><td>${senderHtml(item.email)}</td><td>${item.email?.subject ? esc(item.email.subject) : '<span class="muted">not looked up</span>'}${item.rfqLink ? `<div><a class="small" href="${esc(item.rfqLink)}" target="_blank" rel="noopener">Open RFQ email</a></div>` : ""}</td><td class="status-cell">${esc(item.status)}</td><td class="date">${item.lastActivityAt ? day(item.lastActivityAt) : "unknown"}${item.dueDate ? `<div class="why-not">Due ${day(item.dueDate)} · ${esc(item.dueBasis ?? "basis not stated")}</div>` : ""}</td></tr>`).join("");
+  return `<details class="fold"><summary>${ICON.chevron}<h3>${esc(title)} <small>${items.length}</small></h3></summary><div class="scroll"><table class="queue"><thead><tr><th>Company · reference</th><th>Sender</th><th>Email subject</th><th>Monitor status</th><th>Last activity</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
 }
 
 const KIND_TONE = { ruling: "warn", decision: "ok", sent: "ok", correction: "alert", priced: "muted", commit: "muted", build: "muted", review: "muted", note: "muted" };
 
-function historyPanel(history) {
-  if (!history.length) return "";
-  const row = (item) => `<tr><td class="nowrap">${day(item.at)}</td><td><span class="chip ${KIND_TONE[item.kind] || "muted"}">${esc(item.kind)}</span></td><td>${esc(item.text)}</td></tr>`;
-  const head = "<thead><tr><th>Date</th><th>Kind</th><th>What happened</th></tr></thead>";
-  const recent = history.slice(0, 25);
-  const older = history.slice(25);
-  return `<section id="history" class="panel" aria-labelledby="history-title">
-    <div class="panel-head"><h2 id="history-title">History</h2><span class="count">${history.length}</span></div>
-    <p class="muted small">Newest first. Rulings, builds and commits come from the session log; decisions, price pages and sends come from the records and the mail monitor.</p>
-    <div class="scroll"><table>${head}<tbody>${recent.map(row).join("")}</tbody></table></div>
-    ${older.length ? `<details class="fold"><summary>${ICON.chevron}<h3>Older <small>${older.length}</small></h3></summary><div class="scroll"><table>${head}<tbody>${older.map(row).join("")}</tbody></table></div></details>` : ""}
+// Method reviews that share a case, verdict and note read as one entry.
+function feedbackList(feedback) {
+  const groups = new Map();
+  for (const entry of feedback) {
+    const verdict = entry.type === "method-review" ? entry.verdict : "correction";
+    const key = [entry.caseId, verdict, entry.version, entry.note || ""].join("|");
+    if (!groups.has(key)) groups.set(key, { ...entry, verdict, lines: [] });
+    groups.get(key).lines.push(entry.lineId);
+  }
+  return `<ul class="feedback">${[...groups.values()].map((entry) => `<li><span class="chip ${entry.verdict === "ok" ? "ok" : "alert"}">${entry.verdict === "ok" ? `${ICON.check}method ok` : entry.verdict === "wrong" ? "method wrong" : "correction"}</span><div><span class="strong">${esc(entry.caseId)} ${esc(entry.lines.join(", "))}</span> <span class="muted small">v${entry.version}${entry.field ? ` · ${esc(entry.field)}` : ""} · ${esc(entry.decidedBy)}, ${day(entry.decidedAt)}</span>${entry.note ? `<p>${esc(entry.note)}</p>` : ""}</div></li>`).join("")}</ul>`;
+}
+
+function historyTable(history) {
+  const row = (item) => `<tr><td class="date">${day(item.at)}</td><td><span class="chip ${KIND_TONE[item.kind] || "muted"}">${esc(item.kind)}</span></td><td>${esc(item.text)}</td></tr>`;
+  return `<div class="scroll"><table><thead><tr><th>Date</th><th>Kind</th><th>What happened</th></tr></thead><tbody>${history.slice(0, 40).map(row).join("")}</tbody></table></div>${history.length > 40 ? `<p class="muted small">${history.length - 40} older entries are in the records.</p>` : ""}`;
+}
+
+function section(id, title, count, lede, body) {
+  return `<section id="${id}" class="group" aria-labelledby="${id}-title">
+    <div class="group-head"><h2 id="${id}-title">${esc(title)}</h2><span class="count">${count}</span></div>
+    ${lede ? `<p class="lede">${lede}</p>` : ""}
+    ${body}
   </section>`;
 }
 
-export function renderBoard(board) {
-  const open = board.cases.filter((kase) => kase.open);
-  const done = board.cases.filter((kase) => !kase.open);
+export function renderBoard(board, { badge = null } = {}) {
+  const now = new Date(board.generatedAt);
+  const grouped = { ready: [], facts: [], decided: [], sent: [] };
+  for (const kase of board.cases) grouped[caseGroup(kase)].push(kase);
+  for (const list of Object.values(grouped)) list.sort(byUrgency);
+  const closed = [...grouped.decided, ...grouped.sent];
   const feedback = board.cases.flatMap((kase) => kase.feedback);
   const monitor = board.monitor;
   const sync = board.lastSync;
@@ -356,14 +425,28 @@ export function renderBoard(board) {
       : `Router History export ${item.fileName} was ${item.outcome}${item.failures.length ? ` (${item.failures.join(", ")})` : ""}. Prices still use the last good snapshot.`),
     ...(sync?.errors || []).map((error) => `Sync error: ${error}`),
   ];
-  const pill = alerts.length ? ["alert", "Needs attention"] : open.length ? ["warn", `${open.length} waiting on you`] : ["ok", "Nothing waiting"];
+  const openCount = grouped.ready.length + grouped.facts.length;
+  const pill = alerts.length ? ["alert", "Needs attention"] : openCount ? ["warn", `${openCount} waiting on you`] : ["ok", "Nothing waiting"];
   const unpriced = monitor ? monitor.withoutPage : [];
+  const today = localDay(now.toISOString());
+  const dated = [...grouped.ready, ...grouped.facts].filter((kase) => kase.dueDate).map((kase) => localDay(kase.dueDate));
+  const pastDue = dated.filter((date) => date < today).length;
+  const dueToday = dated.filter((date) => date === today).length;
+  const summary = [
+    grouped.ready.length ? `<a class="n-ready" href="#ready"><b>${grouped.ready.length}</b> ready for your yes</a>` : "",
+    grouped.facts.length ? `<a class="n-facts" href="#facts"><b>${grouped.facts.length}</b> need facts first</a>` : "",
+    pastDue ? `<span class="due-now">${pastDue} past due</span>` : "",
+    dueToday ? `<span class="due-now">${dueToday} due today</span>` : "",
+  ].filter(Boolean).join('<span class="sep">·</span>') || "Nothing waiting on you.";
+  const tabs = [["ready", "Ready", grouped.ready.length], ["facts", "Needs facts", grouped.facts.length], ["closed", "Decided & sent", closed.length], ["unpriced", "No page yet", unpriced.length], ["log", "Log", null]]
+    .filter(([id, , count]) => count !== 0 && (id !== "unpriced" || monitor));
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RFQ Pricing Board</title>
+${badge ? `<link rel="icon" type="image/svg+xml" href="${badge}">` : ""}
 <style>
 ${STYLE}
 ${BOARD_STYLE}
@@ -372,54 +455,40 @@ ${BOARD_STYLE}
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="who"><span class="customer">RFQ pricing</span><span class="sep">·</span><span>QPC</span></div>
+    <div class="who">${badge ? `<img class="badge" src="${badge}" alt="" width="24" height="24">` : ""}<span class="customer">RFQ pricing</span><span class="sep">·</span><span>QPC</span></div>
     <span class="pill ${pill[0]}">${esc(pill[1])}</span>
   </div>
-  <nav class="tabs" aria-label="Sections"><a href="#waiting">Waiting</a>${board.plan.length ? '<a href="#plan">Working towards</a>' : ""}${monitor ? '<a href="#unpriced">Unpriced RFQs</a>' : ""}${done.length ? '<a href="#decided">Decided</a>' : ""}<a href="#feedback">Feedback</a><a href="#history">History</a></nav>
+  <nav class="tabs" aria-label="Sections">${tabs.map(([id, label, count]) => `<a href="#${id}">${esc(label)}${count ? ` <small>${count}</small>` : ""}</a>`).join("")}</nav>
 </header>
 <main>
   <div class="intro">
     <div id="board-stale" class="status alert" hidden></div>
     ${alerts.map((alert) => `<div class="status alert">${esc(alert)}</div>`).join("")}
-    <p class="eyebrow">Private working file · keep inside QPC</p>
-    <h1>RFQ pricing</h1>
-    <p class="subtitle">${open.length} waiting on you · ${done.length} decided or sent${monitor ? ` · ${unpriced.length} unanswered RFQs without a price page` : ""}</p>
-    <ul class="meta">
-      ${monitor ? `<li class="${monitor.stale ? "stale" : ""}">Mail checked ${when(monitor.cutoff)}</li><li>${monitor.sections[1]} no reply</li><li>${monitor.sections[2]} acknowledged only</li><li>${monitor.sections[3]} in section 3 (quote or later activity)</li>${monitor.report ? `<li><a href="${esc(monitor.report)}">Latest check</a></li>` : ""}` : ""}
-      <li>${sync ? `Last sync ${when(sync.at)} (${esc(sync.trigger)})${sync.imports.length ? `: imported ${sync.imports.map((item) => `${esc(item.fileName)} ${esc(item.outcome)}`).join(", ")}` : ""}` : "No sync has run yet"}</li>
-    </ul>
+    <p class="eyebrow">QPC · RFQ pricing</p>
+    <h1 class="summary">${summary}</h1>
   </div>
 
-  <section id="waiting" class="panel" aria-labelledby="waiting-title">
-    <div class="panel-head"><h2 id="waiting-title">Waiting on you</h2><span class="count">${open.length}</span></div>
-    ${open.length ? `<div class="cases">${open.map(caseCard).join("")}</div>` : `<p class="empty">${ICON.check}<span>Nothing waiting. Every priced RFQ has a decision.</span></p>`}
+  ${grouped.ready.length ? section("ready", "Ready for your yes", grouped.ready.length, "Each has a suggested price. Click a card to open its price page, then approve it or give yours.", `<div class="cards">${grouped.ready.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
+
+  ${grouped.facts.length ? section("facts", "Needs facts first", grouped.facts.length, "No price until the missing fact is in. Get it from the customer or the drawing, then ask Claude to rebuild the page.", `<div class="cards">${grouped.facts.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
+
+  ${openCount ? "" : `<p class="empty">${ICON.check}<span>Nothing waiting. Every priced RFQ has a decision.</span></p>`}
+
+  ${closed.length ? section("closed", "Decided & sent", closed.length, "", `<details class="fold"><summary>${ICON.chevron}<h3>Show ${closed.length}</h3></summary><div class="cards">${closed.map((kase) => caseCard(kase, now)).join("")}</div></details>`) : ""}
+
+  ${monitor && unpriced.length ? section("unpriced", "No price page yet", unpriced.length, "Open in the mail monitor with no page here. The RFQ Pricing list tracks them; ask Claude to price any of them.", `${monitorTable(unpriced.filter((item) => item.pricing), "Status mentions a quote, RFQ or inquiry")}${monitorTable(unpriced.filter((item) => !item.pricing), "Status doesn't say (may be a follow-up or an RFQ)")}`) : ""}
+
+  <section id="log" class="group" aria-labelledby="log-title">
+    <div class="group-head"><h2 id="log-title">Log</h2></div>
+    <details class="fold" id="feedback"><summary>${ICON.chevron}<h3>Method feedback <small>${feedback.length}</small></h3></summary>${feedback.length ? feedbackList(feedback) : `<p class="muted">No method reviews recorded yet. Add <code>; method ok</code> or <code>; method wrong why: …</code> to an answer.</p>`}</details>
+    ${board.history.length ? `<details class="fold" id="history"><summary>${ICON.chevron}<h3 id="history-title">History <small>${board.history.length}</small></h3></summary>${historyTable(board.history)}</details>` : ""}
   </section>
 
-  ${planPanel(board.plan)}
-
-  ${monitor ? `<section id="unpriced" class="panel" aria-labelledby="unpriced-title">
-    <div class="panel-head"><h2 id="unpriced-title">Unanswered RFQs without a price page</h2><span class="count">${unpriced.length} of ${monitor.waiting}</span></div>
-    <p class="muted">From the monitor's section 1 (no customer-facing reply found). It also holds acknowledgment, timing and technical follow-ups, and the split below reads only the monitor's wording, so check both groups. Copy a line and paste it to Claude to get a decision page built.</p>
-    ${monitorTable(unpriced.filter((item) => item.pricing), "Status mentions a quote, RFQ or inquiry", true)}
-    ${monitorTable(unpriced.filter((item) => !item.pricing), "Status doesn't say (may be a follow-up or an RFQ)", false)}
-  </section>` : ""}
-
-  ${done.length ? `<section id="decided" class="panel" aria-labelledby="decided-title">
-    <div class="panel-head"><h2 id="decided-title">Decided or sent</h2><span class="count">${done.length}</span></div>
-    <div class="cases">${done.map(caseCard).join("")}</div>
-  </section>` : ""}
-
-  <section id="feedback" class="panel" aria-labelledby="feedback-title">
-    <div class="panel-head"><h2 id="feedback-title">Method feedback</h2><span class="count">${feedback.length}</span></div>
-    ${feedback.length ? `<ul class="feedback">${feedback.map((entry) => {
-      const verdict = entry.type === "method-review" ? entry.verdict : "correction";
-      return `<li><span class="chip ${verdict === "ok" ? "ok" : "alert"}">${verdict === "ok" ? `${ICON.check}method ok` : verdict === "wrong" ? "method wrong" : "correction"}</span><div><span class="strong">${esc(entry.caseId)} ${esc(entry.lineId)}</span> <span class="muted small">v${entry.version}${entry.field ? ` · ${esc(entry.field)}` : ""} · ${esc(entry.decidedBy)}, ${day(entry.decidedAt)}</span>${entry.note ? `<p>${esc(entry.note)}</p>` : ""}</div></li>`;
-    }).join("")}</ul>` : `<p class="muted">No method reviews recorded yet. Add <code>; method ok</code> or <code>; method wrong why: …</code> to an answer.</p>`}
-  </section>
-
-  ${historyPanel(board.history)}
+  <footer class="fresh">${badge ? `<img class="badge" src="${badge}" alt="" width="20" height="20">` : ""}<span>
+    ${monitor ? `<span class="${monitor.stale ? "stale" : ""}">Mail checked ${when(monitor.cutoff)}</span>${monitor.report ? ` · <a href="${esc(monitor.report)}">latest check</a>` : ""} · ` : ""}${sync ? `synced ${when(sync.at)}${sync.imports.length ? ` (imported ${sync.imports.map((item) => `${esc(item.fileName)} ${esc(item.outcome)}`).join(", ")})` : ""}` : "no sync has run yet"}
+    <br>Private working file · keep inside QPC</span>
+  </footer>
 </main>
-<div class="toast" role="status" aria-live="polite">${ICON.check}<span>Copied to clipboard</span></div>
 <script>
 // Checked when the page is opened, so a board nothing has rebuilt still says so.
 (() => {
@@ -432,47 +501,128 @@ ${BOARD_STYLE}
   }
 })();
 ${SCRIPT}
+// Marks the price pages this viewer has opened, so progress down the list shows.
+// A per-viewer convenience: the board reads the same without it.
+(() => {
+  const key = "qpc-board-opened";
+  let opened = [];
+  try { opened = JSON.parse(localStorage.getItem(key) || "[]"); } catch {}
+  const mark = () => document.querySelectorAll(".card[data-page]").forEach((card) => card.classList.toggle("opened", opened.includes(card.dataset.page)));
+  document.addEventListener("click", (event) => {
+    const card = event.target.closest(".card-link")?.closest(".card");
+    if (!card || opened.includes(card.dataset.page)) return;
+    opened = [...opened, card.dataset.page].slice(-200);
+    try { localStorage.setItem(key, JSON.stringify(opened)); } catch {}
+    mark();
+  });
+  mark();
+})();
 </script>
 </body>
 </html>`;
 }
 
 const BOARD_STYLE = `
-.plan-group { margin:var(--s4) 0 var(--s2); font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-3); }
-.plan { list-style:none; margin:0; padding:0; display:grid; gap:var(--s2); }
-.plan li { padding:var(--s3) var(--s4); border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); }
-.plan li p { margin:var(--s1) 0 0; color:var(--ink-2); }
-td.nowrap { white-space:nowrap; }
-.panel-head { display:flex; align-items:center; gap:var(--s3); }
-.panel-head .count { margin-left:0; }
-.cases { display:grid; gap:var(--s3); }
-.case { border:1px solid var(--line); border-left:3px solid var(--warn); border-radius:var(--radius-sm); padding:var(--s4); display:grid; gap:var(--s3); background:var(--surface); transition:border-color .15s, box-shadow .15s; }
-.case:hover { border-color:var(--line-2); box-shadow:var(--shadow-hover); }
-.case.ok { border-left-color:var(--ok); } .case.alert { border-left-color:var(--alert); }
-.case-head { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--s3); }
-.case-pills { display:flex; gap:var(--s2); align-items:center; flex-wrap:wrap; justify-content:flex-end; }
-.case-title { display:grid; gap:2px; min-width:0; }
-.case-link { font-size:17px; font-weight:650; color:var(--ink); text-decoration:none; letter-spacing:-.01em; }
-.case-link:hover { text-decoration:underline; }
-.meta li.strong-chip { font-weight:650; color:var(--ink); }
-.meta li.stale { color:var(--alert); background:var(--alert-bg); font-weight:600; }
-.tiers.compact td { padding-top:var(--s2); padding-bottom:var(--s2); font-size:14px; }
-.case-actions { display:flex; justify-content:flex-end; gap:var(--s2); flex-wrap:wrap; }
-.case-actions .btn .chevron { order:2; }
+/* Board tokens. Brand gold marks a price ready for a yes (graphics use --gold;
+   text uses --gold-text, darker on light and brighter on dark). Attention is
+   orange, set apart from the gold so each colour keeps one meaning. */
+:root { --gold:#C9A34D; --gold-text:#7d6427; --warn:#b45309; --warn-bg:#fdf0e4; --hover:color-mix(in srgb, var(--surface) 96%, var(--ink)); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --gold-text:#d9b96a; --warn:#f0a066; --warn-bg:#2b1d12; --hover:color-mix(in srgb, var(--surface) 93%, var(--ink)); } }
+:root[data-theme="dark"] { --gold-text:#d9b96a; --warn:#f0a066; --warn-bg:#2b1d12; --hover:color-mix(in srgb, var(--surface) 93%, var(--ink)); }
+
+main { gap:var(--s8); }
+.topbar { border-top:2px solid var(--gold); }
+.who { align-items:center; }
+.who .badge { width:24px; height:24px; flex:none; }
+.tabs a small { color:var(--ink-3); font-weight:600; margin-left:2px; }
+
+.intro { gap:var(--s2); }
+.intro .eyebrow { color:var(--gold-text); }
+h1.summary { font-size:24px; font-weight:650; letter-spacing:-.02em; line-height:1.3; color:var(--ink-2); display:flex; flex-wrap:wrap; align-items:baseline; gap:var(--s1) var(--s3); }
+h1.summary a { color:var(--ink); text-decoration:none; border-bottom:1px solid var(--line-2); transition:border-color .15s; }
+h1.summary a:hover { border-bottom-color:currentColor; }
+h1.summary .n-ready b { color:var(--gold-text); } h1.summary .n-facts b { color:var(--warn); }
+h1.summary .due-now { color:var(--alert); }
+h1.summary .sep { color:var(--line-2); font-weight:400; }
+
+.group { display:grid; gap:var(--s3); }
+.group-head { display:flex; align-items:center; gap:var(--s3); }
+.group-head .count { margin-left:0; }
+.lede { font-size:13px; color:var(--ink-3); }
+.cards { display:grid; gap:var(--s3); }
+.fold .cards { margin-top:var(--s1); }
+
+/* A card is one link to its price page; only the email button sits above it. */
+.card { position:relative; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:var(--s4) var(--s5); display:grid; gap:var(--s3); transition:background .15s, border-color .15s, transform .15s; }
+.card::before { content:""; position:absolute; left:-1px; top:var(--s3); bottom:var(--s3); width:3px; border-radius:0 3px 3px 0; background:var(--bar, var(--line-2)); }
+.card.is-ready { --bar:var(--gold); } .card.is-facts { --bar:var(--warn); } .card.is-sent, .card.is-decided { --bar:var(--ok); }
+.card:hover { background:var(--hover); border-color:var(--line-2); transform:translateY(-1px); }
+.card:has(.card-link:focus-visible) { outline:2px solid var(--focus); outline-offset:2px; }
+.card-link { font-size:17px; font-weight:650; color:var(--ink); text-decoration:none; letter-spacing:-.01em; outline:none; }
+.card-link::after { content:""; position:absolute; inset:0; border-radius:inherit; }
+.card .above { position:relative; z-index:1; }
+.card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--s4); }
+.card-title { display:grid; gap:var(--s1); min-width:0; }
+.card-title .ref { font-size:13px; color:var(--ink-3); overflow-wrap:anywhere; }
+.marks { display:flex; flex-wrap:wrap; gap:var(--s2); }
+.opened-mark { display:none; } .card.opened .opened-mark { display:inline-flex; }
+.card.opened .card-link, .card.opened .headline .big { color:var(--ink-2); }
+.headline { display:grid; justify-items:end; text-align:right; gap:2px; flex-shrink:0; }
+.headline .big { font-size:24px; font-weight:700; letter-spacing:-.02em; line-height:1.2; font-variant-numeric:tabular-nums; color:var(--gold-text); }
+.headline .sub { font-size:12px; color:var(--ink-3); }
+.headline.needs .big { font-size:15px; font-weight:650; letter-spacing:0; color:var(--warn); max-width:240px; }
+.card.is-sent .headline .big, .card.is-decided .headline .big { color:var(--ink); }
+
+table.lines { table-layout:fixed; margin:0; }
+.lines col.c-part { width:30%; } .lines col.c-qty { width:10%; } .lines col.c-unit { width:15%; } .lines col.c-total { width:17%; } .lines col.c-from { width:28%; }
+.lines th { padding-top:0; }
+.lines td { padding-top:var(--s2); padding-bottom:var(--s2); font-size:13px; }
+.lines td.pn { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.lines td.from { font-size:12px; } .lines .dated { color:var(--ink-2); font-weight:600; } .lines .needs { color:var(--warn); }
+.lines tr.more td { color:var(--ink-3); font-size:12px; border-bottom:0; }
+.parts { font-size:13px; color:var(--ink-2); }
+
+.card-foot { display:flex; align-items:center; gap:var(--s3); }
+.card-foot .from { flex:1; min-width:0; font-size:12px; color:var(--ink-3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.go { display:inline-flex; align-items:center; gap:var(--s1); font-size:13px; font-weight:600; color:var(--ink-3); transition:color .15s; }
+.go .chevron { transition:transform .15s; }
+.card:hover .go { color:var(--ink); } .card:hover .go .chevron { transform:translateX(2px); }
 a.btn { text-decoration:none; }
+
 td.date { white-space:nowrap; } td.date .why-not { white-space:normal; }
-.empty { display:flex; gap:var(--s2); align-items:center; color:var(--ok); font-weight:550; }
-.fold > summary h3 { display:inline; font-size:14px; } .fold > summary h3 small { color:var(--ink-3); font-weight:600; margin-left:var(--s1); }
-.feedback { list-style:none; margin:0; padding:0; display:grid; gap:var(--s3); }
+table.queue td.status-cell { min-width:220px; }
+.empty { display:flex; gap:var(--s2); align-items:center; color:var(--ok); font-weight:600; }
+.fold > summary h3 { display:inline; font-size:13px; margin:0; } .fold > summary h3 small { color:var(--ink-3); font-weight:600; margin-left:var(--s1); }
+.feedback { list-style:none; margin:var(--s2) 0 0; padding:0; display:grid; gap:var(--s3); }
 .feedback li { display:grid; grid-template-columns:auto minmax(0,1fr); gap:var(--s3); align-items:start; }
-.feedback p { margin-top:var(--s1); font-size:14px; color:var(--ink-2); }
-.intro .status.alert { color:var(--alert); background:var(--alert-bg); border-left:3px solid var(--alert); border-radius:var(--radius-sm); padding:var(--s2) var(--s3); font-weight:550; }
-@media (max-width:640px) { .case-head { flex-direction:column; } .case-actions { justify-content:stretch; } .case-actions .btn { width:100%; justify-content:center; } }
+.feedback p { margin-top:var(--s1); font-size:13px; color:var(--ink-2); }
+.intro .status.alert { color:var(--alert); background:var(--alert-bg); border-left:3px solid var(--alert); border-radius:var(--radius-sm); padding:var(--s2) var(--s3); font-weight:600; }
+.fresh { display:flex; align-items:center; gap:var(--s3); font-size:12px; color:var(--ink-3); line-height:1.7; }
+.fresh .badge { width:20px; height:20px; flex:none; opacity:.85; }
+.fresh .stale { color:var(--alert); font-weight:600; }
+@media (max-width:640px) {
+  h1.summary { font-size:17px; }
+  .card { padding:var(--s4); }
+  .card-head { flex-direction:column; gap:var(--s2); }
+  .headline { justify-items:start; text-align:left; }
+  .card-foot { flex-wrap:wrap; }
+  .card-foot .from { flex-basis:100%; white-space:normal; }
+}
 `;
 
-export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath = null, mailCachePath = null, now }) {
+// The company badge is private branding, so it is read from the private
+// config (config.brandBadge) at render time and never kept in this repo. It is
+// embedded as an image, which cannot run script whatever the file holds.
+export function readBrandBadge(badgePath) {
+  if (!badgePath || !fs.existsSync(badgePath)) return null;
+  const svg = fs.readFileSync(badgePath, "utf8");
+  if (!/^\s*(<\?xml[^>]*\?>\s*)?<svg[\s>]/.test(svg)) return null;
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+}
+
+export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath = null, mailCachePath = null, brandBadgePath = null, now }) {
   const file = path.join(outputsDir, BOARD_FILE);
   const board = buildBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath, mailCachePath, now });
-  fs.writeFileSync(file, renderBoard(board));
+  fs.writeFileSync(file, renderBoard(board, { badge: readBrandBadge(brandBadgePath) }));
   return { file, board };
 }
