@@ -128,6 +128,18 @@ export function owaLink(messageId) {
   return `https://outlook.office365.com/owa/?ItemID=${encodeURIComponent(messageId.replace(/_/g, "+").replace(/-/g, "/"))}&exvsurl=1&viewmodel=ReadMessageItem`;
 }
 
+// Sender and subject of the monitor's RFQ messages, looked up read-only by the
+// Claude session (config.rfqMailCache); the board has no mail access itself.
+function readMailCache(mailCachePath) {
+  if (!mailCachePath || !fs.existsSync(mailCachePath)) return {};
+  return JSON.parse(fs.readFileSync(mailCachePath, "utf8")).messages || {};
+}
+
+// The original RFQ email among a set of message ids: the earliest one we know.
+function originalEmail(ids, known) {
+  return (ids || []).map((id) => known(id)).filter(Boolean).sort((a, b) => (a.receivedAt || "").localeCompare(b.receivedAt || ""))[0] || null;
+}
+
 function readTracker(trackerPath) {
   if (!trackerPath || !fs.existsSync(trackerPath)) return { workingTowards: [], history: [] };
   const tracker = JSON.parse(fs.readFileSync(trackerPath, "utf8"));
@@ -149,7 +161,8 @@ function caseEvents({ caseId, version, decision, lifecycle, monitor, sent }) {
   return events;
 }
 
-export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, now = new Date() }) {
+export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, now = new Date() }) {
+  const mailCache = readMailCache(mailCachePath);
   const state = monitorStatePath && fs.existsSync(monitorStatePath) ? JSON.parse(fs.readFileSync(monitorStatePath, "utf8")) : null;
   const queue = state?.operational_queue || [];
   const currentSnapshot = storeDir ? readManifest(storeDir).current : null;
@@ -199,6 +212,11 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       feedback: lifecycle.entries.filter((entry) => entry.type === "method-review" || entry.choice === "correction").map((entry) => ({ ...entry, caseId })),
       events: caseEvents({ caseId, version, decision, lifecycle, monitor, sent }),
       rfqLink: monitor?.evidence_links?.[0] || owaLink(decision.rfq.sourceMessageIds?.[0]),
+      email: (() => {
+        const evidence = new Map(decision.lines.flatMap((line) => line.history?.email?.evidence || []).map((item) => [item.id, item]));
+        const found = originalEmail(decision.rfq.sourceMessageIds, (id) => evidence.get(id) || mailCache[id]);
+        return { from: found?.from || decision.rfq.initiatedBy || null, fromName: found?.fromName || null, subject: found?.subject || null };
+      })(),
     };
   });
   cases.sort((a, b) => Number(b.open) - Number(a.open) || (a.askedAt || "").localeCompare(b.askedAt || ""));
@@ -226,6 +244,11 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
         dueBasis: item.due_basis || item.due_date_basis || null,
         ask: `Price RFQ: ${item.customer} ${item.reference}`,
         rfqLink: item.evidence_links?.[0] || owaLink(item.evidence_ids?.[0]),
+        email: (() => {
+          const found = originalEmail(item.evidence_ids, (id) => mailCache[id]);
+          const firstActor = [...(item.events || [])].sort((a, b) => (a.at || "").localeCompare(b.at || ""))[0]?.actor || null;
+          return { from: found?.from || firstActor, fromName: found?.fromName || null, subject: found?.subject || null };
+        })(),
       })).sort((a, b) => (a.lastActivityAt ? 0 : 1) - (b.lastActivityAt ? 0 : 1) || (a.lastActivityAt || "").localeCompare(b.lastActivityAt || "")),
     };
   }
@@ -266,6 +289,7 @@ function caseCard(kase) {
       ${kase.chasedAt && kase.chasedAt !== kase.askedAt ? `<li>Chased ${day(kase.chasedAt)}</li>` : ""}
       ${kase.open && kase.waitingBusinessDays != null ? `<li class="${late ? "late" : ""}">${kase.waitingBusinessDays} business day${kase.waitingBusinessDays === 1 ? "" : "s"} waiting</li>` : ""}
     </ul>
+    <p class="small case-email"><span class="muted">From</span> ${kase.email.fromName ? `${esc(kase.email.fromName)} &lt;${esc(kase.email.from)}&gt;` : esc(kase.email.from || "unknown")}${kase.email.subject ? ` · <span class="muted">Subject</span> “${esc(kase.email.subject)}”` : ""}</p>
     <div class="scroll"><table class="tiers compact"><thead><tr><th class="num">Qty</th><th class="num">Unit</th><th class="num">Total</th><th>Decision</th></tr></thead><tbody>${linesHtml(kase)}</tbody></table></div>
     ${kase.open && kase.confidence.level !== "High" && kase.confidence.reasons.length ? `<p class="small">${ICON.alert} ${esc(kase.confidence.reasons[0])}</p>` : ""}
     <p class="muted small">${monitor}</p>
@@ -274,10 +298,13 @@ function caseCard(kase) {
   </article>`;
 }
 
+const senderHtml = (email) => (email?.from ? `${email.fromName ? `<span class="strong">${esc(email.fromName)}</span><div class="why-not">${esc(email.from)}</div>` : esc(email.from)}` : '<span class="muted">not looked up</span>');
+const subjectHtml = (email) => (email?.subject ? esc(email.subject) : '<span class="muted">not looked up</span>');
+
 function monitorTable(items, title, open) {
   if (!items.length) return "";
-  const rows = items.map((item) => `<tr><td><span class="strong">${esc(item.customer)}</span><div class="why-not">${esc(item.reference)}</div>${item.rfqLink ? `<a class="small" href="${esc(item.rfqLink)}" target="_blank" rel="noopener">Open RFQ email</a>` : ""}</td><td>${esc(item.status)}</td><td class="date">${item.lastActivityAt ? day(item.lastActivityAt) : "unknown"}</td><td class="date">${item.dueDate ? `${day(item.dueDate)}<div class="why-not">${esc(item.dueBasis ?? "basis not stated")}</div>` : '<span class="muted">none stated</span>'}</td><td>${copyButton(item.ask, "Copy")}</td></tr>`).join("");
-  return `<details class="fold"${open ? " open" : ""}><summary>${ICON.chevron}<h3>${esc(title)} <small>${items.length}</small></h3></summary><div class="scroll"><table><thead><tr><th>Customer · reference</th><th>Monitor status</th><th>Last activity</th><th>Date flagged</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
+  const rows = items.map((item) => `<tr><td><span class="strong">${esc(item.customer)}</span><div class="why-not">${esc(item.reference)}</div></td><td>${senderHtml(item.email)}</td><td>${subjectHtml(item.email)}${item.rfqLink ? `<div><a class="small" href="${esc(item.rfqLink)}" target="_blank" rel="noopener">Open RFQ email</a></div>` : ""}</td><td>${esc(item.status)}</td><td class="date">${item.lastActivityAt ? day(item.lastActivityAt) : "unknown"}</td><td class="date">${item.dueDate ? `${day(item.dueDate)}<div class="why-not">${esc(item.dueBasis ?? "basis not stated")}</div>` : '<span class="muted">none stated</span>'}</td></tr>`).join("");
+  return `<details class="fold"${open ? " open" : ""}><summary>${ICON.chevron}<h3>${esc(title)} <small>${items.length}</small></h3></summary><div class="scroll"><table><thead><tr><th>Company · reference</th><th>Sender</th><th>Email subject</th><th>Monitor status</th><th>Last activity</th><th>Due</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
 }
 
 const PLAN_GROUPS = [["now", "Working on now"], ["waiting on you", "Waiting on you"], ["next", "Next"], ["blocked", "Blocked"], ["done", "Done recently"]];
@@ -435,9 +462,9 @@ td.date { white-space:nowrap; } td.date .why-not { white-space:normal; }
 @media (max-width:640px) { .case-head { flex-direction:column; } .case-actions { justify-content:stretch; } .case-actions .btn { width:100%; justify-content:center; } }
 `;
 
-export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath = null, now }) {
+export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath = null, mailCachePath = null, now }) {
   const file = path.join(outputsDir, BOARD_FILE);
-  const board = buildBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath, now });
+  const board = buildBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath, mailCachePath, now });
   fs.writeFileSync(file, renderBoard(board));
   return { file, board };
 }

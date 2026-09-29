@@ -41,7 +41,7 @@ test("a case leaves the waiting list only when the monitor's status says a quote
   assert.equal(po.open, true);
   assert.equal(po.state, "Waiting on you");
   assert.match(html, /href="RFQ-CHECK-2026-09-28-0300\.md"/);
-  assert.match(html, /data-copy="Price RFQ: Other Co 99 \/ XYZ-9"/);
+  assert.match(html, /<th>Company · reference<\/th><th>Sender<\/th><th>Email subject<\/th>/);
 });
 
 test("sync imports a new weekly export, flags cases priced on the older one, and never rebuilds a recommendation", () => {
@@ -92,8 +92,8 @@ test("section 1 is grouped by the monitor's status wording without hiding any ro
   assert.deepEqual(board.monitor.withoutPage.map((item) => [item.customer, item.pricing]), [["Beta", true], ["Gamma", false]]);
   assert.match(html, /Status mentions a quote, RFQ or inquiry <small>1<\/small>/);
   assert.match(html, /Status doesn&#39;t say \(may be a follow-up or an RFQ\) <small>1<\/small>/);
-  assert.match(html, /data-copy="Price RFQ: Beta RFQ 12"/);
-  assert.match(html, /data-copy="Price RFQ: Gamma PO 55"/);
+  assert.match(html, /Beta<\/span><div class="why-not">RFQ 12/);
+  assert.match(html, /Gamma<\/span><div class="why-not">PO 55/);
   assert.match(html, /<td class="date">unknown<\/td>/);
   assert.match(html, /Customer asked for PO acknowledgment/);
 });
@@ -190,4 +190,25 @@ test("each case and unpriced RFQ links to its RFQ email in Outlook", () => {
   const other = board.monitor.withoutPage.find((item) => item.customer === "Other Co");
   assert.equal(other.rfqLink, "https://outlook.office365.com/owa/?ItemID=AAMk%2Ba%2Fb%3D&exvsurl=1&viewmodel=ReadMessageItem");
   assert.match(renderBoard(board), /Open RFQ email/);
+});
+
+test("rows show the company, the sender and the email subject of the original RFQ email", () => {
+  const { config } = syncedWorld([
+    { customer: "Other Co", reference: "RFQ9", priority_section: 1, status: "New RFQ", evidence_ids: ["later", "first"], events: [{ at: "2026-09-20T00:00:00Z", actor: "fallback@other.example" }] },
+    { customer: "Uncached Co", reference: "RFQ10", priority_section: 1, status: "New RFQ", evidence_ids: ["none"], events: [{ at: "2026-09-21T00:00:00Z", actor: "buyer@uncached.example" }] },
+  ]);
+  const mailCachePath = path.join(config.outputsDir, "mail.json");
+  fs.writeFileSync(mailCachePath, JSON.stringify({ messages: {
+    first: { subject: "RFQ 9 for brackets", from: "pat@other.example", fromName: "Pat Buyer", receivedAt: "2026-09-19T10:00:00Z" },
+    later: { subject: "RE: RFQ 9 for brackets", from: "pat@other.example", fromName: "Pat Buyer", receivedAt: "2026-09-22T10:00:00Z" },
+  } }));
+  const board = buildBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, mailCachePath });
+  const other = board.monitor.withoutPage.find((item) => item.customer === "Other Co");
+  assert.deepEqual(other.email, { from: "pat@other.example", fromName: "Pat Buyer", subject: "RFQ 9 for brackets" });
+  const uncached = board.monitor.withoutPage.find((item) => item.customer === "Uncached Co");
+  assert.deepEqual(uncached.email, { from: "buyer@uncached.example", fromName: null, subject: null });
+  assert.ok(board.cases[0].email.from, "a case shows its RFQ sender from the saved evidence");
+  const html = renderBoard(board);
+  assert.match(html, /Pat Buyer<\/span><div class="why-not">pat@other.example/);
+  assert.match(html, /RFQ 9 for brackets/);
 });

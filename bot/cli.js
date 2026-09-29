@@ -71,7 +71,7 @@ function renderVersion(config, caseId, version) {
 }
 
 function refreshBoard(config) {
-  const { file, board } = writeBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, lastSync: readLastSync(config), trackerPath: config.trackerFile || null });
+  const { file, board } = writeBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, lastSync: readLastSync(config), trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null });
   return `${file} (${board.cases.filter((kase) => kase.open).length} waiting)`;
 }
 
