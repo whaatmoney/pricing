@@ -135,10 +135,15 @@ function readMailCache(mailCachePath) {
   return JSON.parse(fs.readFileSync(mailCachePath, "utf8")).messages || {};
 }
 
-// The original RFQ email among a set of message ids: the earliest one we know.
-function originalEmail(ids, known) {
-  return (ids || []).map((id) => known(id)).filter(Boolean).sort((a, b) => (a.receivedAt || "").localeCompare(b.receivedAt || ""))[0] || null;
+// The original RFQ email among a set of message ids: the earliest one sent by
+// the customer (a QPC forward or reply draft is never the RFQ sender), falling
+// back to the earliest of any sender. `isCustomer` says who the customer is.
+function originalEmail(ids, known, isCustomer = () => true) {
+  const found = (ids || []).map((id) => known(id)).filter(Boolean).sort((a, b) => (a.receivedAt || "").localeCompare(b.receivedAt || ""));
+  return found.find((item) => isCustomer(item.from)) || found[0] || null;
 }
+
+const domainOf = (address) => String(address || "").toLowerCase().split("@")[1] || "";
 
 function readTracker(trackerPath) {
   if (!trackerPath || !fs.existsSync(trackerPath)) return { workingTowards: [], history: [] };
@@ -211,11 +216,14 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       confidence: (() => { const grade = caseConfidence(decision.lines, view); return { level: grade.level, reasons: reasonsText(grade.weakest) }; })(),
       feedback: lifecycle.entries.filter((entry) => entry.type === "method-review" || entry.choice === "correction").map((entry) => ({ ...entry, caseId })),
       events: caseEvents({ caseId, version, decision, lifecycle, monitor, sent }),
+      monitorReference: decision.rfq.monitorReference || null,
       rfqLink: monitor?.evidence_links?.[0] || owaLink(decision.rfq.sourceMessageIds?.[0]),
       email: (() => {
         const evidence = new Map(decision.lines.flatMap((line) => line.history?.email?.evidence || []).map((item) => [item.id, item]));
-        const found = originalEmail(decision.rfq.sourceMessageIds, (id) => evidence.get(id) || mailCache[id]);
-        return { from: found?.from || decision.rfq.initiatedBy || null, fromName: found?.fromName || null, subject: found?.subject || null };
+        const customerDomains = (decision.customer.emailDomains || []).map((item) => item.toLowerCase());
+        const found = originalEmail(decision.rfq.sourceMessageIds, (id) => evidence.get(id) || mailCache[id], (from) => customerDomains.includes(domainOf(from)));
+        const fromCustomer = found && customerDomains.includes(domainOf(found.from));
+        return { from: fromCustomer ? found.from : decision.rfq.initiatedBy || found?.from || null, fromName: fromCustomer ? found.fromName || null : null, subject: found?.subject || null };
       })(),
     };
   });
@@ -223,7 +231,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
 
   let monitor = null;
   if (state) {
-    const covered = new Set(cases.map((kase) => kase.monitor?.reference).filter(Boolean));
+    const covered = new Set(cases.flatMap((kase) => [kase.monitor?.reference, kase.monitorReference]).filter(Boolean));
     const waiting = queue.filter((item) => item.priority_section === 1);
     const cutoff = state.freshness?.source_cutoff || null;
     const ageMinutes = cutoff ? (now.getTime() - Date.parse(cutoff)) / 60000 : null;
@@ -245,8 +253,8 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
         ask: `Price RFQ: ${item.customer} ${item.reference}`,
         rfqLink: item.evidence_links?.[0] || owaLink(item.evidence_ids?.[0]),
         email: (() => {
-          const found = originalEmail(item.evidence_ids, (id) => mailCache[id]);
           const firstActor = [...(item.events || [])].sort((a, b) => (a.at || "").localeCompare(b.at || ""))[0]?.actor || null;
+          const found = originalEmail(item.evidence_ids, (id) => mailCache[id], (from) => Boolean(firstActor) && domainOf(from) === domainOf(firstActor));
           return { from: found?.from || firstActor, fromName: found?.fromName || null, subject: found?.subject || null };
         })(),
       })).sort((a, b) => (a.lastActivityAt ? 0 : 1) - (b.lastActivityAt ? 0 : 1) || (a.lastActivityAt || "").localeCompare(b.lastActivityAt || "")),
