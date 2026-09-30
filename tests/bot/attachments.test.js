@@ -38,3 +38,13 @@ test("the publish step starts only when private config names a command, and neve
   assert.equal(startPublish({ publishCommand: ["node", "publish.mjs"] }, fake), true);
   assert.deepEqual(calls, [["node", ["publish.mjs"], true]]);
 });
+
+test("items set aside are grouped by why: the reviewer's call, protected, paperwork, the customer's move, or already done", async () => {
+  const { triageGroup } = await import("../../bot/lib/board.js");
+  assert.equal(triageGroup("capability inquiry: Pat's call (9/21)"), "Your call");
+  assert.equal(triageGroup("expedite price: no engine method"), "Your call");
+  assert.equal(triageGroup("encrypted RFQ, never opened"), "Protected files");
+  assert.equal(triageGroup("waiting on customer clarification"), "Waiting on the customer");
+  assert.equal(triageGroup("answered: quoted $7.00 on 9/22"), "Already answered or ordered");
+  assert.equal(triageGroup("PO acknowledgment, not a price request"), "Paperwork, not pricing");
+});

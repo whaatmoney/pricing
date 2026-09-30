@@ -430,7 +430,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
   const history = [...tracker.history.map((item) => ({ ...item, source: "log" })), ...cases.flatMap((kase) => kase.events)]
     .filter((item) => item.at)
     .sort((a, b) => b.at.localeCompare(a.at));
-  return { generatedAt: now.toISOString(), cases, monitor, lastSync, history, mailFound, mailPlacements: placements, claudeMail: claudeMailView(claudeMail, now), chasing };
+  return { generatedAt: now.toISOString(), cases, monitor, lastSync, history, mailFound, mailPlacements: placements, triage: readTriage(triagePath), claudeMail: claudeMailView(claudeMail, now), chasing };
 }
 
 // What the board says about Claude's own mail check: how far it reached,
@@ -483,11 +483,35 @@ const CHASE_DAYS = 14;
 // Chases a Claude session confirmed answered in the mail (private triage
 // file, config.triageFile): key "chat|<company>|<subject>" with answered: true.
 // One comes back if the customer chases again after it was checked.
+// Every item a Claude session checked and judged not a price request, with
+// its reason (private triage file, config.triageFile).
+export function readTriage(file) {
+  if (!file || !fs.existsSync(file)) return {};
+  try { return JSON.parse(fs.readFileSync(file, "utf8")) || {}; } catch { return {}; }
+}
 function readAnswered(file) {
-  if (!file || !fs.existsSync(file)) return new Map();
-  try {
-    return new Map(Object.entries(JSON.parse(fs.readFileSync(file, "utf8"))).filter(([key, entry]) => key.startsWith("chat|") && entry?.answered));
-  } catch { return new Map(); }
+  return new Map(Object.entries(readTriage(file)).filter(([key, entry]) => key.startsWith("chat|") && entry?.answered));
+}
+
+// The kind of reason, for grouping: a question only the reviewer can answer,
+// protected content, paperwork, the customer's move, or already done.
+export function triageGroup(reason) {
+  const text = String(reason || "").toLowerCase();
+  if (/\banswered\b|already ordered|already quoted|\bordered\b/.test(text)) return "Already answered or ordered";
+  if (/protected|encrypted|kiteworks|password/.test(text)) return "Protected files";
+  if (/\w+'s (?:call|number)|capability|testing|expedite|supply item/.test(text)) return "Your call";
+  if (/waiting|no part|trial|clarification/.test(text)) return "Waiting on the customer";
+  return "Paperwork, not pricing";
+}
+const TRIAGE_ORDER = ["Your call", "Waiting on the customer", "Protected files", "Paperwork, not pricing", "Already answered or ordered"];
+const TRIAGE_TONE = { "Your call": "warn", "Waiting on the customer": "muted", "Protected files": "muted", "Paperwork, not pricing": "muted", "Already answered or ordered": "ok" };
+
+// Items checked and set aside, grouped by why, folded under the section.
+function notPricedTable(items, now) {
+  if (!items.length) return "";
+  const sorted = [...items].sort((a, b) => TRIAGE_ORDER.indexOf(a.group) - TRIAGE_ORDER.indexOf(b.group));
+  const rows = sorted.map((item) => `<tr><td><span class="strong">${esc(item.customer)}</span><div class="why-not">${esc(item.reference)}</div></td><td><span class="chip ${TRIAGE_TONE[item.group] || "muted"}">${esc(item.group)}</span><div class="why-not">${esc(item.reason)}</div></td><td class="date">${item.lastAt ? relativeDay(item.lastAt, now) : "—"}</td></tr>`).join("");
+  return `<details class="fold"><summary>${ICON.chevron}<h3>Checked: not a price request <small>${items.length}</small></h3></summary><div class="scroll"><table class="queue"><thead><tr><th>Company · reference</th><th>Why no page</th><th>Last activity</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
 }
 
 function chasingFrom(chat, cases, queue, now, answered = new Map()) {
@@ -807,11 +831,18 @@ export function renderBoard(board, { badge = null } = {}) {
   ];
   const openCount = grouped.ready.length + grouped.facts.length;
   const pill = alerts.length ? ["alert", "Needs attention"] : openCount ? ["warn", `${openCount} waiting on you`] : ["ok", "Nothing waiting"];
-  const unpriced = monitor ? monitor.withoutPage : [];
+  const unpricedAll = monitor ? monitor.withoutPage : [];
   const owed = monitor?.owed || [];
   const mailFound = board.mailFound || [];
   const mailChases = mailFound.filter((item) => item.kind === "followup" || item.kind === "question");
-  const mailNew = mailFound.filter((item) => !mailChases.includes(item));
+  const mailAll = mailFound.filter((item) => !mailChases.includes(item));
+  // Items a session checked and set aside stay listed, folded, with the reason;
+  // new activity after the check brings one back.
+  const checked = (key, lastAt) => { const entry = (board.triage || {})[key]; return entry && (!lastAt || String(lastAt) <= String(entry.at)) ? entry : null; };
+  const setAside = [];
+  const keep = (item, key, lastAt, customer, reference) => { const entry = checked(key, lastAt); if (!entry) return true; setAside.push({ customer, reference, lastAt, reason: entry.reason, group: triageGroup(entry.reason) }); return false; };
+  const mailNew = mailAll.filter((item) => keep(item, `mail|${item.customerDomain}|${String(item.subject).replace(/^(re|fw|fwd):\s*/gi, "")}`, item.at, item.customerDomain, item.subject));
+  const unpriced = unpricedAll.filter((item) => keep(item, `monitor|${item.customer}|${item.reference}`, item.lastActivityAt, item.customer, item.reference));
   // Due today or past due, from every source: cards, mail-check rows, and
   // the monitor's lists without a page.
   const dueItems = [
@@ -881,7 +912,7 @@ ${BOARD_STYLE}
 
   ${closed.length ? section("closed", "Decided & sent", closed.length, "", `<details class="fold"><summary>${ICON.chevron}<h3>Show ${closed.length}</h3></summary><div class="cards">${closed.map((kase) => caseCard(kase, now)).join("")}</div></details>`) : ""}
 
-  ${(monitor && unpriced.length) || mailNew.length ? section("unpriced", "No price page yet", unpriced.length + mailNew.length, "Open in the mail with no page here; ask Claude to price any of them.", `${mailRowsTable(mailNew, now, "Found by Claude's mail check, not listed elsewhere here")}${monitorTable(unpriced.filter((item) => item.pricing), "Status mentions a quote, RFQ or inquiry", now)}${monitorTable(unpriced.filter((item) => !item.pricing), "Status doesn't say (may be a follow-up or an RFQ)", now)}`) : ""}
+  ${(monitor && unpriced.length) || mailNew.length || setAside.length ? section("unpriced", "No price page yet", unpriced.length + mailNew.length, unpriced.length + mailNew.length ? "Open in the mail with no page here; ask Claude to price any of them." : `Nothing here needs pricing. ${setAside.length} item${setAside.length === 1 ? " was" : "s were"} checked and ${setAside.length === 1 ? "is" : "are"} not a price request (below).`, `${mailRowsTable(mailNew, now, "Found by Claude's mail check, not listed elsewhere here")}${monitorTable(unpriced.filter((item) => item.pricing), "Status mentions a quote, RFQ or inquiry", now)}${monitorTable(unpriced.filter((item) => !item.pricing), "Status doesn't say (may be a follow-up or an RFQ)", now)}${notPricedTable(setAside, now)}`) : ""}
 
   ${owed.length ? section("owed", "Acknowledged, quote still owed", owed.length, "The Codex mail monitor saw each of these customers get a reply but no price. Oldest first. Ask Claude to price any of them, or tell it which are not pricing work.", monitorTable(owed, `Show ${owed.length}`, now)) : ""}
 
