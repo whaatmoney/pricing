@@ -5,6 +5,7 @@ import { lifecyclePath, lifecycleView, readLifecycle } from "./lifecycle.js";
 import { isSameCustomer, partNumberMatch } from "./part-history.js";
 import { ICON, progressHtml, SCRIPT, STYLE } from "./design.js";
 import { displayStatus, escapeHtml } from "./render.js";
+import { followupThreads, matchThread, monitorFor, readQuotePrepChat } from "./followups.js";
 import { readManifest } from "./router-snapshot.js";
 import { priceSource } from "./review-card.js";
 
@@ -221,7 +222,7 @@ function caseEvents({ caseId, version, decision, lifecycle, monitor, sent }) {
   return events;
 }
 
-export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, now = new Date() }) {
+export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, now = new Date() }) {
   const mailCache = readMailCache(mailCachePath);
   const state = monitorStatePath && fs.existsSync(monitorStatePath) ? JSON.parse(fs.readFileSync(monitorStatePath, "utf8")) : null;
   const queue = state?.operational_queue || [];
@@ -247,6 +248,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       version,
       page: file.replace(/\.json$/, ".html"),
       customer: decision.customer.name,
+      customerRecord: decision.customer,
       reference: decision.rfq.reference || null,
       askedAt: decision.rfq.initiatedAt,
       chasedAt: decision.rfq.latestAskAt,
@@ -323,7 +325,33 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
   const history = [...tracker.history.map((item) => ({ ...item, source: "log" })), ...cases.flatMap((kase) => kase.events)]
     .filter((item) => item.at)
     .sort((a, b) => b.at.localeCompare(a.at));
-  return { generatedAt: now.toISOString(), cases, monitor, lastSync, history };
+  return { generatedAt: now.toISOString(), cases, monitor, lastSync, history, chasing: chasingFrom(readQuotePrepChat(quotePrepChatPath), cases, queue, now) };
+}
+
+// Front desk follow-ups from the last two weeks: each one on the card it
+// belongs to (unless the quote went out after it), the rest listed as
+// customers chasing a request with no price page.
+const CHASE_DAYS = 14;
+function chasingFrom(chat, cases, queue, now) {
+  if (!chat) return null;
+  const recent = followupThreads(chat.messages).filter((thread) => Date.parse(thread.lastAt) >= now.getTime() - CHASE_DAYS * 86400000);
+  const unmatched = [];
+  for (const thread of recent) {
+    const hits = matchThread(thread, cases);
+    if (!hits.length) {
+      const entry = monitorFor(thread, queue);
+      // Answered: the monitor saw a quote go out after the last chase.
+      if (entry && entry.priority_section === 3 && quoteSentStatus(entry.status) && String(entry.last_observed_activity_at || "") > thread.lastAt) continue;
+      unmatched.push({ ...thread, monitor: entry ? { reference: entry.reference, section: entry.priority_section, status: entry.status, lastActivityAt: entry.last_observed_activity_at || null } : null });
+      continue;
+    }
+    for (const kase of hits) {
+      const sent = kase.progress.find((step) => step.key === "sent");
+      if (sent.done && sent.at && thread.lastAt <= sent.at) continue;
+      if (!kase.followup || kase.followup.lastAt < thread.lastAt) kase.followup = thread;
+    }
+  }
+  return { readAt: chat.readAt, unmatched };
 }
 
 // The first reason a line has no price, in the reviewer's words.
@@ -364,8 +392,27 @@ function dueChip(kase, now) {
   if (kase.open && kase.waitingBusinessDays >= 3) return `<span class="chip muted${kase.waitingBusinessDays >= WAITING_TOO_LONG ? " late" : ""}">${kase.waitingBusinessDays} business days waiting</span>`;
   return "";
 }
-// Soonest due first, then longest waiting.
-const byUrgency = (a, b) => (a.dueDate ? 0 : 1) - (b.dueDate ? 0 : 1) || (a.dueDate || "").localeCompare(b.dueDate || "") || (a.askedAt || "").localeCompare(b.askedAt || "");
+// Due dates first, then customers chasing (urgent first), then longest waiting.
+const chaseRank = (kase) => (kase.followup ? (kase.followup.urgent ? 0 : 1) : 2);
+const byUrgency = (a, b) => (a.dueDate ? 0 : 1) - (b.dueDate ? 0 : 1) || (a.dueDate || "").localeCompare(b.dueDate || "") || chaseRank(a) - chaseRank(b) || (a.askedAt || "").localeCompare(b.askedAt || "");
+
+// "Today", "Yesterday" or the date, in the shop's time zone.
+function relativeDay(iso, now) {
+  const days = Math.round((Date.parse(`${localDay(now.toISOString())}T12:00:00Z`) - Date.parse(`${localDay(iso)}T12:00:00Z`)) / 86400000);
+  return days === 0 ? "today" : days === 1 ? "yesterday" : day(iso);
+}
+// The front desk's latest reminder that this customer is chasing.
+function chaseChip(followup, now) {
+  if (!followup) return "";
+  const title = `Front desk, ${when(followup.lastAt)}: ${followup.contact}${followup.company ? ` from ${followup.company}` : ""} is chasing “${followup.subject}”${followup.note ? ` — ${followup.note}` : ""}`;
+  return `<span class="chip ${followup.urgent ? "alert" : "muted late"}" title="${esc(title)}">Chasing · ${esc(followup.label.toLowerCase())} ${relativeDay(followup.lastAt, now)}</span>`;
+}
+
+// Customers chasing a request that has no price page yet.
+function chasingTable(items, now) {
+  const rows = items.map((item) => `<tr class="${item.urgent ? "urgent" : ""}"><td><span class="strong">${esc(item.company || "—")}</span><div class="why-not">${esc(item.contact)}</div></td><td>${esc(item.subject || "—")}${item.note ? `<div class="why-not">“${esc(item.note)}”</div>` : ""}</td><td class="date"><span class="chip ${item.urgent ? "alert" : "muted"}">${esc(item.label)}</span><div class="why-not">${relativeDay(item.lastAt, now)}</div></td><td class="status-cell">${item.monitor ? `${esc(item.monitor.status)}<div class="why-not">Mail monitor · ${esc(item.monitor.reference)}</div>` : '<span class="warn-text">Not in the mail monitor</span>'}</td></tr>`).join("");
+  return `<div class="scroll"><table class="queue chase"><thead><tr><th>Company · contact</th><th>What they asked for</th><th>Chased</th><th>Where it stands</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
 
 const LINE_LIMIT = 4;
 const linePrice = (line) => (line.decided && line.decided.choice !== "correction" ? line.decided.unitPrice : line.suggested);
@@ -431,7 +478,7 @@ function caseCard(kase, now) {
       <div class="card-title">
         <a class="card-link" href="${esc(kase.page)}">${esc(kase.customer)}</a>
         <p class="ref">${esc(kase.reference || kase.caseId)}</p>
-        <p class="marks">${open ? progressHtml(kase.progress, { compact: true }) : ""}${kase.askedAt ? `<span class="chip muted">Asked ${day(kase.askedAt)}</span>` : ""}${dueChip(kase, now)}<span class="chip ok done-mark">${ICON.check}Done</span><span class="chip muted opened-mark">${ICON.check}Opened</span></p>
+        <p class="marks">${open ? progressHtml(kase.progress, { compact: true }) : ""}${kase.askedAt ? `<span class="chip muted">Asked ${day(kase.askedAt)}</span>` : ""}${dueChip(kase, now)}${chaseChip(kase.followup, now)}<span class="chip ok done-mark">${ICON.check}Done</span><span class="chip muted opened-mark">${ICON.check}Opened</span></p>
       </div>
       ${headline(kase, group)}
     </div>
@@ -509,13 +556,18 @@ export function renderBoard(board, { badge = null } = {}) {
   const pastDueCases = dated.filter((kase) => localDay(kase.dueDate) < today);
   const dueTodayCases = dated.filter((kase) => localDay(kase.dueDate) === today);
   const pastDue = pastDueCases.length, dueToday = dueTodayCases.length;
+  const chasingOpen = [...grouped.ready, ...grouped.facts].filter((kase) => kase.followup);
+  const chasingNoPage = board.chasing?.unmatched || [];
+  const chasingCount = chasingOpen.length + chasingNoPage.length;
+  const chaseTarget = chasingOpen.find((kase) => kase.followup.urgent) || chasingOpen[0];
   const summary = [
     grouped.ready.length ? `<a class="n-ready" href="#ready"><b>${grouped.ready.length}</b> ready for your yes</a>` : "",
     grouped.facts.length ? `<a class="n-facts" href="#facts"><b>${grouped.facts.length}</b> need facts first</a>` : "",
     pastDue ? `<a class="due-now" href="#case-${esc(pastDueCases[0].caseId)}">${pastDue} past due</a>` : "",
     dueToday ? `<a class="due-now" href="#case-${esc(dueTodayCases[0].caseId)}">${dueToday} due today</a>` : "",
+    chasingCount ? `<a class="chasing-now" href="${chasingNoPage.length ? "#chasing" : `#case-${esc(chaseTarget.caseId)}`}">${chasingCount} customer${chasingCount === 1 ? "" : "s"} chasing</a>` : "",
   ].filter(Boolean).join('<span class="sep">·</span>') || "Nothing waiting on you.";
-  const tabs = [["ready", "Ready", grouped.ready.length], ["facts", "Needs facts", grouped.facts.length], ["closed", "Decided & sent", closed.length], ["unpriced", "No page yet", unpriced.length], ["log", "Log", null]]
+  const tabs = [["ready", "Ready", grouped.ready.length], ["facts", "Needs facts", grouped.facts.length], ["chasing", "Chasing", chasingNoPage.length], ["closed", "Decided & sent", closed.length], ["unpriced", "No page yet", unpriced.length], ["log", "Log", null]]
     .filter(([id, , count]) => count !== 0 && (id !== "unpriced" || monitor));
   return `<!doctype html>
 <html lang="en">
@@ -552,6 +604,8 @@ ${BOARD_STYLE}
 
   ${openCount ? "" : `<p class="empty">${ICON.check}<span>Nothing waiting. Every priced RFQ has a decision.</span></p>`}
 
+  ${chasingNoPage.length ? section("chasing", "Customers chasing, no price page", chasingNoPage.length, "The front desk logged these follow-ups in the quote-prep chat in the last two weeks, and none has a price page. Ask Claude to price any of them.", chasingTable(chasingNoPage, now)) : ""}
+
   ${closed.length ? section("closed", "Decided & sent", closed.length, "", `<details class="fold"><summary>${ICON.chevron}<h3>Show ${closed.length}</h3></summary><div class="cards">${closed.map((kase) => caseCard(kase, now)).join("")}</div></details>`) : ""}
 
   ${monitor && unpriced.length ? section("unpriced", "No price page yet", unpriced.length, "Open in the mail monitor with no page here; ask Claude to price any of them.", `${monitorTable(unpriced.filter((item) => item.pricing), "Status mentions a quote, RFQ or inquiry")}${monitorTable(unpriced.filter((item) => !item.pricing), "Status doesn't say (may be a follow-up or an RFQ)")}`) : ""}
@@ -564,6 +618,7 @@ ${BOARD_STYLE}
 
   <footer class="fresh">${badge ? `<img class="badge" src="${badge}" alt="" width="20" height="20">` : ""}<span>
     ${monitor ? `<span class="${monitor.stale ? "stale" : ""}">Mail checked ${when(monitor.cutoff)}</span>${monitor.report ? ` · <a href="${esc(monitor.report)}">latest check</a>` : ""} · ` : ""}${sync ? `synced ${when(sync.at)}${sync.imports.length ? ` (imported ${sync.imports.map((item) => `${esc(item.fileName)} ${esc(item.outcome)}`).join(", ")})` : ""}` : "no sync has run yet"}
+${board.chasing ? ` · front desk chat read ${when(board.chasing.readAt)}` : ""}
     <br>Private working file · keep inside QPC</span>
   </footer>
 </main>
@@ -662,6 +717,9 @@ h1.summary { font-size:24px; font-weight:650; letter-spacing:-.02em; line-height
 h1.summary a { color:var(--ink); text-decoration:none; border-bottom:1px solid var(--line-2); transition:border-color .15s; }
 h1.summary a:hover { border-bottom-color:currentColor; }
 h1.summary .n-ready b { color:var(--gold-text); } h1.summary .n-facts b { color:var(--warn); }
+h1.summary .chasing-now { color:var(--warn); border-bottom-color:color-mix(in srgb, var(--warn) 40%, transparent); }
+table.chase tr.urgent td:first-child { box-shadow:inset 3px 0 0 var(--alert); }
+.warn-text { color:var(--warn); font-weight:600; }
 h1.summary .due-now { color:var(--alert); border-bottom-color:color-mix(in srgb, var(--alert) 40%, transparent); }
 .chip.late::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--warn); }
 .card { scroll-margin-top:120px; }
@@ -786,9 +844,9 @@ export function readBrandBadge(badgePath) {
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
-export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath = null, mailCachePath = null, brandBadgePath = null, now }) {
+export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath = null, mailCachePath = null, brandBadgePath = null, quotePrepChatPath = null, now }) {
   const file = path.join(outputsDir, BOARD_FILE);
-  const board = buildBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath, mailCachePath, now });
+  const board = buildBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath, mailCachePath, quotePrepChatPath, now });
   fs.writeFileSync(file, renderBoard(board, { badge: readBrandBadge(brandBadgePath) }));
   return { file, board };
 }
