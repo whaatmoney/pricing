@@ -1,4 +1,4 @@
-import { businessDaysSince } from "./board.js";
+import { BOARD_FILE, businessDaysSince } from "./board.js";
 import { lifecycleView } from "./lifecycle.js";
 import { describeDecision, describeReview, displayStatus, escapeHtml, sizeText, STATUS_LABEL, summarizeLine, whyNot } from "./render.js";
 import { answerLines, approveAllLine, assumptions, methodPath, poTotal, quoteSummary, reviewCard } from "./review-card.js";
@@ -293,6 +293,7 @@ ${PAGE_STYLE}
 <body>
 <header class="topbar">
   <div class="topbar-inner">
+    <a class="back" href="${BOARD_FILE}" title="Back to the board">${ICON.chevron}<span>All RFQs</span></a>
     <div class="who"><span class="customer">${esc(decision.customer.name)}</span><span class="sep">·</span><span>${esc(rfqRef)}</span></div>
     <span class="pill ${state.tone}">${esc(state.label)}</span>
   </div>

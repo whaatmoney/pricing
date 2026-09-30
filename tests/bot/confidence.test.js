@@ -58,6 +58,7 @@ test("a case takes its weakest line's grade, and the page and Markdown show it w
   const html = renderHtml(v1);
   assert.match(html, /<span class="chip alert">Confidence: Low<\/span>/);
   assert.match(html, /Weakest line: L3\./);
+  assert.match(html, /<a class="back" href="CLAUDE-DECISIONS-OPEN\.html"[^>]*>.*All RFQs/, "every price page links back to the board");
   assert.match(renderMarkdown(v1), /\*\*Confidence: Low\*\* — /);
 });
 

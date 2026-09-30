@@ -65,8 +65,19 @@ function rfqNumbers(text) {
   return [...String(text || "").matchAll(/\bRFQ\s*#?\s*([A-Z0-9-]*\d[A-Z0-9-]*)/gi)].map((match) => match[1].toUpperCase());
 }
 
+const nameWords = (text) => String(text || "").toUpperCase().replace(/[^A-Z0-9&]+/g, " ").trim().split(" ").filter(Boolean);
+function shortNameOf(monitorName, customer) {
+  const words = nameWords(monitorName);
+  if (!words.length) return false;
+  return [customer.name, ...(customer.aliases || [])].some((candidate) => {
+    const have = new Set(nameWords(candidate));
+    return words.every((word) => have.has(word));
+  });
+}
+
 // Links a case to the monitor's queue entry under the monitor's own contract
-// (outputs/RFQ-PRICING-INTEGRATION.md). The customer must match, and then
+// (outputs/RFQ-PRICING-INTEGRATION.md). The customer must match (a shortened
+// monitor name counts only with the exact reference), and then
 // either the case's exact rfq.monitorReference matches, or all of these hold:
 // a full part number (not a longer part) appears in the reference, any
 // revision stated there agrees, any RFQ number the case states appears there,
@@ -78,7 +89,10 @@ export function monitorLink(decision, queue) {
   const explicit = decision.rfq.monitorReference;
   let candidates;
   if (explicit) {
-    candidates = sameCustomer.filter((item) => item.reference === explicit);
+    // The monitor often shortens the customer ("Acme" for "Acme Precision
+    // Corporation"); with the exact reference the case names, every word of the
+    // monitor's name appearing in the case's name or an alias is enough.
+    candidates = queue.filter((item) => item.reference === explicit && (isSameCustomer(item.customer, decision.customer) || shortNameOf(item.customer, decision.customer)));
   } else {
     const caseRfqs = rfqNumbers(decision.rfq.reference);
     const caseMessages = new Set((decision.rfq.sourceMessageIds || []).flatMap((id) => [id, id.replace(/_/g, "+")]));
@@ -126,6 +140,18 @@ export const PRICING_REQUEST = /\bRFQ\b|\bquot|\bpric|\bestimat|\bbudgetary\b|\b
 export function owaLink(messageId) {
   if (!messageId) return null;
   return `https://outlook.office365.com/owa/?ItemID=${encodeURIComponent(messageId.replace(/_/g, "+").replace(/-/g, "/"))}&exvsurl=1&viewmodel=ReadMessageItem`;
+}
+
+// The newest sent or received message the monitor saw in the thread (drafts
+// excluded), so replies after the RFQ are one click away. Null when that is
+// the RFQ email itself.
+export function latestMessageLink(entry, rfqLink) {
+  const events = (entry?.events || []).filter((event) => event.message_id && !event.is_draft);
+  if (!events.length) return null;
+  const newest = events.reduce((a, b) => (String(b.at) > String(a.at) ? b : a));
+  const index = (entry.evidence_ids || []).indexOf(newest.message_id);
+  const link = (index >= 0 && entry.evidence_links?.[index]) || owaLink(newest.message_id);
+  return link && link !== rfqLink ? { href: link, at: newest.at, actor: newest.actor || null } : null;
 }
 
 // Sender and subject of the monitor's RFQ messages, looked up read-only by the
@@ -219,6 +245,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       events: caseEvents({ caseId, version, decision, lifecycle, monitor, sent }),
       monitorReference: decision.rfq.monitorReference || null,
       rfqLink: monitor?.evidence_links?.[0] || owaLink(decision.rfq.sourceMessageIds?.[0]),
+      latestLink: latestMessageLink(monitor, monitor?.evidence_links?.[0] || owaLink(decision.rfq.sourceMessageIds?.[0])),
       email: (() => {
         const evidence = new Map(decision.lines.flatMap((line) => line.history?.email?.evidence || []).map((item) => [item.id, item]));
         const customerDomains = (decision.customer.emailDomains || []).map((item) => item.toLowerCase());
@@ -370,6 +397,7 @@ function caseCard(kase, now) {
     <div class="card-foot">
       <p class="from" title="${esc(kase.email.from || "")}">${from ? `${esc(from)}${kase.email.subject ? ` · “${esc(kase.email.subject)}”` : ""}` : ""}</p>
       ${kase.rfqLink ? `<a class="btn ghost above" href="${esc(kase.rfqLink)}" target="_blank" rel="noopener">Open RFQ email ${ICON.external}</a>` : ""}
+      ${kase.latestLink ? `<a class="btn ghost above" href="${esc(kase.latestLink.href)}" target="_blank" rel="noopener" title="Newest message in the thread${kase.latestLink.actor ? `, from ${esc(kase.latestLink.actor)}` : ""}, ${esc(String(kase.latestLink.at).slice(0, 10))}">Latest reply ${ICON.external}</a>` : ""}
       <span class="go">Price page ${ICON.chevron}</span>
     </div>
   </article>`;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { buildBoard, caseGroup, mirrorPages, monitorLink, quoteSentStatus, readBrandBadge, renderBoard, writeBoard } from "../../bot/lib/board.js";
+import { buildBoard, caseGroup, latestMessageLink, mirrorPages, monitorLink, quoteSentStatus, readBrandBadge, renderBoard, writeBoard } from "../../bot/lib/board.js";
 import { buildDecision } from "../../bot/lib/decision.js";
 import { readManifest } from "../../bot/lib/router-snapshot.js";
 import { isCloudOnly, readLastSync, runSync } from "../../bot/lib/sync.js";
@@ -109,6 +109,23 @@ test("a decision for one RFQ number never links to another RFQ for the same cust
   const noEmails = { ...decision, rfq: { reference: "ACME RFQ #4100" } };
   assert.equal(monitorLink(noEmails, [rightNumberOtherEmail]).entry, rightNumberOtherEmail, "with no case emails, the RFQ number decides");  const noNumber = { ...decision, rfq: { reference: "Email RFQ, no RFQ number assigned in checked sources", sourceMessageIds: ["m1"] } };
   assert.equal(monitorLink(noNumber, [other]).entry, other, "a reference without an RFQ number falls back to the shared email");
+});
+
+test("the monitor's shortened customer name links only with the exact reference the case names", () => {
+  const decision = { customer: { name: "Acme Precision Corporation (Acme CNC LLC)", aliases: ["ACME PRECISION CORP"] }, rfq: { reference: "Acme RFQ 10735", monitorReference: "10735" }, lines: [] };
+  const short = { customer: "Acme", reference: "10735" };
+  assert.equal(monitorLink(decision, [short]).entry, short, "every word of the monitor's name is in the case's name");
+  assert.equal(monitorLink(decision, [{ customer: "Acme", reference: "10736" }]).entry, null, "a different reference never links");
+  assert.equal(monitorLink(decision, [{ customer: "Acme Aerospace", reference: "10735" }]).entry, null, "a word the case's names lack blocks the link");
+  assert.equal(monitorLink({ ...decision, customer: { name: "Other Co", aliases: [] } }, [short]).entry, null);
+});
+
+test("the board links the newest sent or received message in the thread, never a draft", () => {
+  const entry = { evidence_ids: ["m1", "m2", "m3"], evidence_links: ["L1", "L2", "L3"], events: [
+    { at: "2026-09-01T10:00:00Z", message_id: "m1" }, { at: "2026-09-03T10:00:00Z", message_id: "m2", actor: "pat@shop.example" }, { at: "2026-09-04T10:00:00Z", message_id: "m3", is_draft: true }] };
+  assert.deepEqual(latestMessageLink(entry, "L1"), { href: "L2", at: "2026-09-03T10:00:00Z", actor: "pat@shop.example" });
+  assert.equal(latestMessageLink({ ...entry, events: entry.events.slice(0, 1) }, "L1"), null, "no separate button when the newest message is the RFQ itself");
+  assert.equal(latestMessageLink(null, "L1"), null);
 });
 
 test("only status wording that plainly says a quote went out counts as sent", () => {

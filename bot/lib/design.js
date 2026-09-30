@@ -67,7 +67,11 @@ code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12p
 .topbar::after { content:""; position:absolute; left:0; right:0; top:100%; height:var(--s4); background:linear-gradient(var(--bg), transparent); opacity:.6; pointer-events:none; }
 .topbar-inner, .tabs { max-width:880px; margin:0 auto; padding:0 var(--s4); }
 .topbar-inner { display:flex; align-items:center; justify-content:space-between; gap:var(--s3); padding-top:var(--s3); }
-.who { display:flex; gap:var(--s2); align-items:baseline; min-width:0; font-size:13px; color:var(--ink-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.back { display:inline-flex; align-items:center; gap:var(--s1); flex:none; font:600 13px/20px var(--font); color:var(--ink-2); text-decoration:none; padding:var(--s1) var(--s2) var(--s1) var(--s1); margin-left:calc(-1 * var(--s1)); border-radius:var(--radius-sm); }
+.back:hover { color:var(--ink); background:var(--line); }
+.back:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+.back .chevron { transform:rotate(180deg); }
+.who { flex:1; display:flex; gap:var(--s2); align-items:baseline; min-width:0; font-size:13px; color:var(--ink-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .who .customer { font-weight:650; color:var(--ink); overflow:hidden; text-overflow:ellipsis; }
 .sep { color:var(--ink-3); }
 .tabs { display:flex; gap:var(--s1); padding-top:var(--s2); padding-bottom:var(--s2); overflow-x:auto; }
