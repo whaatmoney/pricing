@@ -28,3 +28,13 @@ test("links prefer the shared mailbox's copy, and a link into one person's mailb
   assert.equal(privateOwner("https://mail.example/?ItemID=BBB2xyz", prefixes, "desk@shop.example"), null, "the shared mailbox is everyone's");
   assert.equal(privateOwner("https://mail.example/?ItemID=CCC3xyz", prefixes, "desk@shop.example"), null, "unknown mailbox: no tag");
 });
+
+test("the publish step starts only when private config names a command, and never waits for it", async () => {
+  const { startPublish } = await import("../../bot/lib/sync.js");
+  const calls = [];
+  const fake = (program, args, options) => { calls.push([program, args, options.detached]); return { unref() {} }; };
+  assert.equal(startPublish({}, fake), false);
+  assert.equal(startPublish({ publishCommand: [] }, fake), false);
+  assert.equal(startPublish({ publishCommand: ["node", "publish.mjs"] }, fake), true);
+  assert.deepEqual(calls, [["node", ["publish.mjs"], true]]);
+});

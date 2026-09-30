@@ -4,7 +4,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { applyAnswer } from "./lib/answer.js";
 import { boardInputs, mirrorPages, writeBoard } from "./lib/board.js";
-import { readLastSync, runSync } from "./lib/sync.js";
+import { readLastSync, runSync, startPublish } from "./lib/sync.js";
 import { buildDecision, loadMessages } from "./lib/decision.js";
 import { customerJobs } from "./lib/job-numbers.js";
 import { lifecyclePath, lifecycleView, readLifecycle, recordDecision } from "./lib/lifecycle.js";
@@ -76,7 +76,7 @@ function refreshBoard(config) {
   if (config.pagesMirror) {
     try {
       const mirror = mirrorPages({ outputsDir: config.outputsDir, mirrorDir: config.pagesMirror, board });
-      mirrored = `; copy in ${config.pagesMirror}: ${mirror.copied.length} updated, ${mirror.removed.length} removed`;
+      mirrored = `; copy in ${config.pagesMirror}: ${mirror.copied.length} updated, ${mirror.removed.length} removed${startPublish(config) ? "; publishing online in the background" : ""}`;
     } catch (error) {
       mirrored = `; COPY FAILED (${error.message}), the board itself is fine`;
     }

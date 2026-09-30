@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { boardInputs, mirrorPages, writeBoard } from "./board.js";
@@ -32,6 +33,17 @@ export function isCloudOnly(file, statFile = fs.statSync) {
   return stat.size > 0 && stat.blocks === 0;
 }
 
+// An optional private publish step (config.publishCommand: [program, ...args])
+// starts in the background after the board and its synced copy are written;
+// it keeps its own log. Returns whether it was started.
+export function startPublish(config, run = spawn) {
+  const command = config.publishCommand;
+  if (!Array.isArray(command) || !command.length) return false;
+  const child = run(command[0], command.slice(1), { detached: true, stdio: "ignore" });
+  child.unref?.();
+  return true;
+}
+
 export function runSync({ config, limits, trigger = "manual", now = new Date(), statFile = fs.statSync }) {
   const record = { at: now.toISOString(), trigger, imports: [], board: null, errors: [] };
   try {
@@ -60,6 +72,7 @@ export function runSync({ config, limits, trigger = "manual", now = new Date(), 
       try {
         const mirror = mirrorPages({ outputsDir: config.outputsDir, mirrorDir: config.pagesMirror, board });
         record.mirror = { copied: mirror.copied.length, removed: mirror.removed.length };
+        record.publish = startPublish(config);
       } catch (error) {
         record.errors.push(`mirror: ${error.message}`);
       }
