@@ -610,6 +610,30 @@ table.queue td.status-cell { min-width:220px; }
 }
 `;
 
+// A read-only copy of the board, its current price pages and the monitor's
+// latest check report, for another computer through a synced folder
+// (config.pagesMirror). Files are copied only when changed, so the sync client
+// sees no churn, and superseded page versions are removed from the copy only;
+// the originals and their records stay in outputsDir.
+const MIRRORED = /^(CLAUDE-DECISIONS-OPEN\.html|CLAUDE-DECISION-.+\.html|RFQ-CHECK-.+\.md)$/;
+export function mirrorPages({ outputsDir, mirrorDir, board }) {
+  fs.mkdirSync(mirrorDir, { recursive: true });
+  const keep = new Set([BOARD_FILE, ...board.cases.map((kase) => kase.page), board.monitor?.report].filter(Boolean));
+  const copied = [];
+  for (const name of keep) {
+    const from = path.join(outputsDir, name);
+    const to = path.join(mirrorDir, name);
+    if (!fs.existsSync(from)) continue;
+    const content = fs.readFileSync(from);
+    if (fs.existsSync(to) && Buffer.compare(fs.readFileSync(to), content) === 0) continue;
+    fs.writeFileSync(to, content);
+    copied.push(name);
+  }
+  const removed = fs.readdirSync(mirrorDir).filter((name) => MIRRORED.test(name) && !keep.has(name));
+  for (const name of removed) fs.rmSync(path.join(mirrorDir, name));
+  return { copied, removed };
+}
+
 // The company badge is private branding, so it is read from the private
 // config (config.brandBadge) at render time and never kept in this repo. It is
 // embedded as an image, which cannot run script whatever the file holds.

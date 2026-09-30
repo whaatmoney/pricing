@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { writeBoard } from "./board.js";
+import { mirrorPages, writeBoard } from "./board.js";
 import { importSnapshot, listExports, snapshotStatus } from "./router-snapshot.js";
 
 // One pass that keeps the pricing side in step with everything feeding it:
@@ -49,6 +49,14 @@ export function runSync({ config, limits, trigger = "manual", now = new Date(), 
   try {
     const { file, board } = writeBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, now, lastSync: record, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null });
     record.board = { file, waiting: board.cases.filter((kase) => kase.open).length, withoutPage: board.monitor?.withoutPage.length ?? null, monitorCutoff: board.monitor?.cutoff ?? null };
+    if (config.pagesMirror) {
+      try {
+        const mirror = mirrorPages({ outputsDir: config.outputsDir, mirrorDir: config.pagesMirror, board });
+        record.mirror = { copied: mirror.copied.length, removed: mirror.removed.length };
+      } catch (error) {
+        record.errors.push(`mirror: ${error.message}`);
+      }
+    }
   } catch (error) {
     record.errors.push(`board: ${error.message}`);
   }

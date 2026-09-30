@@ -3,11 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { applyAnswer } from "./lib/answer.js";
-import { writeBoard } from "./lib/board.js";
+import { mirrorPages, writeBoard } from "./lib/board.js";
 import { readLastSync, runSync } from "./lib/sync.js";
 import { buildDecision, loadMessages } from "./lib/decision.js";
 import { customerJobs } from "./lib/job-numbers.js";
-import { lifecyclePath, readLifecycle, recordDecision } from "./lib/lifecycle.js";
+import { lifecyclePath, lifecycleView, readLifecycle, recordDecision } from "./lib/lifecycle.js";
+import { readSentQuote, sentQuoteNote } from "./lib/sent-quote.js";
 import { renderHtml, renderMarkdown } from "./lib/render.js";
 import { DEFAULT_LIMITS, importSnapshot, listExports, loadSnapshotRecords, snapshotStatus } from "./lib/router-snapshot.js";
 import { nextVersion, versionsOf } from "./lib/versioning.js";
@@ -21,6 +22,8 @@ const USAGE = `Usage:
   node bot/cli.js status                 Router History snapshot age and unimported exports
   node bot/cli.js import [file.xlsx]     Validate and import the newest (or given) weekly export
   node bot/cli.js import-all             Import every export in the folder, oldest first
+  node bot/cli.js from-sent CASE --email sent.json [--dry-run]
+                                         Record the reviewer's sent quote email as their decision
   node bot/cli.js decide <case.json>     Build the decision record (JSON, Markdown, HTML)
   node bot/cli.js approve <case.json|case id> --version N [--line L1]
         --choice approved|alternative|correction [--price 8.50] --by NAME
@@ -72,9 +75,19 @@ function renderVersion(config, caseId, version) {
 
 function refreshBoard(config) {
   const { file, board } = writeBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, lastSync: readLastSync(config), trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null });
-  return `${file} (${board.cases.filter((kase) => kase.open).length} waiting)`;
+  let mirrored = "";
+  if (config.pagesMirror) {
+    try {
+      const mirror = mirrorPages({ outputsDir: config.outputsDir, mirrorDir: config.pagesMirror, board });
+      mirrored = `; copy in ${config.pagesMirror}: ${mirror.copied.length} updated, ${mirror.removed.length} removed`;
+    } catch (error) {
+      mirrored = `; COPY FAILED (${error.message}), the board itself is fine`;
+    }
+  }
+  return `${file} (${board.cases.filter((kase) => kase.open).length} waiting)${mirrored}`;
 }
 
+const cents = (value) => Math.round(Number(value) * 100);
 const money = (value) => `$${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 async function main() {
@@ -153,6 +166,35 @@ async function main() {
     console.log(`Recorded decision #${entry.id} on ${caseId} v${entry.version} ${entry.lineId}: ${entry.choice}${entry.unitPrice != null ? ` ${money(entry.unitPrice)}/ea (${money(entry.extended)} for ${entry.quantity})` : ""} by ${entry.decidedBy}.`);
     for (const notice of notices) console.log(`  ! ${notice}`);
     console.log(`  ${file}\nRe-rendered:\n  ${base}.md\n  ${base}.html\nBoard: ${refreshBoard(config)}`);
+    return;
+  }
+  if (command === "from-sent") {
+    // The reviewer's sent quote email is the decision (see lib/sent-quote.js).
+    const { values, positionals } = parseArgs({ args: process.argv.slice(3), allowPositionals: true, options: { email: { type: "string" }, "dry-run": { type: "boolean" } } });
+    const target = positionals[0];
+    if (!target || !values.email) throw new Error("from-sent needs the case file or case id and --email sent-quote.json");
+    const caseId = target.endsWith(".json") ? readJson(path.resolve(target)).caseId : target;
+    const version = versionsOf(config.outputsDir, `CLAUDE-DECISION-${caseId}`)[0];
+    if (!version) throw new Error(`No recommendation for ${caseId} in ${config.outputsDir}`);
+    const decision = readJson(path.join(config.outputsDir, `CLAUDE-DECISION-${caseId}-v${version}.json`));
+    const email = readJson(path.resolve(values.email));
+    const read = readSentQuote({ decision, email, approverAddresses: config.approverAddresses || {} });
+    if (!read.ok) throw new Error(`Not recorded: ${read.problems.join("; ")}.`);
+    const view = lifecycleView(decision, readLifecycle(lifecyclePath(config.outputsDir, caseId), caseId));
+    let recorded = 0;
+    for (const line of read.lines) {
+      if (!line.found) { console.log(`  ${line.lineId} ${line.partNumber} x ${line.quantity}: left open (${line.reason})`); continue; }
+      const current = view.current.get(line.lineId);
+      if (current && current.choice !== "correction" && cents(current.unitPrice) === cents(line.unitPrice)) { console.log(`  ${line.lineId}: already recorded at ${money(line.unitPrice)}`); continue; }
+      const { entry, notices } = recordDecision({
+        outputsDir: config.outputsDir, caseId, version, lineId: line.lineId, choice: line.choice, unitPrice: line.unitPrice,
+        decidedBy: read.decidedBy, decidedAt: read.decidedAt, note: sentQuoteNote(email, line.words), approvers: config.approvers, dryRun: Boolean(values["dry-run"]),
+      });
+      recorded += 1;
+      console.log(`  ${line.lineId} ${line.partNumber} x ${line.quantity}: ${entry.choice} ${money(entry.unitPrice)} by ${entry.decidedBy}${values["dry-run"] ? " (dry run, not written)" : ` (#${entry.id})`}`);
+      for (const notice of notices) console.log(`    ! ${notice}`);
+    }
+    if (recorded && !values["dry-run"]) console.log(`Re-rendered: ${renderVersion(config, caseId, version)}.html\nBoard: ${refreshBoard(config)}`);
     return;
   }
   if (command === "answer") {

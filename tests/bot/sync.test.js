@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { buildBoard, caseGroup, monitorLink, quoteSentStatus, readBrandBadge, renderBoard } from "../../bot/lib/board.js";
+import { buildBoard, caseGroup, mirrorPages, monitorLink, quoteSentStatus, readBrandBadge, renderBoard, writeBoard } from "../../bot/lib/board.js";
 import { buildDecision } from "../../bot/lib/decision.js";
 import { readManifest } from "../../bot/lib/router-snapshot.js";
 import { isCloudOnly, readLastSync, runSync } from "../../bot/lib/sync.js";
@@ -231,4 +231,21 @@ test("the company badge comes from a private file, is embedded as an image, and 
   const board = boardFor([]);
   assert.match(renderBoard(board, { badge: uri }), /<img class="badge" src="data:image\/svg\+xml;base64,/);
   assert.ok(!renderBoard(board).includes('class="badge"'), "no badge configured, no image");
+});
+
+test("the pages mirror gets the board and current pages, updates only what changed, and drops superseded versions", () => {
+  const { config } = syncedWorld([]);
+  const { board } = writeBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir });
+  const [kase] = board.cases;
+  fs.writeFileSync(path.join(config.outputsDir, kase.page), "<html>page</html>");
+  const mirrorDir = path.join(config.outputsDir, "mirror");
+  const first = mirrorPages({ outputsDir: config.outputsDir, mirrorDir, board });
+  assert.deepEqual(first.copied.sort(), ["CLAUDE-DECISIONS-OPEN.html", kase.page].sort());
+  assert.deepEqual(mirrorPages({ outputsDir: config.outputsDir, mirrorDir, board }).copied, [], "unchanged files are not rewritten");
+  fs.writeFileSync(path.join(mirrorDir, "CLAUDE-DECISION-OLD-CASE-v1.html"), "old");
+  fs.writeFileSync(path.join(mirrorDir, "notes.txt"), "someone else's file");
+  const again = mirrorPages({ outputsDir: config.outputsDir, mirrorDir, board });
+  assert.deepEqual(again.removed, ["CLAUDE-DECISION-OLD-CASE-v1.html"]);
+  assert.ok(fs.existsSync(path.join(mirrorDir, "notes.txt")), "only mirrored page files are ever removed");
+  assert.ok(fs.existsSync(path.join(config.outputsDir, kase.page)), "originals stay");
 });

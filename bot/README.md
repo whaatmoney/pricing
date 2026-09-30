@@ -15,9 +15,13 @@ This repository is public. The code here holds no company data. Exports, emails,
   "calculatorHtml": "…/Documents/calculator/index.html",
   "monitorState": "…/work/rfq-monitor-state.json",
   "outputsDir": "…/outputs",
-  "quoteTemplate": "…/quote-template.txt"
+  "quoteTemplate": "…/quote-template.txt",
+  "brandBadge": "…/brand/badge.svg",
+  "pagesMirror": "…/OneDrive/RFQ Pricing (Claude)/Pages"
 }
 ```
+
+`approverAddresses` (optional) maps each approver's sending address to their approver name; `from-sent` records a quote only when one of these addresses sent it to a recipient at the customer's domain, reads only the newest authored text of the email, and leaves any line the email does not clearly price open. `brandBadge` (optional) is the company badge shown on the board, read at render time so it never enters this repo. `pagesMirror` (optional) is a synced folder that receives a read-only copy of the board, its current price pages and the monitor's latest check report after every rebuild, so another computer can open them; superseded page versions are removed from the copy only.
 
 `quoteTemplate` is the reviewer's own RFQ response wording. The page's Copy quote fills `{{parts}}` (P/N, Qty, Unit Price per part; tiers of one part at one price share an entry) and `{{process}}` (written once when every part shares it, otherwise under each part). Without it, Copy quote gives the parts and process alone.
 
@@ -31,6 +35,7 @@ npm run bot -- decide case.json   # write CLAUDE-DECISION-<case>-vN.{json,md,htm
 npm run bot -- approve case.json --version 1 --line L1 --choice approved --price 8.50 --by NAME --note "..."
                                # record a person's decision (approved | alternative | correction)
 npm run bot -- answer --by NAME "<pasted answer line>"   # record a reviewer's answer exactly as pasted
+npm run bot -- from-sent CASE --email sent.json [--dry-run]   # the reviewer's sent quote email is the decision
 npm run bot -- render case.json   # redraw the latest saved version's page (the record is not rebuilt)
 npm run bot -- board           # rewrite CLAUDE-DECISIONS-OPEN.html (decide/approve/answer also refresh it)
 npm run bot -- sync            # import any new Router History export, then rebuild the board (the background job runs this)
