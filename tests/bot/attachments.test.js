@@ -17,3 +17,14 @@ test("the attachments link opens the customer's own newest email with files the 
   assert.equal(attachmentsEmail(decision([evidence("reply", "buyer@acme.example", "2026-09-29T10:00:00Z", [])])), null, "no files, no link");
   assert.equal(attachmentsEmail(decision([evidence("fwd", "desk@shop.example", "2026-09-28T21:17:00Z", ["A.LIS"])])).href, "https://mail.example/fwd", "a forwarded copy when the customer's own is not saved");
 });
+
+test("links prefer the shared mailbox's copy, and a link into one person's mailbox says whose", async () => {
+  const { privateOwner, sharedLink } = await import("../../bot/lib/board.js");
+  const copies = new Map([["own-id", { "pat@shop.example": "own-id", "desk@shop.example": "desk_id=" }], ["desk_id=", { "pat@shop.example": "own-id", "desk@shop.example": "desk_id=" }]]);
+  assert.equal(sharedLink("own-id", copies, "desk@shop.example"), "https://outlook.office.com/mail/desk@shop.example/deeplink?ItemID=desk_id%3D&exvsurl=1&viewmodel=ReadMessageItem");
+  assert.equal(sharedLink("unknown", copies, "desk@shop.example"), null, "no saved copy: keep the original link");
+  const prefixes = { AAA1: "pat@shop.example", BBB2: "desk@shop.example" };
+  assert.equal(privateOwner("https://mail.example/?ItemID=AAA1xyz&x=1", prefixes, "desk@shop.example"), "Pat");
+  assert.equal(privateOwner("https://mail.example/?ItemID=BBB2xyz", prefixes, "desk@shop.example"), null, "the shared mailbox is everyone's");
+  assert.equal(privateOwner("https://mail.example/?ItemID=CCC3xyz", prefixes, "desk@shop.example"), null, "unknown mailbox: no tag");
+});

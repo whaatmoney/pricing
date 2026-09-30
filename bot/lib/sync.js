@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { mirrorPages, writeBoard } from "./board.js";
+import { boardInputs, mirrorPages, writeBoard } from "./board.js";
 import { refreshPages } from "./pages.js";
 import { importSnapshot, listExports, snapshotStatus } from "./router-snapshot.js";
 
@@ -49,13 +49,13 @@ export function runSync({ config, limits, trigger = "manual", now = new Date(), 
     record.errors.push(`import: ${error.message}`);
   }
   try {
-    const { file, board } = writeBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, now, lastSync: record, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null, claudeMailPath: config.claudeMail || null });
+    const { file, board } = writeBoard({ ...boardInputs(config), now, lastSync: record });
     try {
       record.pages = refreshPages({ outputsDir: config.outputsDir, board, quoteTemplate: config.quoteTemplate ? fs.readFileSync(config.quoteTemplate, "utf8") : null, now }).length;
     } catch (error) {
       record.errors.push(`pages: ${error.message}`);
     }
-    record.board = { file, waiting: board.cases.filter((kase) => kase.open).length, withoutPage: board.monitor?.withoutPage.length ?? null, monitorCutoff: board.monitor?.cutoff ?? null };
+    record.board = { file, waiting: board.cases.filter((kase) => kase.open).length, withoutPage: board.monitor?.withoutPage.length ?? null, owed: board.monitor?.owed.length ?? null, monitorCutoff: board.monitor?.cutoff ?? null, claudeCutoff: board.claudeMail?.cutoff ?? null, mailFound: board.mailFound.length };
     if (config.pagesMirror) {
       try {
         const mirror = mirrorPages({ outputsDir: config.outputsDir, mirrorDir: config.pagesMirror, board });

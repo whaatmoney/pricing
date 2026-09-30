@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { applyAnswer } from "./lib/answer.js";
-import { mirrorPages, writeBoard } from "./lib/board.js";
+import { boardInputs, mirrorPages, writeBoard } from "./lib/board.js";
 import { readLastSync, runSync } from "./lib/sync.js";
 import { buildDecision, loadMessages } from "./lib/decision.js";
 import { customerJobs } from "./lib/job-numbers.js";
@@ -24,6 +24,10 @@ const USAGE = `Usage:
   node bot/cli.js import-all             Import every export in the folder, oldest first
   node bot/cli.js from-sent CASE --email sent.json [--dry-run]
                                          Record the reviewer's sent quote email as their decision
+  node bot/cli.js mail-scorecard [--since ISO] [--until ISO]
+                                         The Claude-alongside-Codex mail check trial in numbers
+  node bot/cli.js mail-placement [--since ISO] [--ids a,b]
+                                         Where each message Claude's mail check kept lands on the board
   node bot/cli.js decide <case.json>     Build the decision record (JSON, Markdown, HTML)
   node bot/cli.js approve <case.json|case id> --version N [--line L1]
         --choice approved|alternative|correction [--price 8.50] --by NAME
@@ -66,7 +70,7 @@ function renderVersion(config, caseId, version) {
 }
 
 function refreshBoard(config) {
-  const { file, board } = writeBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, lastSync: readLastSync(config), trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null, claudeMailPath: config.claudeMail || null });
+  const { file, board } = writeBoard({ ...boardInputs(config), lastSync: readLastSync(config) });
   refreshPages({ outputsDir: config.outputsDir, board, quoteTemplate: readQuoteTemplate(config) });
   let mirrored = "";
   if (config.pagesMirror) {
@@ -218,12 +222,48 @@ async function main() {
   if (command === "sync") {
     const { values } = parseArgs({ args: process.argv.slice(3), options: { trigger: { type: "string" } } });
     const record = runSync({ config, limits, trigger: values.trigger || "manual" });
-    console.log(`${record.at} sync (${record.trigger}): ${record.imports.length ? record.imports.map((item) => `${item.fileName} ${item.outcome}${item.failures.length ? ` [${item.failures.join(", ")}]` : ""}`).join("; ") : "no new Router History export"}; board ${record.board ? `${record.board.waiting} waiting, ${record.board.withoutPage ?? "?"} unanswered RFQs without a page, mail checked ${record.board.monitorCutoff}` : "not written"}${record.errors.length ? `; ERRORS: ${record.errors.join("; ")}` : ""}`);
+    console.log(`${record.at} sync (${record.trigger}): ${record.imports.length ? record.imports.map((item) => `${item.fileName} ${item.outcome}${item.failures.length ? ` [${item.failures.join(", ")}]` : ""}`).join("; ") : "no new Router History export"}; board ${record.board ? `${record.board.waiting} waiting, ${record.board.withoutPage ?? "?"} unanswered RFQs without a page, mail checked ${record.board.monitorCutoff} (Codex) / ${record.board.claudeCutoff ?? "none"} (Claude), ${record.board.mailFound} found by Claude's check` : "not written"}${record.errors.length ? `; ERRORS: ${record.errors.join("; ")}` : ""}`);
     if (record.errors.length) process.exitCode = 1;
     return;
   }
   if (command === "board") {
     console.log(`Board: ${refreshBoard(config)}`);
+    return;
+  }
+  if (command === "mail-scorecard") {
+    // The Claude-alongside-Codex trial in numbers (review date 2026-10-07). Read-only.
+    const { values } = parseArgs({ args: process.argv.slice(3), options: { since: { type: "string" }, until: { type: "string" } } });
+    const { readClaudeMail, mailScorecard } = await import("./lib/claude-mail.js");
+    const mail = readClaudeMail(config.claudeMail);
+    if (!mail) throw new Error("config.claudeMail is not set or has no store yet");
+    const queue = fs.existsSync(config.monitorState) ? JSON.parse(fs.readFileSync(config.monitorState, "utf8")).operational_queue || [] : [];
+    const card = mailScorecard({ runs: mail.runs, events: mail.events, queue, since: values.since || "2026-09-30T07:00:00Z", until: values.until || new Date().toISOString() });
+    console.log(`Claude mail check, ${card.since.slice(0, 10)} to ${card.until.slice(0, 10)}`);
+    console.log(`Runs logged: ${card.runs}. Per weekday: ${card.perDay.map((day) => `${day.day} ${day.runs}/${day.expected}`).join(", ") || "none"}.`);
+    console.log(`Gaps over 2 hours within a day: ${card.gaps.length ? card.gaps.map((gap) => `${gap.from.slice(0, 16)} to ${gap.to.slice(0, 16)} (${gap.minutes} min)`).join("; ") : "none"}.`);
+    console.log(`Runs with a failed source (cutoff held): ${card.failedRuns}.`);
+    console.log(`Messages kept: ${card.kept}. Requests, chases and quotes the Codex monitor had no entry for: ${card.claudeOnly.length}.`);
+    for (const event of card.claudeOnly) console.log(`  - ${event.at.slice(0, 16)} ${event.kind} ${event.customerDomain}: ${event.subject}`);
+    console.log(`Outside mail skipped: ${card.skipped}${card.skipped ? ` (${Object.entries(card.skippedBy).map(([reason, n]) => `${n} ${reason}`).join(", ")})` : ""}. Sample some to check nothing was missed.`);
+    console.log("Cost per run is not logged here: see each run's session usage.");
+    return;
+  }
+  if (command === "mail-placement") {
+    // Where each message Claude's mail check kept lands on the board. Run
+    // after a mail check: any "NOT SHOWN" line is a message nobody will see.
+    const { values } = parseArgs({ args: process.argv.slice(3), options: { since: { type: "string" }, ids: { type: "string" } } });
+    const { board } = writeBoard({ ...boardInputs(config), lastSync: readLastSync(config) });
+    const ids = values.ids ? new Set(values.ids.split(",")) : null;
+    const since = values.since ? Date.parse(values.since) : null;
+    const shown = new Set(["case", "listed", "answered", "found", "sent-mark", "by-design", "old"]);
+    const rows = (board.mailPlacements || []).filter(({ event }) => (!ids || ids.has(event.id)) && (!since || Date.parse(event.at) >= since));
+    for (const { event, place, detail } of rows.sort((a, b) => Date.parse(a.event.at) - Date.parse(b.event.at))) {
+      const flag = place === "unattached" ? "NOTE" : !shown.has(place) ? "NOT SHOWN" : "ok";
+      console.log(`${flag.padEnd(9)} ${event.at.slice(0, 16)} ${event.kind.padEnd(10)} ${String(event.customerDomain || "-").padEnd(26)} ${place}: ${detail}  | ${event.subject}`);
+    }
+    const missing = rows.filter(({ place }) => !shown.has(place) && place !== "unattached").length;
+    console.log(`${rows.length} message(s); ${missing ? `${missing} NOT SHOWN` : "every request and chase is on the board"}.`);
+    if (missing) process.exitCode = 1;
     return;
   }
   if (command === "jobs") {

@@ -184,11 +184,11 @@ test("a stopped monitor shows as stale even when its own file says it is fresh, 
   fs.writeFileSync(config.monitorState, JSON.stringify({ ...state, freshness: { source_cutoff: "2026-09-28T03:00:00Z", stale: false } }));
   const fresh = buildBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, now: new Date("2026-09-28T04:00:00Z") });
   assert.equal(fresh.monitor.stale, false);
-  assert.ok(!renderBoard(fresh).includes("Mail data is STALE"));
+  assert.ok(!renderBoard(fresh).includes("data is STALE"));
   const stopped = buildBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, now: new Date("2026-09-28T06:00:00Z") });
   assert.equal(stopped.monitor.stale, true);
   const html = renderBoard(stopped);
-  assert.match(html, /Mail data is STALE: the monitor&#39;s last successful check was/);
+  assert.match(html, /Codex mail monitor data is STALE: its last successful check was/);
   assert.match(html, /const generated = Date\.parse\("2026-09-28T06:00:00\.000Z"\)/);
   assert.match(html, /The pricing sync or this Mac may have stopped/);
 });

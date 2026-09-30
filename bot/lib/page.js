@@ -109,10 +109,11 @@ function sizeFact(line) {
   const parts = calc.onlineCalculator?.components || {};
   const drawn = line.request.drawing?.dimensions;
   const drawnText = drawn?.summary || (drawn?.maxOdAfterCoating != null ? sizeText(drawn) : null);
-  const inferred = /\b(?:inferred|assumed|estimated|approx\w*|about)\b/i.test(drawnText || "") || (calc.sq2?.flags || []).some((flag) => String(flag).startsWith("DIM:"));
+  const team = (calc.sq2?.flags || []).map(String).find((flag) => flag.startsWith("DIM: FROM TEAM"))?.match(/\((.+?)(?:, (\d{4}-\d{2}-\d{2}))?\)/);
+  const inferred = !team && (/\b(?:inferred|assumed|estimated|approx\w*|about)\b/i.test(drawnText || "") || (calc.sq2?.flags || []).some((flag) => String(flag).startsWith("DIM:")));
   const classes = [parts.sizeKey, parts.weightKey, parts.complexityKey ? `${parts.complexityKey} complexity` : null].filter(Boolean);
   const main = envelope
-    ? `<span class="dims">${envelope.map(inches).join(" × ")}<small> in</small></span><span class="dims-key">L × W × H priced${inferred ? ' · <span class="chip warn">inferred, confirm on the print</span>' : ""}</span>`
+    ? `<span class="dims">${envelope.map(inches).join(" × ")}<small> in</small></span><span class="dims-key">L × W × H priced${inferred ? ' · <span class="chip warn">inferred, confirm on the print</span>' : ""}${team ? ` · <span class="chip muted">from ${esc(team[1])}${team[2] ? `, ${esc(team[2])}` : ""}</span>` : ""}</span>`
     : `<span class="dims unknown">Size unknown</span><span class="dims-key">Needed to price. Read it off the drawing or ask the customer.</span>`;
   return `<div class="size-fact"><dt>Size</dt><dd>${main}${classes.length ? `<span class="size-classes">${classes.map((item) => `<span class="chip muted">${esc(item)}</span>`).join("")}</span>` : ""}${drawnText ? `<span class="print-note">Print: ${esc(drawnText)}${drawn.source ? ` <span class="muted">· ${esc(drawn.source)}</span>` : ""}</span>` : ""}</dd></div>`;
 }
@@ -294,10 +295,10 @@ function evidenceSection(decision, groups) {
 // The RFQ email and the newest message in its thread, as the board links them.
 function mailLinks(mail) {
   if (!mail?.rfq && !mail?.latest && !mail?.files) return "";
-  const files = mail.files ? `<a class="btn ghost" href="${esc(mail.files.href)}" target="_blank" rel="noopener" title="${esc(`${mail.files.from}, ${String(mail.files.at).slice(0, 10)}`)}">${ICON.attach}Attachments (${mail.files.names.length}) ${ICON.external}</a>` : "";
+  const files = mail.files ? `<a class="btn ghost" href="${esc(mail.files.href)}" target="_blank" rel="noopener" title="${esc(`${mail.files.from}, ${String(mail.files.at).slice(0, 10)}`)}">${ICON.attach}Attachments (${mail.files.names.length})${mail.files.owner ? ` · ${esc(mail.files.owner)} only` : ""} ${ICON.external}</a>` : "";
   const list = mail.files ? `<p class="files-list">In ${esc(mail.files.from)}'s email: ${mail.files.names.map((name) => `<b>${esc(name)}</b>`).join(", ")}</p>` : "";
-  const latest = mail.latest ? `<a class="btn ghost" href="${esc(mail.latest.href)}" target="_blank" rel="noopener" title="Newest message in the thread${mail.latest.actor ? `, from ${esc(mail.latest.actor)}` : ""}, ${esc(String(mail.latest.at).slice(0, 10))}">Latest reply ${ICON.external}</a>` : "";
-  return `<p class="mail-links">${mail.rfq ? `<a class="btn ghost" href="${esc(mail.rfq)}" target="_blank" rel="noopener">Open RFQ email ${ICON.external}</a>` : ""}${files}${latest}</p>${list}`;
+  const latest = mail.latest ? `<a class="btn ghost" href="${esc(mail.latest.href)}" target="_blank" rel="noopener" title="Newest message in the thread${mail.latest.actor ? `, from ${esc(mail.latest.actor)}` : ""}, ${esc(String(mail.latest.at).slice(0, 10))}">Latest reply${mail.latest.owner ? ` · ${esc(mail.latest.owner)} only` : ""} ${ICON.external}</a>` : "";
+  return `<p class="mail-links">${mail.rfq ? `<a class="btn ghost" href="${esc(mail.rfq)}" target="_blank" rel="noopener">Open RFQ email${mail.rfqOwner ? ` · ${esc(mail.rfqOwner)} only` : ""} ${ICON.external}</a>` : ""}${files}${latest}</p>${list}`;
 }
 
 export function renderHtml(decision, { lifecycle, now = new Date(), quoteTemplate = null, mail = null, progress = null } = {}) {

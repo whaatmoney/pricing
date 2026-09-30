@@ -24,7 +24,7 @@ export function writePage({ outputsDir, caseId, version, quoteTemplate = null, m
 export function refreshPages({ outputsDir, board, quoteTemplate = null, now = new Date() }) {
   const updated = [];
   for (const kase of board.cases) {
-    const { changed } = writePage({ outputsDir, caseId: kase.caseId, version: kase.version, quoteTemplate, mail: { rfq: kase.rfqLink || null, latest: kase.latestLink || null, files: kase.files || null }, progress: kase.progress, now, markdown: false });
+    const { changed } = writePage({ outputsDir, caseId: kase.caseId, version: kase.version, quoteTemplate, mail: { rfq: kase.rfqLink || null, rfqOwner: kase.rfqOwner || null, latest: kase.latestLink || null, files: kase.files || null }, progress: kase.progress, now, markdown: false });
     if (changed) updated.push(kase.page);
   }
   return updated;

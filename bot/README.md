@@ -17,9 +17,19 @@ This repository is public. The code here holds no company data. Exports, emails,
   "outputsDir": "…/outputs",
   "quoteTemplate": "…/quote-template.txt",
   "brandBadge": "…/brand/badge.svg",
-  "pagesMirror": "…/OneDrive/RFQ Pricing (Claude)/Pages"
+  "pagesMirror": "…/OneDrive/RFQ Pricing (Claude)/Pages",
+  "trackerFile": "…/work/claude-pricing/tracker.json",
+  "rfqMailCache": "…/work/claude-pricing/rfq-mail-cache.json",
+  "quotePrepChat": "…/work/claude-pricing/teams/quote-prep-tracker.json",
+  "claudeMail": "…/work/claude-pricing/claude-mail/events.json",
+  "approvers": ["…"],
+  "approverAddresses": { "…@…": "…" }
 }
 ```
+
+`org` holds the organisation's own mail identity, kept out of this repo: `domain` (its email domain), `mailSources` (the sources one complete mail check searches) and `neverRead` (mailboxes never searched). `sharedMailbox`, `evidenceDir` and `mailboxIdPrefixes` (optional) let the board link the shared mailbox's copy of an email and mark links that open only in one person's mailbox.
+
+`quotePrepChat` (optional) is the store of front-desk follow-ups read from the quote-prep Teams chat. `claudeMail` (optional) is the store of Claude's own hourly mail check; its run log `runs.jsonl` sits beside it. `trackerFile` and `rfqMailCache` are private logs the board reads for history and email senders. Every command builds the board's inputs from this config through `boardInputs(config)` in `lib/board.js`.
 
 `approverAddresses` (optional) maps each approver's sending address to their approver name; `from-sent` records a quote only when one of these addresses sent it to a recipient at the customer's domain, reads only the newest authored text of the email, and leaves any line the email does not clearly price open. `brandBadge` (optional) is the company badge shown on the board, read at render time so it never enters this repo. `pagesMirror` (optional) is a synced folder that receives a read-only copy of the board, its current price pages and the monitor's latest check report after every rebuild, so another computer can open them; superseded page versions are removed from the copy only.
 
@@ -67,13 +77,23 @@ Before a commit, the privacy check runs over tracked files only (`git grep`), be
 | `lib/review-card.js` | The reviewer's six-field card, the method path behind the price (history → SQ2 → SQ3 → SQ5 → pick) and the answer lines. |
 | `lib/answer.js` | Parses a pasted answer line and records it through `lifecycle.js`, all or nothing. |
 | `lib/board.js` | The open-decisions page: latest version per case, decision state, business days waiting, method feedback, and monitor RFQs (read only) with no page yet. |
+| `lib/claude-mail.js` | Claude's own mail check: the message kinds (who owes the next email), the checks the save tool applies, matching a message to a case or monitor entry (by Outlook item id, then whole part or RFQ numbers), and `placeMailEvents`, which says where every kept message lands on the board. Also the trial scorecard. |
+| `lib/followups.js` | Front-desk follow-ups from the quote-prep chat: parses each post, joins replies into threads, and matches a thread to a case or a monitor entry. |
 | `lib/sync.js` | One safe, repeatable pass: import new weekly exports, rebuild the board, append to the sync log. Never rebuilds a recommendation or writes the monitor's files. |
 | `lib/rulings.js` | Named, dated pricing rulings that change how the master is applied (engine file). |
 | `lib/job-numbers.js` | The customer's own job numbers ("WO NO: W1-100", "JOB NO: 1234-1") on exact-part work orders, and which ones the saved evidence already mentions, so the rest can be searched in mail. |
 
-## How it runs with the mail monitor
+## How it runs with the mail sources
 
-The mail monitor (a separate scheduled job) reads the shared mailboxes hourly and writes its queue to a state file. This bot only reads that file. A macOS LaunchAgent (kept outside the repo) runs `sync` whenever the monitor saves a check, whenever a file lands in the Router History folder, and daily at 7:00 as a backstop. The board then shows every unanswered RFQ, which ones have a decision page, what was decided, and, once the monitor sees the quote go out, marks the case sent. Building a case (evidence and facts) and recording a reviewer's answer are still done in an authorized Claude session.
+| Source | Written by | When | What the board takes from it |
+|---|---|---|---|
+| Codex mail monitor (`monitorState`) | Codex, its own scheduler | hourly | its queue: section 1 (waiting on QPC) under "No page yet", section 2 (acknowledged, quote still owed) under "Quote owed", quote-sent statuses that close cases |
+| Claude mail check (`claudeMail` + `runs.jsonl`) | scheduled Claude task `qpc-claude-mail-check`, through `claude-mail-save.mjs` | weekdays :35, 7–5 | requests, chases, questions and unreadable messages; quotes seen sent; the last run's sources and counts |
+| Front-desk chat (`quotePrepChat`) | scheduled Claude task `qpc-quote-prep-chat` | weekdays :05, 7–5 | customers chasing, as the front desk logged them |
+
+This bot only reads these files. A macOS LaunchAgent (kept outside the repo) runs `sync` whenever the monitor saves a check, whenever a file lands in the Router History folder, and daily at 7:00 as a backstop; the Claude tasks rebuild the board themselves. Each source is judged fresh on its own (two hours), and a stale one says so on the board.
+
+What the board shows: every case with a page; every monitor section 1 and section 2 request with no page; and every message Claude's check kept, placed by `placeMailEvents`: on its open case's card, answered by a later quote, covered by a monitor entry the board already lists, or listed by itself. Nothing is hidden only because the customer has another page. `npm run bot -- mail-placement` prints the placement of each message and exits non-zero if any request or chase is not shown. The "Due now" list and the header counts take due dates from every source. Building a case (evidence and facts) and recording a reviewer's answer are still done in an authorized Claude session.
 
 ## Decision versions
 

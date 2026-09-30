@@ -102,9 +102,16 @@ export function matchThread(thread, cases) {
 
 // Monitor entries (no page yet) for the same company, for the unmatched list.
 export function monitorFor(thread, entries) {
+  return monitorCandidates(thread, entries).entry;
+}
+// The entry, and how many of the company's open entries were left to choose
+// from when none could be picked (so the board can say so rather than
+// claiming the monitor has nothing).
+export function monitorCandidates(thread, entries) {
   const tokens = idTokens(thread.subject);
   const same = entries.filter((entry) => words(thread.company).length && words(thread.company).every((word) => words(entry.customer).includes(word)));
   const exact = tokens.length ? same.filter((entry) => tokens.some((token) => String(entry.reference).toUpperCase().includes(token))) : [];
   const open = same.filter((entry) => entry.priority_section !== 3);
-  return exact[0] || (open.length === 1 ? open[0] : same.length === 1 ? same[0] : null);
+  const entry = exact[0] || (open.length === 1 ? open[0] : same.length === 1 ? same[0] : null);
+  return { entry, candidates: entry ? 0 : open.length };
 }

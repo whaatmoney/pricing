@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { caseConfidence, reasonsText } from "./confidence.js";
@@ -5,8 +6,9 @@ import { lifecyclePath, lifecycleView, readLifecycle } from "./lifecycle.js";
 import { isSameCustomer, partNumberMatch } from "./part-history.js";
 import { ICON, progressHtml, SCRIPT, STYLE } from "./design.js";
 import { displayStatus, escapeHtml } from "./render.js";
-import { caseMail, newRequests, readClaudeMail } from "./claude-mail.js";
-import { followupThreads, matchThread, monitorFor, readQuotePrepChat } from "./followups.js";
+import { ASKING_KINDS, caseMail, foundRows, placeMailEvents, readClaudeMail, subjectKey } from "./claude-mail.js";
+import { isOwnAddress, mailSources, useOrg } from "./org.js";
+import { followupThreads, matchThread, monitorCandidates, readQuotePrepChat } from "./followups.js";
 import { readManifest } from "./router-snapshot.js";
 import { priceSource } from "./review-card.js";
 
@@ -147,25 +149,68 @@ export function owaLink(messageId) {
 // The email that carries the request's files (drawings, parts lists, models)
 // that the pricing read could not open: the customer's own newest such email,
 // else any. Its link opens the message with the attachments to check by hand.
-export function attachmentsEmail(decision) {
+export function attachmentsEmail(decision, share = () => null) {
   const evidence = [...new Map(decision.lines.flatMap((line) => line.history?.email?.evidence || []).map((item) => [item.id, item])).values()]
     .filter((item) => (item.attachmentsNotRead || []).length && item.webLink);
   if (!evidence.length) return null;
   const domains = (decision.customer.emailDomains || []).map((domain) => domain.toLowerCase());
   const fromCustomer = evidence.filter((item) => domains.includes(String(item.from || "").split("@")[1]?.toLowerCase()));
   const pick = (fromCustomer.length ? fromCustomer : evidence).sort((a, b) => String(b.receivedAt).localeCompare(String(a.receivedAt)))[0];
-  return { href: pick.webLink, at: pick.receivedAt, from: pick.from, names: pick.attachmentsNotRead };
+  return { href: share(pick.id) || pick.webLink, at: pick.receivedAt, from: pick.from, names: pick.attachmentsNotRead };
 }
 
 // The newest sent or received message the monitor saw in the thread (drafts
 // excluded), so replies after the RFQ are one click away. Null when that is
 // the RFQ email itself.
-export function latestMessageLink(entry, rfqLink) {
+// Every saved copy of an email (the same message in several mailboxes), by
+// any of its ids, from the private evidence files (config.evidenceDir).
+export function readMailCopies(evidenceDir) {
+  const copies = new Map();
+  if (!evidenceDir || !fs.existsSync(evidenceDir)) return copies;
+  for (const folder of fs.readdirSync(evidenceDir)) {
+    const file = path.join(evidenceDir, folder, "messages.json");
+    if (!fs.existsSync(file)) continue;
+    let data;
+    try { data = JSON.parse(fs.readFileSync(file, "utf8")); } catch { continue; }
+    for (const message of Array.isArray(data) ? data : data.messages || []) {
+      const byMailbox = { ...(message.mailbox && message.id ? { [message.mailbox.toLowerCase()]: message.id } : {}) };
+      for (const [mailbox, id] of Object.entries(message.copyIds || {})) byMailbox[mailbox.toLowerCase()] = id;
+      for (const key of [message.id, message.internetMessageId, ...Object.values(message.copyIds || {})].filter(Boolean)) {
+        copies.set(key, { ...(copies.get(key) || {}), ...byMailbox });
+      }
+    }
+  }
+  return copies;
+}
+
+// The shared mailbox's copy of a message, so a teammate with access to that
+// mailbox (not only the reviewer) can open it. Null when none is saved.
+export function sharedLink(id, copies, mailbox) {
+  if (!id || !mailbox || !copies?.size) return null;
+  const found = copies.get(id) || copies.get(String(id).replace(/\+/g, "-").replace(/\//g, "_"));
+  const shared = found?.[mailbox.toLowerCase()];
+  return shared ? `https://outlook.office.com/mail/${mailbox}/deeplink?ItemID=${encodeURIComponent(shared)}&exvsurl=1&viewmodel=ReadMessageItem` : null;
+}
+
+// Whose mailbox a link opens in, from the message id's mailbox prefix
+// (config.mailboxIdPrefixes). A link into one person's own mailbox is marked
+// so teammates know to ask for a forward rather than click a dead link.
+export function privateOwner(href, prefixes, sharedMailbox) {
+  if (!href || !prefixes) return null;
+  const id = decodeURIComponent((String(href).match(/ItemID=([^&]+)/) || [])[1] || "");
+  const owner = Object.entries(prefixes).find(([prefix]) => id.startsWith(prefix))?.[1];
+  if (!owner || /^(frontdesk|sales|info|quotes?)@/i.test(owner) || owner.toLowerCase() === String(sharedMailbox || "").toLowerCase()) return null;
+  const name = owner.split("@")[0];
+  return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+}
+export const onlyTag = (owner) => (owner ? ` <span class="only" title="Opens in ${owner}'s own mailbox; others need a forward">· ${owner} only</span>` : "");
+
+export function latestMessageLink(entry, rfqLink, share = () => null) {
   const events = (entry?.events || []).filter((event) => event.message_id && !event.is_draft);
   if (!events.length) return null;
   const newest = events.reduce((a, b) => (String(b.at) > String(a.at) ? b : a));
   const index = (entry.evidence_ids || []).indexOf(newest.message_id);
-  const link = (index >= 0 && entry.evidence_links?.[index]) || owaLink(newest.message_id);
+  const link = share(newest.message_id) || (index >= 0 && entry.evidence_links?.[index]) || owaLink(newest.message_id);
   return link && link !== rfqLink ? { href: link, at: newest.at, actor: newest.actor || null } : null;
 }
 
@@ -235,8 +280,13 @@ function caseEvents({ caseId, version, decision, lifecycle, monitor, sent, mailS
   return events;
 }
 
-export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, claudeMailPath = null, now = new Date() }) {
+export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, now = new Date() }) {
+  if (org) useOrg(org);
   const mailCache = readMailCache(mailCachePath);
+  const ownerOf = (href) => privateOwner(href, mailboxIdPrefixes, sharedMailbox);
+  // Links prefer the shared mailbox's copy so teammates can open them too.
+  const copies = sharedMailbox ? readMailCopies(evidenceDir) : new Map();
+  const share = (id) => sharedLink(id, copies, sharedMailbox);
   const claudeMail = readClaudeMail(claudeMailPath);
   const state = monitorStatePath && fs.existsSync(monitorStatePath) ? JSON.parse(fs.readFileSync(monitorStatePath, "utf8")) : null;
   const queue = state?.operational_queue || [];
@@ -294,12 +344,14 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       events: caseEvents({ caseId, version, decision, lifecycle, monitor, sent, mailSent: mail?.sent }),
       get progress() { return progressOf({ decision, lines: this.lines, monitor, sent, firstPricedAt: firstBuilt(outputsDir, caseId, version, decision), sentAtOverride: monitorSent ? null : mail?.sent?.at || null }); },
       monitorReference: decision.rfq.monitorReference || null,
-      rfqLink: monitor?.evidence_links?.[0] || owaLink(decision.rfq.sourceMessageIds?.[0]),
-      files: attachmentsEmail(decision),
+      rfqLink: share(monitor?.evidence_ids?.[0]) || monitor?.evidence_links?.[0] || share(decision.rfq.sourceMessageIds?.[0]) || owaLink(decision.rfq.sourceMessageIds?.[0]),
+      get rfqOwner() { return ownerOf(this.rfqLink); },
+      files: (() => { const files = attachmentsEmail(decision, share); return files ? { ...files, owner: ownerOf(files.href) } : null; })(),
       latestLink: (() => {
-        const fromMonitor = latestMessageLink(monitor, monitor?.evidence_links?.[0] || owaLink(decision.rfq.sourceMessageIds?.[0]));
+        const fromMonitor = latestMessageLink(monitor, share(monitor?.evidence_ids?.[0]) || monitor?.evidence_links?.[0] || owaLink(decision.rfq.sourceMessageIds?.[0]), share);
         const seen = mail?.latest;
-        return seen?.link && (!fromMonitor || seen.at > fromMonitor.at) ? { href: seen.link, at: seen.at, actor: seen.from || null } : fromMonitor;
+        const chosen = seen?.link && (!fromMonitor || seen.at > fromMonitor.at) ? { href: share(seen.id) || seen.link, at: seen.at, actor: seen.from || null } : fromMonitor;
+        return chosen ? { ...chosen, owner: ownerOf(chosen.href) } : null;
       })(),
       email: (() => {
         const evidence = new Map(decision.lines.flatMap((line) => line.history?.email?.evidence || []).map((item) => [item.id, item]));
@@ -312,54 +364,117 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
   });
   cases.sort((a, b) => Number(b.open) - Number(a.open) || (a.askedAt || "").localeCompare(b.askedAt || ""));
 
+  // Where every message Claude's mail check kept lands: on a card, in a list
+  // the board already shows, answered by a later quote, or listed by itself.
+  const since = new Date(now.getTime() - CHASE_DAYS * 86400000).toISOString();
+  const placements = claudeMail ? placeMailEvents(claudeMail.events, cases, queue, { monitorCovers, since }) : [];
+  for (const placement of placements.filter((item) => item.place === "case")) {
+    const kase = cases.find((item) => item.caseId === placement.caseId);
+    if (kase && (!kase.mailChase || Date.parse(kase.mailChase.at) < Date.parse(placement.event.at))) kase.mailChase = placement.event;
+  }
+  const mailRows = claudeMail ? foundRows(placements, claudeMail.events) : [];
+  const chasing = chasingFrom(readQuotePrepChat(quotePrepChatPath), cases, queue, now);
+  // A customer email the front desk also logged in the chat is one chase: keep
+  // the chat row and give it the email's monitor match.
+  const chatKeys = new Map((chasing?.unmatched || []).map((thread) => [subjectKey(thread.subject), thread]));
+  const mailFound = mailRows.filter((row) => {
+    const thread = row.kind !== "rfq" && row.kind !== "secure" && chatKeys.get(subjectKey(row.subject));
+    if (!thread) return true;
+    if (!thread.monitor && row.monitor && row.monitor.matchedBy !== "customer") thread.monitor = { reference: row.monitor.reference, section: row.monitor.section, status: row.monitor.status, lastActivityAt: row.monitor.lastActivityAt };
+    thread.email = { link: row.link, at: row.at };
+    return false;
+  });
+
   let monitor = null;
   if (state) {
     const covered = new Set(cases.flatMap((kase) => [kase.monitor?.reference, kase.monitorReference]).filter(Boolean));
+    const shownByMail = new Set([...mailFound, ...(chasing?.unmatched || [])].map((row) => row.monitor?.matchedBy !== "customer" && row.monitor?.reference).filter(Boolean));
     const waiting = queue.filter((item) => item.priority_section === 1);
     const cutoff = state.freshness?.source_cutoff || null;
     const ageMinutes = cutoff ? (now.getTime() - Date.parse(cutoff)) / 60000 : null;
+    const row = (item) => ({
+      customer: item.customer,
+      reference: item.reference,
+      section: item.priority_section,
+      status: item.status,
+      pricing: PRICING_REQUEST.test(`${item.reference} ${item.status}`),
+      lastActivityAt: item.last_observed_activity_at || null,
+      dueDate: item.explicit_due_date || null,
+      dueBasis: item.due_basis || item.due_date_basis || null,
+      ask: `Price RFQ: ${item.customer} ${item.reference}`,
+      rfqLink: item.evidence_links?.[0] || owaLink(item.evidence_ids?.[0]),
+      email: (() => {
+        const firstActor = [...(item.events || [])].sort((a, b) => (a.at || "").localeCompare(b.at || ""))[0]?.actor || null;
+        const found = originalEmail(item.evidence_ids, (id) => mailCache[id], (from) => Boolean(firstActor) && domainOf(from) === domainOf(firstActor));
+        return { from: found?.from || firstActor, fromName: found?.fromName || null, subject: found?.subject || null };
+      })(),
+    });
+    const oldestFirst = (a, b) => (a.lastActivityAt ? 0 : 1) - (b.lastActivityAt ? 0 : 1) || (a.lastActivityAt || "").localeCompare(b.lastActivityAt || "");
     monitor = {
       cutoff,
       ageMinutes,
-      stale: (Boolean(state.freshness?.stale) || ageMinutes == null || ageMinutes > MONITOR_STALE_MINUTES) && !claudeFresh(claudeMail, now),
+      // Each mail source is judged on its own: Claude's check adds messages
+      // but does not refresh the monitor's lists and statuses.
+      stale: Boolean(state.freshness?.stale) || ageMinutes == null || ageMinutes > MONITOR_STALE_MINUTES,
       claudeCutoff: claudeMail?.cutoff || null,
       report: state.last_check_report ? path.basename(state.last_check_report) : null,
       sections: { 1: waiting.length, 2: queue.filter((item) => item.priority_section === 2).length, 3: queue.filter((item) => item.priority_section === 3).length },
       waiting: waiting.length,
-      withoutPage: waiting.filter((item) => !covered.has(item.reference)).map((item) => ({
-        customer: item.customer,
-        reference: item.reference,
-        status: item.status,
-        pricing: PRICING_REQUEST.test(`${item.reference} ${item.status}`),
-        lastActivityAt: item.last_observed_activity_at || null,
-        dueDate: item.explicit_due_date || null,
-        dueBasis: item.due_basis || item.due_date_basis || null,
-        ask: `Price RFQ: ${item.customer} ${item.reference}`,
-        rfqLink: item.evidence_links?.[0] || owaLink(item.evidence_ids?.[0]),
-        email: (() => {
-          const firstActor = [...(item.events || [])].sort((a, b) => (a.at || "").localeCompare(b.at || ""))[0]?.actor || null;
-          const found = originalEmail(item.evidence_ids, (id) => mailCache[id], (from) => Boolean(firstActor) && domainOf(from) === domainOf(firstActor));
-          return { from: found?.from || firstActor, fromName: found?.fromName || null, subject: found?.subject || null };
-        })(),
-      })).sort((a, b) => (a.lastActivityAt ? 0 : 1) - (b.lastActivityAt ? 0 : 1) || (a.lastActivityAt || "").localeCompare(b.lastActivityAt || "")),
+      withoutPage: waiting.filter((item) => !covered.has(item.reference)).map(row).sort(oldestFirst),
+      // Section 2: the customer got an acknowledgment, not a price. The quote
+      // is still owed, but nothing else on the board lists these.
+      owed: queue.filter((item) => item.priority_section === 2 && !covered.has(item.reference) && !shownByMail.has(item.reference) && PRICING_REQUEST.test(`${item.reference} ${item.status}`) && !quoteSentStatus(item.status)).map(row).sort(oldestFirst),
     };
   }
   const tracker = readTracker(trackerPath);
   const history = [...tracker.history.map((item) => ({ ...item, source: "log" })), ...cases.flatMap((kase) => kase.events)]
     .filter((item) => item.at)
     .sort((a, b) => b.at.localeCompare(a.at));
-  return { generatedAt: now.toISOString(), cases, monitor, lastSync, history, mailFound: claudeMail ? newRequests(claudeMail.events, cases, queue, monitorCovers).filter((event) => Date.parse(event.at) >= now.getTime() - CHASE_DAYS * 86400000) : [], chasing: chasingFrom(readQuotePrepChat(quotePrepChatPath), cases, queue, now) };
+  return { generatedAt: now.toISOString(), cases, monitor, lastSync, history, mailFound, mailPlacements: placements, claudeMail: claudeMailView(claudeMail, now), chasing };
+}
+
+// What the board says about Claude's own mail check: how far it reached,
+// whether that is current, and what its last run searched and found.
+function claudeMailView(claudeMail, now) {
+  if (!claudeMail) return null;
+  const run = claudeMail.runs.at(-1) || null;
+  const failed = run ? mailSources().filter((source) => !(run.searched || []).some((item) => item.source === source && item.ok)) : [];
+  return { cutoff: claudeMail.cutoff, fresh: claudeFresh(claudeMail, now), stale: claudeStale(claudeMail, now), run, failed };
 }
 
 // A monitor entry accounts for a mail-check message when the board lists it
-// (section 1, under "No page yet" or on its case) or when the monitor saw a
-// quote go out after the message. Section 2 (acknowledged, quote pending) is
-// not listed, so those customers would otherwise not appear at all.
+// (section 1, under "No page yet" or on its case) or when the monitor says the
+// quote went out and QPC wrote on the entry after the message. Section 2
+// (acknowledged, quote pending) is not listed, so those customers would
+// otherwise not appear at all.
 const monitorCovers = (entry, event) => entry.priority_section === 1
-  || (entry.priority_section === 3 && quoteSentStatus(entry.status) && Date.parse(entry.last_observed_activity_at || "") > Date.parse(event.at));
+  || (entry.priority_section === 3 && quoteSentStatus(entry.status) && qpcWroteAfter(entry, event.at));
+
+// QPC wrote on the entry after `at`: an event from our own domain's address,
+// or, for an entry with no events, an own-domain last sender. A customer's own later
+// message (a thank-you, another question) does not count, and neither does an
+// unknown sender, so an unanswered question stays on the board.
+function qpcWroteAfter(entry, at) {
+  const after = (time) => Date.parse(time || "") > Date.parse(at);
+  const events = (entry.events || []).filter((item) => !item.is_draft);
+  if (events.length) return events.some((item) => isOwnAddress(item.actor) && after(item.at));
+  return isOwnAddress(entry.last_observed_actor) && after(entry.last_observed_activity_at);
+}
 
 // Claude's mail check counts as fresh on the same two-hour rule as the monitor.
-const claudeFresh = (claudeMail, now) => Boolean(claudeMail?.cutoff) && (now.getTime() - Date.parse(claudeMail.cutoff)) / 60000 <= MONITOR_STALE_MINUTES;
+// A cutoff in the future is a bad write, never fresh.
+const claudeAge = (claudeMail, now) => (claudeMail?.cutoff ? (now.getTime() - Date.parse(claudeMail.cutoff)) / 60000 : null);
+const claudeFresh = (claudeMail, now) => { const age = claudeAge(claudeMail, now); return age != null && age >= -5 && age <= MONITOR_STALE_MINUTES; };
+// It runs on weekdays through the working day, so it is late only then (or
+// when its cutoff is in the future).
+const CLAUDE_HOURS = { from: 8, to: 18 };
+function claudeStale(claudeMail, now) {
+  const age = claudeAge(claudeMail, now);
+  if (age == null || age < -5) return true;
+  const local = new Date(now.toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
+  const working = local.getDay() >= 1 && local.getDay() <= 5 && local.getHours() >= CLAUDE_HOURS.from && local.getHours() < CLAUDE_HOURS.to;
+  return working && age > MONITOR_STALE_MINUTES;
+}
 
 // Front desk follow-ups from the last two weeks: each one on the card it
 // belongs to (unless the quote went out after it), the rest listed as
@@ -372,10 +487,10 @@ function chasingFrom(chat, cases, queue, now) {
   for (const thread of recent) {
     const hits = matchThread(thread, cases);
     if (!hits.length) {
-      const entry = monitorFor(thread, queue);
-      // Answered: the monitor saw a quote go out after the last chase.
-      if (entry && entry.priority_section === 3 && quoteSentStatus(entry.status) && String(entry.last_observed_activity_at || "") > thread.lastAt) continue;
-      unmatched.push({ ...thread, monitor: entry ? { reference: entry.reference, section: entry.priority_section, status: entry.status, lastActivityAt: entry.last_observed_activity_at || null } : null });
+      const { entry, candidates } = monitorCandidates(thread, queue);
+      // Answered: the monitor says the quote went out and QPC wrote after the last chase.
+      if (entry && entry.priority_section === 3 && quoteSentStatus(entry.status) && qpcWroteAfter(entry, thread.lastAt)) continue;
+      unmatched.push({ ...thread, monitor: entry ? { reference: entry.reference, section: entry.priority_section, status: entry.status, lastActivityAt: entry.last_observed_activity_at || null } : null, candidates });
       continue;
     }
     for (const kase of hits) {
@@ -434,11 +549,18 @@ function relativeDay(iso, now) {
   const days = Math.round((Date.parse(`${localDay(now.toISOString())}T12:00:00Z`) - Date.parse(`${localDay(iso)}T12:00:00Z`)) / 86400000);
   return days === 0 ? "today" : days === 1 ? "yesterday" : day(iso);
 }
+// A ready-to-fill FACTS line per unpriced part, for the quote-prep chat.
+function factsTemplates(kase) {
+  const parts = [...new Set(kase.lines.filter((line) => line.suggested == null && !line.decided).map((line) => line.partNumber))];
+  if (!parts.length) return "";
+  return `<div class="mail-row facts-row">${parts.map((part) => { const line = `FACTS ${part}: _ x _ x _ in, _ lb`; return `<button type="button" class="copy-chip above" data-copy="${esc(line)}" data-label="${esc(line)}" title="Copy, fill in and post in the QUOTE PREP TRACKER chat">${ICON.copy}<span>${esc(line)}</span></button>`; }).join("")}</div>`;
+}
+
 // Opens the email with the request's attachments; the file names are in the tooltip.
 function filesButton(files, className) {
   if (!files) return "";
   const title = `${files.names.length} attachment${files.names.length === 1 ? "" : "s"} in ${files.from}'s email of ${day(files.at)}: ${files.names.join(", ")}`;
-  return `<a class="${className}" href="${esc(files.href)}" target="_blank" rel="noopener" title="${esc(title)}">${ICON.attach}Attachments <span class="count-inline">${files.names.length}</span></a>`;
+  return `<a class="${className}" href="${esc(files.href)}" target="_blank" rel="noopener" title="${esc(title)}">${ICON.attach}Attachments <span class="count-inline">${files.names.length}</span>${onlyTag(files.owner)}</a>`;
 }
 
 // The front desk's latest reminder that this customer is chasing.
@@ -448,18 +570,88 @@ function chaseChip(followup, now) {
   return `<span class="chip ${followup.urgent ? "alert" : "muted late"}" title="${esc(title)}">Chasing · ${esc(followup.label.toLowerCase())} ${relativeDay(followup.lastAt, now)}</span>`;
 }
 
-// Requests Claude's mail check found that no page and no listed monitor entry
-// shows, with the monitor's view where it has one.
-function mailFoundTable(items, now) {
+// Days from today (shop time) to a due date: negative is past due.
+const dueDays = (dueDate, now) => Math.round((Date.parse(`${localDay(dueDate)}T12:00:00Z`) - Date.parse(`${localDay(now.toISOString())}T12:00:00Z`)) / 86400000);
+const dueText = (dueDate, now) => { const days = dueDays(dueDate, now); return days < 0 ? `Past due · ${day(dueDate)}` : days === 0 ? "Due today" : days === 1 ? "Due tomorrow" : `Due ${day(dueDate)}`; };
+// A due date shown for a row only when it is the row's own request, not a
+// same-customer guess.
+const ownDue = (item) => (item.monitor && item.monitor.matchedBy !== "customer" ? item.monitor.dueDate : null);
+
+// A row's Done box: this viewer's own mark, kept in the browser. A newer
+// message in the thread is a new row, so it comes back.
+const rowDone = (key, label) => `<label class="done-check row-done"><input type="checkbox" data-row="${esc(key)}" aria-label="Mark ${esc(label)} done"><span>Done</span></label>`;
+
+// What Claude's mail check says about a message, by who owes the next email.
+const MAIL_CHIP = { followup: ["warn", "Chasing"], question: ["warn", "Needs reply"], rfq: ["muted", "New request"], secure: ["alert", "Can't read here · open it"] };
+const MAIL_RANK = { secure: 0, followup: 1, question: 2, rfq: 3 };
+const byDueThenKind = (now) => (a, b) => {
+  const da = ownDue(a), db = ownDue(b);
+  return (da ? 0 : 1) - (db ? 0 : 1) || (da && db ? dueDays(da, now) - dueDays(db, now) : 0) || (MAIL_RANK[a.kind] ?? 9) - (MAIL_RANK[b.kind] ?? 9) || Date.parse(b.at) - Date.parse(a.at);
+};
+const whereItStands = (item, now) => {
+  if (!item.monitor) return item.candidates ? `<span class="warn-text">Mail monitor has ${item.candidates} open entries for this customer; none picked</span>` : '<span class="warn-text">No match in the mail monitor</span>';
+  const due = item.monitor.matchedBy === "customer" ? null : item.monitor.dueDate;
+  const label = item.monitor.matchedBy === "customer" ? "Codex mail monitor, same customer" : "Codex mail monitor";
+  return `${esc(item.monitor.status || "no status")}<div class="why-not">${label} · ${esc(item.monitor.reference)}</div>${due ? `<div><span class="chip ${dueDays(due, now) <= 0 ? "alert" : "muted"}">${dueText(due, now)}</span></div>` : ""}`;
+};
+
+// Messages Claude's mail check found that no card and no other list here shows.
+function mailRowsTable(items, now, title) {
   if (!items.length) return "";
-  const rows = items.map((item) => `<tr><td><span class="strong">${esc(item.customerDomain || "—")}</span><div class="why-not">${esc(item.from || "")}</div></td><td>${esc(item.subject || "—")}${item.note ? `<div class="why-not">${esc(item.note)}</div>` : ""}${item.link ? `<div><a class="small" href="${esc(item.link)}" target="_blank" rel="noopener">Open email</a></div>` : ""}</td><td class="date"><span class="chip ${item.kind === "followup" ? "warn" : "muted"}">${item.kind === "followup" ? "Chasing" : "New request"}</span><div class="why-not">${relativeDay(item.at, now)}</div></td><td class="status-cell">${item.monitor ? `${esc(item.monitor.status || "no status")}<div class="why-not">${item.monitor.matchedBy === "customer" ? "Mail monitor, same customer" : "Mail monitor"} · ${esc(item.monitor.reference)}</div>${item.monitor.dueDate ? `<div class="why-not">Due ${day(item.monitor.dueDate)}</div>` : ""}` : '<span class="warn-text">No match in the mail monitor</span>'}</td></tr>`).join("");
-  return `<details class="fold" open><summary>${ICON.chevron}<h3>Found by Claude's mail check, not listed elsewhere here <small>${items.length}</small></h3></summary><div class="scroll"><table class="queue chase"><thead><tr><th>Customer · sender</th><th>Email subject</th><th>Seen</th><th>Where it stands</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
+  const rows = [...items].sort(byDueThenKind(now)).map((item) => {
+    const [tone, chip] = MAIL_CHIP[item.kind] || ["muted", item.kind];
+    const closed = item.closedCase ? `<div class="why-not">Wrote after the ${esc(item.closedCase.customer || item.closedCase.caseId)} page was ${esc(String(item.closedCase.state || "closed").toLowerCase())}</div>` : "";
+    const reply = item.reply ? `<div class="why-not">Front desk replied ${esc(when(item.reply.at))}${item.reply.note ? `: ${esc(item.reply.note)}` : ""}, no price yet</div>` : "";
+    return `<tr data-row-key="mail:${esc(item.id)}"><td><span class="strong">${esc(item.customerDomain || "—")}</span><div class="why-not">${esc(item.from || "")}</div></td><td>${esc(item.subject || "—")}${item.note ? `<div class="why-not">${esc(item.note)}</div>` : ""}${closed}${reply}${item.link ? `<div><a class="small" href="${esc(item.link)}" target="_blank" rel="noopener">Open email</a></div>` : ""}</td><td class="date"><span class="chip ${tone}">${esc(chip)}</span><div class="why-not">${relativeDay(item.at, now)}</div></td><td class="status-cell">${whereItStands(item, now)}</td><td>${rowDone(`mail:${item.id}`, item.customerDomain || "row")}</td></tr>`;
+  }).join("");
+  return `<details class="fold" open><summary>${ICON.chevron}<h3>${esc(title)} <small>${items.length}</small></h3></summary><div class="scroll"><table class="queue chase"><thead><tr><th>Customer · sender</th><th>Email subject</th><th>Seen</th><th>Where it stands</th><th><span class="visually-hidden">Done</span></th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
 }
 
-// Customers chasing a request that has no price page yet.
+// Customers chasing a request that has no price page yet, as the front desk logged them.
 function chasingTable(items, now) {
-  const rows = items.map((item) => `<tr class="${item.urgent ? "urgent" : ""}"><td><span class="strong">${esc(item.company || "—")}</span><div class="why-not">${esc(item.contact)}</div></td><td>${esc(item.subject || "—")}${item.note ? `<div class="why-not">“${esc(item.note)}”</div>` : ""}</td><td class="date"><span class="chip ${item.urgent ? "alert" : "muted"}">${esc(item.label)}</span><div class="why-not">${relativeDay(item.lastAt, now)}</div></td><td class="status-cell">${item.monitor ? `${esc(item.monitor.status)}<div class="why-not">Mail monitor · ${esc(item.monitor.reference)}</div>` : '<span class="warn-text">Not in the mail monitor</span>'}</td></tr>`).join("");
-  return `<div class="scroll"><table class="queue chase"><thead><tr><th>Company · contact</th><th>What they asked for</th><th>Chased</th><th>Where it stands</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  const rows = items.map((item) => `<tr class="${item.urgent ? "urgent" : ""}" data-row-key="chat:${esc(item.id)}:${esc(item.lastAt)}"><td><span class="strong">${esc(item.company || "—")}</span><div class="why-not">${esc(item.contact)}</div></td><td>${esc(item.subject || "—")}${item.note ? `<div class="why-not">“${esc(item.note)}”</div>` : ""}${item.email?.link ? `<div><a class="small" href="${esc(item.email.link)}" target="_blank" rel="noopener">Open email</a></div>` : ""}</td><td class="date"><span class="chip ${item.urgent ? "alert" : "muted"}">${esc(item.label)}</span><div class="why-not">${relativeDay(item.lastAt, now)}</div></td><td class="status-cell">${whereItStands(item, now)}</td><td>${rowDone(`chat:${item.id}:${item.lastAt}`, item.company || "row")}</td></tr>`).join("");
+  return `<div class="scroll"><table class="queue chase"><thead><tr><th>Company · contact</th><th>What they asked for</th><th>Chased</th><th>Where it stands</th><th><span class="visually-hidden">Done</span></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+// Everything due today or past due, whether or not it has a page: the one
+// list that has to be empty by the end of the day.
+function dueStrip(items, now) {
+  const rows = items.map((item) => `<tr><td><span class="strong">${esc(item.customer)}</span><div class="why-not">${esc(item.reference || "")}</div></td><td>${esc(item.where)}</td><td class="date"><span class="chip alert">${dueText(item.dueDate, now)}</span></td><td>${item.href ? `<a class="small" href="${esc(item.href)}"${item.href.startsWith("#") ? "" : ' target="_blank" rel="noopener"'}>${item.href.startsWith("#") ? "Go to card" : "Open email"}</a>` : ""}</td></tr>`).join("");
+  return `<div class="scroll"><table class="queue due"><thead><tr><th>Customer · reference</th><th>Where it is</th><th>Due</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+// Where each message of the last two weeks landed, for checking the mail check.
+function placementTable(placements) {
+  const PLACE = { case: "On a card", listed: "In a monitor list here", answered: "Answered", found: "Listed by itself", old: "Older than two weeks", "sent-mark": "Marked a page sent", unattached: "Quote not tied to a page", "by-design": "Kept, not shown" };
+  const rows = [...placements].sort((a, b) => Date.parse(b.event.at) - Date.parse(a.event.at)).map(({ event, place, detail }) => `<tr><td class="date">${esc(when(event.at))}</td><td>${esc(event.kind)}</td><td><span class="strong">${esc(event.customerDomain || "—")}</span><div class="why-not">${esc(event.subject || "")}</div></td><td>${esc(PLACE[place] || place)}<div class="why-not">${esc(detail || "")}</div></td></tr>`).join("");
+  return `<div class="scroll"><table class="queue"><thead><tr><th>Seen</th><th>Kind</th><th>Customer · subject</th><th>Where it landed</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+// One plain line on what Claude's last mail check searched and found.
+function claudeRunLine(view) {
+  if (!view) return "";
+  const run = view.run;
+  if (!run) return `<p class="runline">Claude mail check reached ${esc(when(view.cutoff))}.</p>`;
+  const kept = run.keptByKind || {};
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const parts = [
+    kept.rfq ? plural(kept.rfq, "new request", "new requests") : "",
+    (kept.followup || 0) + (kept.question || 0) ? plural((kept.followup || 0) + (kept.question || 0), "customer message", "customer messages") : "",
+    kept.secure ? plural(kept.secure, "unreadable message", "unreadable messages") : "",
+    kept.ack ? plural(kept.ack, "front-desk reply", "front-desk replies") : "",
+    kept["quote-sent"] ? plural(kept["quote-sent"], "quote sent", "quotes sent") : "",
+  ].filter(Boolean);
+  const sources = view.failed.length ? `<span class="warn-text">could not search ${esc(view.failed.join(", "))}</span>` : `${mailSources().length} sources searched`;
+  return `<p class="runline">Claude mail check ${esc(when(run.finishedAt || run.runStart))} · ${sources} · ${parts.length ? esc(parts.join(", ")) : "nothing new"}</p>`;
+}
+
+// A mail-check message on a card: the customer wrote since the page was built.
+function mailChip(kase, now) {
+  const mail = kase.mailChase;
+  if (!mail || (kase.followup && Date.parse(kase.followup.lastAt) >= Date.parse(mail.at))) return "";
+  const [tone, label] = mail.kind === "rfq" ? ["muted late", "Customer wrote"] : MAIL_CHIP[mail.kind] || ["muted", "Customer wrote"];
+  const title = `Claude's mail check, ${when(mail.at)}: ${mail.from || mail.customerDomain} — “${mail.subject}”${mail.note ? ` (${mail.note})` : ""}`;
+  return `<span class="chip ${tone === "warn" ? "muted late" : tone}" title="${esc(title)}">${esc(label)} · ${relativeDay(mail.at, now)}</span>`;
 }
 
 const LINE_LIMIT = 4;
@@ -526,20 +718,20 @@ function caseCard(kase, now) {
       <div class="card-title">
         <a class="card-link" href="${esc(kase.page)}">${esc(kase.customer)}</a>
         <p class="ref">${esc(kase.reference || kase.caseId)}</p>
-        <p class="marks">${open ? progressHtml(kase.progress, { compact: true }) : ""}${kase.askedAt ? `<span class="chip muted">Asked ${day(kase.askedAt)}</span>` : ""}${dueChip(kase, now)}${chaseChip(kase.followup, now)}<span class="chip ok done-mark">${ICON.check}Done</span><span class="chip muted opened-mark">${ICON.check}Opened</span></p>
+        <p class="marks">${open ? progressHtml(kase.progress, { compact: true }) : ""}${kase.askedAt ? `<span class="chip muted">Asked ${day(kase.askedAt)}</span>` : ""}${dueChip(kase, now)}${chaseChip(kase.followup, now)}${mailChip(kase, now)}<span class="chip ok done-mark">${ICON.check}Done</span><span class="chip muted opened-mark">${ICON.check}Opened</span></p>
       </div>
       ${headline(kase, group)}
     </div>
     ${open ? "" : progressHtml(kase.progress)}
-    ${group === "facts" ? `<p class="parts">${partsSummary(kase)}</p>${kase.files ? `<p class="files-note">${ICON.attach}<span>The missing facts may be in ${kase.files.names.length === 1 ? "this file" : `these ${kase.files.names.length} files`}: ${kase.files.names.map((name) => `<b>${esc(name)}</b>`).join(", ")}</span></p>` : ""}` : linesTable(kase)}
+    ${group === "facts" ? `<p class="parts">${partsSummary(kase)}</p>${factsTemplates(kase)}${kase.files ? `<p class="files-note">${ICON.attach}<span>The missing facts may be in ${kase.files.names.length === 1 ? "this file" : `these ${kase.files.names.length} files`}: ${kase.files.names.map((name) => `<b>${esc(name)}</b>`).join(", ")}</span></p>` : ""}` : linesTable(kase)}
     ${notes.map((note) => `<p class="hint">${ICON.alert}<span>${note}</span></p>`).join("")}
     ${mailRow(kase.email)}
     <div class="card-foot">
       <label class="done-check above"><input type="checkbox" class="done-box" aria-label="Mark ${esc(kase.customer)} done"><span>Done</span></label>
       <span class="spacer"></span>
-      ${kase.rfqLink ? `<a class="btn ghost above" href="${esc(kase.rfqLink)}" target="_blank" rel="noopener">Open RFQ email ${ICON.external}</a>` : ""}
+      ${kase.rfqLink ? `<a class="btn ghost above" href="${esc(kase.rfqLink)}" target="_blank" rel="noopener">Open RFQ email${onlyTag(kase.rfqOwner)} ${ICON.external}</a>` : ""}
       ${filesButton(kase.files, "btn ghost above")}
-      ${kase.latestLink ? `<a class="btn ghost above" href="${esc(kase.latestLink.href)}" target="_blank" rel="noopener" title="Newest message in the thread${kase.latestLink.actor ? `, from ${esc(kase.latestLink.actor)}` : ""}, ${esc(String(kase.latestLink.at).slice(0, 10))}">Latest reply ${ICON.external}</a>` : ""}
+      ${kase.latestLink ? `<a class="btn ghost above" href="${esc(kase.latestLink.href)}" target="_blank" rel="noopener" title="Newest message in the thread${kase.latestLink.actor ? `, from ${esc(kase.latestLink.actor)}` : ""}, ${esc(String(kase.latestLink.at).slice(0, 10))}">Latest reply${onlyTag(kase.latestLink.owner)} ${ICON.external}</a>` : ""}
       <span class="go">Price page ${ICON.chevron}</span>
     </div>
   </article>`;
@@ -547,10 +739,12 @@ function caseCard(kase, now) {
 
 const senderHtml = (email) => (email?.from ? `${email.fromName ? `<span class="strong">${esc(email.fromName)}</span><div class="why-not">${esc(email.from)}</div>` : esc(email.from)}` : '<span class="muted">not looked up</span>');
 
-function monitorTable(items, title) {
+function monitorTable(items, title, now) {
   if (!items.length) return "";
+  // Opens by itself when it holds something due today or past due.
+  const urgent = items.some((item) => item.dueDate && dueDays(item.dueDate, now) <= 0);
   const rows = items.map((item) => `<tr><td><span class="strong">${esc(item.customer)}</span><div class="why-not">${esc(item.reference)}</div></td><td>${senderHtml(item.email)}</td><td>${item.email?.subject ? esc(item.email.subject) : '<span class="muted">not looked up</span>'}${item.rfqLink ? `<div><a class="small" href="${esc(item.rfqLink)}" target="_blank" rel="noopener">Open RFQ email</a></div>` : ""}</td><td class="status-cell">${esc(item.status)}</td><td class="date">${item.lastActivityAt ? day(item.lastActivityAt) : "unknown"}${item.dueDate ? `<div class="why-not">Due ${day(item.dueDate)} · ${esc(item.dueBasis ?? "basis not stated")}</div>` : ""}</td></tr>`).join("");
-  return `<details class="fold"><summary>${ICON.chevron}<h3>${esc(title)} <small>${items.length}</small></h3></summary><div class="scroll"><table class="queue"><thead><tr><th>Company · reference</th><th>Sender</th><th>Email subject</th><th>Monitor status</th><th>Last activity</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
+  return `<details class="fold"${urgent ? " open" : ""}><summary>${ICON.chevron}<h3>${esc(title)} <small>${items.length}</small></h3></summary><div class="scroll"><table class="queue"><thead><tr><th>Company · reference</th><th>Sender</th><th>Email subject</th><th>Monitor status</th><th>Last activity</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
 }
 
 const KIND_TONE = { ruling: "warn", decision: "ok", sent: "ok", correction: "alert", priced: "muted", commit: "muted", build: "muted", review: "muted", note: "muted" };
@@ -590,8 +784,11 @@ export function renderBoard(board, { badge = null } = {}) {
   const monitor = board.monitor;
   const sync = board.lastSync;
   const rejected = (sync?.imports || []).filter((item) => item.outcome !== "accepted" && item.outcome !== "replay-noop" && item.outcome !== "archived-older");
+  const claude = board.claudeMail;
   const alerts = [
-    ...(monitor?.stale ? [`Mail data is STALE: the monitor's last successful check was ${monitor.cutoff ? when(monitor.cutoff) : "never recorded"}${monitor.claudeCutoff ? ` and Claude's mail check reached ${when(monitor.claudeCutoff)}` : ""}. A check may have stopped; "no reply found" rows may be out of date.`] : []),
+    ...(monitor?.stale ? [`Codex mail monitor data is STALE: its last successful check was ${monitor.cutoff ? when(monitor.cutoff) : "never recorded"}. The "No page yet" and "Quote still owed" lists and its quote-sent marks may be out of date.${claude?.fresh ? ` Claude's mail check is current (${when(claude.cutoff)}) and still adds what it finds.` : ""}`] : []),
+    ...(claude?.stale ? [`Claude's mail check last reached ${claude.cutoff ? when(claude.cutoff) : "no time recorded"}: its hourly runs may have stopped. Check the qpc-claude-mail-check task's runs.`] : []),
+    ...(claude?.run && claude.failed.length ? [`Claude's last mail check (${when(claude.run.finishedAt || claude.run.runStart)}) could not search ${claude.failed.join(", ")}; its cutoff was held, so the next run searches that time again.`] : []),
     ...rejected.map((item) => item.outcome === "not-downloaded"
       ? `Router History export ${item.fileName} is in OneDrive but not downloaded to this Mac, so the background sync can't read it. Open the ROUTER HISTORY folder in Finder (or set it to "Always Keep on This Device"), or ask Claude to import it. Prices still use the last good snapshot.`
       : `Router History export ${item.fileName} was ${item.outcome}${item.failures.length ? ` (${item.failures.join(", ")})` : ""}. Prices still use the last good snapshot.`),
@@ -600,25 +797,37 @@ export function renderBoard(board, { badge = null } = {}) {
   const openCount = grouped.ready.length + grouped.facts.length;
   const pill = alerts.length ? ["alert", "Needs attention"] : openCount ? ["warn", `${openCount} waiting on you`] : ["ok", "Nothing waiting"];
   const unpriced = monitor ? monitor.withoutPage : [];
-  const today = localDay(now.toISOString());
-  const dated = [...grouped.ready, ...grouped.facts].filter((kase) => kase.dueDate);
-  const pastDueCases = dated.filter((kase) => localDay(kase.dueDate) < today);
-  const dueTodayCases = dated.filter((kase) => localDay(kase.dueDate) === today);
-  const pastDue = pastDueCases.length, dueToday = dueTodayCases.length;
+  const owed = monitor?.owed || [];
   const mailFound = board.mailFound || [];
-  const chasingOpen = [...grouped.ready, ...grouped.facts].filter((kase) => kase.followup);
+  const mailChases = mailFound.filter((item) => item.kind === "followup" || item.kind === "question");
+  const mailNew = mailFound.filter((item) => !mailChases.includes(item));
+  // Due today or past due, from every source: cards, mail-check rows, and
+  // the monitor's lists without a page.
+  const dueItems = [
+    ...[...grouped.ready, ...grouped.facts].filter((kase) => kase.dueDate).map((kase) => ({ customer: kase.customer, reference: kase.reference || kase.caseId, dueDate: kase.dueDate, where: caseGroup(kase) === "ready" ? "Ready for your yes" : "Needs facts first", href: `#case-${kase.caseId}` })),
+    ...mailFound.filter(ownDue).map((item) => ({ customer: item.monitor.customer || item.customerDomain, reference: item.monitor.reference, dueDate: ownDue(item), where: `No page yet · ${(MAIL_CHIP[item.kind] || ["", item.kind])[1]} (Claude's mail check)`, href: item.link })),
+    ...unpriced.filter((item) => item.dueDate && item.pricing).map((item) => ({ customer: item.customer, reference: item.reference, dueDate: item.dueDate, where: "No page yet (Codex mail monitor)", href: item.rfqLink })),
+    ...owed.filter((item) => item.dueDate).map((item) => ({ customer: item.customer, reference: item.reference, dueDate: item.dueDate, where: "Quote still owed (Codex mail monitor)", href: item.rfqLink })),
+  ].filter((item) => dueDays(item.dueDate, now) <= 0).sort((a, b) => dueDays(a.dueDate, now) - dueDays(b.dueDate, now));
+  const pastDue = dueItems.filter((item) => dueDays(item.dueDate, now) < 0).length;
+  const dueToday = dueItems.length - pastDue;
+  const chasingOpen = [...grouped.ready, ...grouped.facts].filter((kase) => kase.followup || mailChip(kase, now));
   const chasingNoPage = board.chasing?.unmatched || [];
-  const chasingCount = chasingOpen.length + chasingNoPage.length;
-  const chaseTarget = chasingOpen.find((kase) => kase.followup.urgent) || chasingOpen[0];
+  // One count of customers chasing, the same in the header and the tab: each
+  // card once, each front-desk thread once, each emailed chase once.
+  const chasingCount = new Set([...chasingOpen.map((kase) => `case:${kase.caseId}`), ...chasingNoPage.map((thread) => `chat:${thread.id}`), ...mailChases.map((item) => `mail:${item.customerDomain}|${subjectKey(item.subject)}`)]).size;
+  const chasingNoPageCount = chasingNoPage.length + mailChases.length;
+  const chaseTarget = chasingOpen.find((kase) => kase.followup?.urgent) || chasingOpen[0];
   const summary = [
     grouped.ready.length ? `<a class="n-ready" href="#ready"><b>${grouped.ready.length}</b> ready for your yes</a>` : "",
     grouped.facts.length ? `<a class="n-facts" href="#facts"><b>${grouped.facts.length}</b> need facts first</a>` : "",
-    pastDue ? `<a class="due-now" href="#case-${esc(pastDueCases[0].caseId)}">${pastDue} past due</a>` : "",
-    dueToday ? `<a class="due-now" href="#case-${esc(dueTodayCases[0].caseId)}">${dueToday} due today</a>` : "",
-    chasingCount ? `<a class="chasing-now" href="${chasingNoPage.length ? "#chasing" : `#case-${esc(chaseTarget.caseId)}`}">${chasingCount} customer${chasingCount === 1 ? "" : "s"} chasing</a>` : "",
+    pastDue ? `<a class="due-now" href="#due">${pastDue} past due</a>` : "",
+    dueToday ? `<a class="due-now" href="#due">${dueToday} due today</a>` : "",
+    chasingCount ? `<a class="chasing-now" href="${chasingNoPageCount ? "#chasing" : `#case-${esc(chaseTarget.caseId)}`}">${chasingCount} customer${chasingCount === 1 ? "" : "s"} chasing</a>` : "",
   ].filter(Boolean).join('<span class="sep">·</span>') || "Nothing waiting on you.";
-  const tabs = [["ready", "Ready", grouped.ready.length], ["facts", "Needs facts", grouped.facts.length], ["chasing", "Chasing", chasingNoPage.length], ["closed", "Decided & sent", closed.length], ["unpriced", "No page yet", unpriced.length + mailFound.length], ["log", "Log", null]]
-    .filter(([id, , count]) => count !== 0 && (id !== "unpriced" || monitor || mailFound.length));
+  const tabs = [["due", "Due now", dueItems.length], ["ready", "Ready", grouped.ready.length], ["facts", "Needs facts", grouped.facts.length], ["chasing", "Chasing", chasingNoPageCount], ["closed", "Decided & sent", closed.length], ["unpriced", "No page yet", unpriced.length + mailNew.length], ["owed", "Quote owed", owed.length], ["log", "Log", null]]
+    .filter(([id, , count]) => count !== 0 && (id !== "unpriced" || monitor || mailNew.length) && (id !== "owed" || owed.length) && (id !== "due" || dueItems.length));
+  const recentPlacements = (board.mailPlacements || []).filter((item) => item.place !== "old");
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -645,30 +854,36 @@ ${BOARD_STYLE}
     ${alerts.map((alert) => `<div class="status alert">${esc(alert)}</div>`).join("")}
     <p class="eyebrow">QPC · RFQ pricing</p>
     <h1 class="summary">${summary}</h1>
+    ${claudeRunLine(claude)}
     <div class="sortbar" role="group" aria-label="Sort the cards"><span>Sort</span><button type="button" data-sort="urgent" aria-pressed="true">Most urgent</button><button type="button" data-sort="newest" aria-pressed="false">Newest first</button><button type="button" data-sort="oldest" aria-pressed="false">Oldest first</button></div>
   </div>
 
+  ${dueItems.length ? section("due", "Due now", dueItems.length, "Due today or past due, with a page or without one. Each should have a quote or an answer before the day ends.", dueStrip(dueItems, now)) : ""}
+
   ${grouped.ready.length ? section("ready", "Ready for your yes", grouped.ready.length, "Each has a suggested price. Click a card to open its price page, then approve it or give yours.", `<div class="cards">${grouped.ready.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
 
-  ${grouped.facts.length ? section("facts", "Needs facts first", grouped.facts.length, "No price until the missing fact is in. Get it from the customer or the drawing, then ask Claude to rebuild the page.", `<div class="cards">${grouped.facts.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
+  ${grouped.facts.length ? section("facts", "Needs facts first", grouped.facts.length, "No price until the missing fact is in. Open the attachments or ask the customer, then post the size in the QUOTE PREP TRACKER chat as <b>FACTS part-number: L x W x H in, weight lb</b> (copy the line on each card). Claude reprices the page within the hour.", `<div class="cards">${grouped.facts.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
 
   ${openCount ? "" : `<p class="empty">${ICON.check}<span>Nothing waiting. Every priced RFQ has a decision.</span></p>`}
 
-  ${chasingNoPage.length ? section("chasing", "Customers chasing, no price page", chasingNoPage.length, "The front desk logged these follow-ups in the quote-prep chat in the last two weeks, and none has a price page. Ask Claude to price any of them.", chasingTable(chasingNoPage, now)) : ""}
+  ${chasingNoPageCount ? section("chasing", "Customers chasing, no price page", chasingNoPageCount, "Follow-ups from the last two weeks with no price page: logged by the front desk in the quote-prep chat, or found in customer email by Claude's mail check. Ask Claude to price any of them.", `${chasingNoPage.length ? chasingTable(chasingNoPage, now) : ""}${mailRowsTable(mailChases, now, "From customer email (Claude's mail check)")}`) : ""}
 
   ${closed.length ? section("closed", "Decided & sent", closed.length, "", `<details class="fold"><summary>${ICON.chevron}<h3>Show ${closed.length}</h3></summary><div class="cards">${closed.map((kase) => caseCard(kase, now)).join("")}</div></details>`) : ""}
 
-  ${(monitor && unpriced.length) || mailFound.length ? section("unpriced", "No price page yet", unpriced.length + mailFound.length, "Open in the mail with no page here; ask Claude to price any of them.", `${mailFoundTable(mailFound, now)}${monitorTable(unpriced.filter((item) => item.pricing), "Status mentions a quote, RFQ or inquiry")}${monitorTable(unpriced.filter((item) => !item.pricing), "Status doesn't say (may be a follow-up or an RFQ)")}`) : ""}
+  ${(monitor && unpriced.length) || mailNew.length ? section("unpriced", "No price page yet", unpriced.length + mailNew.length, "Open in the mail with no page here; ask Claude to price any of them.", `${mailRowsTable(mailNew, now, "Found by Claude's mail check, not listed elsewhere here")}${monitorTable(unpriced.filter((item) => item.pricing), "Status mentions a quote, RFQ or inquiry", now)}${monitorTable(unpriced.filter((item) => !item.pricing), "Status doesn't say (may be a follow-up or an RFQ)", now)}`) : ""}
+
+  ${owed.length ? section("owed", "Acknowledged, quote still owed", owed.length, "The Codex mail monitor saw each of these customers get a reply but no price. Oldest first. Ask Claude to price any of them, or tell it which are not pricing work.", monitorTable(owed, `Show ${owed.length}`, now)) : ""}
 
   <section id="log" class="group" aria-labelledby="log-title">
     <div class="group-head"><h2 id="log-title">Log</h2></div>
     <details class="fold" id="feedback"><summary>${ICON.chevron}<h3>Method feedback <small>${feedback.length}</small></h3></summary>${feedback.length ? feedbackList(feedback) : `<p class="muted">No method reviews recorded yet. Add <code>; method ok</code> or <code>; method wrong why: …</code> to an answer.</p>`}</details>
+    ${recentPlacements.length ? `<details class="fold" id="mail-placement"><summary>${ICON.chevron}<h3>Where each checked email landed <small>${recentPlacements.length}</small></h3></summary>${placementTable(recentPlacements)}</details>` : ""}
     ${board.history.length ? `<details class="fold" id="history"><summary>${ICON.chevron}<h3 id="history-title">History <small>${board.history.length}</small></h3></summary>${historyTable(board.history)}</details>` : ""}
   </section>
 
   <footer class="fresh">${badge ? `<img class="badge" src="${badge}" alt="" width="20" height="20">` : ""}<span>
-    ${monitor ? `<span class="${monitor.stale ? "stale" : ""}">Mail checked ${when(monitor.cutoff)} (monitor)${monitor.claudeCutoff ? ` · ${when(monitor.claudeCutoff)} (Claude)` : ""}</span>${monitor.report ? ` · <a href="${esc(monitor.report)}">latest check</a>` : ""} · ` : ""}${sync ? `synced ${when(sync.at)}${sync.imports.length ? ` (imported ${sync.imports.map((item) => `${esc(item.fileName)} ${esc(item.outcome)}`).join(", ")})` : ""}` : "no sync has run yet"}
-${board.chasing ? ` · front desk chat read ${when(board.chasing.readAt)}` : ""}
+    ${monitor ? `<span class="${monitor.stale ? "stale" : ""}">Mail checked ${when(monitor.cutoff)} (Codex mail monitor)</span>${claude?.cutoff ? ` · <span class="${claude.stale ? "stale" : ""}">${when(claude.cutoff)} (Claude mail check)</span>` : ""}${monitor.report ? ` · <a href="${esc(monitor.report)}">latest check</a>` : ""} · ` : ""}${sync ? `synced ${when(sync.at)}${sync.imports.length ? ` (imported ${sync.imports.map((item) => `${esc(item.fileName)} ${esc(item.outcome)}`).join(", ")})` : ""}` : "no sync has run yet"}
+${board.chasing ? ` · front desk chat read ${when(board.chasing.readAt)}` : ""}${board.codeVersion ? ` · board code ${esc(board.codeVersion)}` : ""}
     <br>Private working file · keep inside QPC</span>
   </footer>
 </main>
@@ -741,6 +956,22 @@ ${SCRIPT}
   }
   document.querySelectorAll(".sortbar button").forEach((button) => button.addEventListener("click", () => { sort = button.dataset.sort; write(SORT, sort); arrange(); }));
   arrange(false);
+  // Rows in the mail and chasing tables take a Done mark too; a done row greys
+  // out and moves to the bottom of its table until a newer message replaces it.
+  for (const box of document.querySelectorAll("input[data-row]")) {
+    const row = box.closest("tr"), id = box.dataset.row;
+    const show = () => {
+      box.checked = Boolean(marks[id]?.done);
+      row.classList.toggle("done", box.checked);
+      if (box.checked) row.parentElement.appendChild(row);
+    };
+    box.addEventListener("change", () => {
+      if (box.checked) marks[id] = { done: true, at: new Date().toISOString() }; else delete marks[id];
+      write(DONE, marks); show();
+      window.qpcToast?.(box.checked ? "Marked done" : "Moved back");
+    });
+    show();
+  }
 })();
 </script>
 </body>
@@ -770,6 +1001,14 @@ h1.summary .n-ready b { color:var(--gold-text); } h1.summary .n-facts b { color:
 h1.summary .chasing-now { color:var(--warn); border-bottom-color:color-mix(in srgb, var(--warn) 40%, transparent); }
 table.chase tr.urgent td:first-child { box-shadow:inset 3px 0 0 var(--alert); }
 .warn-text { color:var(--warn); font-weight:600; }
+/* A section never grows to its widest table: tables scroll inside their own box. */
+.group > *, details.fold, details.fold > * { min-width:0; max-width:100%; }
+.visually-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.runline { font-size:13px; color:var(--ink-3); margin:var(--s1) 0 0; }
+.row-done { font-size:12px; color:var(--ink-3); white-space:nowrap; display:inline-flex; gap:4px; align-items:center; }
+table.queue tr.done td { opacity:.5; }
+table.due td:first-child { box-shadow:inset 3px 0 0 var(--alert); }
+table.due td:last-child, table.queue td:last-child .row-done { white-space:nowrap; }
 h1.summary .due-now { color:var(--alert); border-bottom-color:color-mix(in srgb, var(--alert) 40%, transparent); }
 .chip.late::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--warn); }
 .card { scroll-margin-top:120px; }
@@ -834,6 +1073,7 @@ a.btn { text-decoration:none; }
 .card-foot .spacer { flex:1; }
 .files-note { display:flex; gap:var(--s2); align-items:flex-start; font-size:13px; color:var(--ink-2); overflow-wrap:anywhere; }
 .files-note b { font-weight:600; color:var(--ink); }
+.only { font-weight:500; color:var(--ink-3); font-size:12px; }
 .count-inline { font-variant-numeric:tabular-nums; color:var(--ink-3); font-weight:600; }
 .done-mark { display:none; } .card.done .done-mark { display:inline-flex; }
 .card.done { opacity:.6; } .card.done:hover, .card.done:focus-within { opacity:1; }
@@ -897,9 +1137,29 @@ export function readBrandBadge(badgePath) {
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
-export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath = null, mailCachePath = null, brandBadgePath = null, quotePrepChatPath = null, claudeMailPath = null, now }) {
+export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath = null, mailCachePath = null, brandBadgePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, now }) {
   const file = path.join(outputsDir, BOARD_FILE);
-  const board = buildBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath, mailCachePath, quotePrepChatPath, claudeMailPath, now });
+  const board = buildBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath, mailCachePath, quotePrepChatPath, claudeMailPath, evidenceDir, sharedMailbox, mailboxIdPrefixes, org, now });
+  board.codeVersion = codeVersion();
   fs.writeFileSync(file, renderBoard(board, { badge: readBrandBadge(brandBadgePath) }));
   return { file, board };
+}
+
+// The one place the private config becomes the board's inputs, for every
+// command that writes it.
+export function boardInputs(config) {
+  return { outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null, claudeMailPath: config.claudeMail || null, evidenceDir: config.evidenceDir || null, sharedMailbox: config.sharedMailbox || null, mailboxIdPrefixes: config.mailboxIdPrefixes || null, org: config.org || null };
+}
+
+// The commit the board was built from, marked when the working tree has
+// uncommitted changes, so a board built from half-finished code says so.
+function codeVersion() {
+  const repo = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
+  try {
+    const head = execFileSync("git", ["-C", repo, "rev-parse", "--short", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const dirty = execFileSync("git", ["-C", repo, "status", "--porcelain", "--untracked-files=no"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return dirty ? `${head} + uncommitted changes` : head;
+  } catch {
+    return null;
+  }
 }
