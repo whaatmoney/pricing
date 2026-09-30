@@ -3,7 +3,7 @@ import { lifecycleView } from "./lifecycle.js";
 import { describeDecision, describeReview, displayStatus, escapeHtml, sizeText, STATUS_LABEL, summarizeLine, whyNot } from "./render.js";
 import { answerLines, approveAllLine, assumptions, methodPath, poTotal, quoteSummary, reviewCard } from "./review-card.js";
 import { caseConfidence, reasonsText } from "./confidence.js";
-import { copyButton, ICON, SCRIPT as PAGE_SCRIPT, STYLE as PAGE_STYLE } from "./design.js";
+import { copyButton, ICON, progressHtml, SCRIPT as PAGE_SCRIPT, STYLE as PAGE_STYLE } from "./design.js";
 
 // The decision page, laid out in the order a reviewer works: what is being
 // asked and where it stands, the quote ready to paste with the checks to do
@@ -278,7 +278,7 @@ function mailLinks(mail) {
   return `<p class="mail-links">${mail.rfq ? `<a class="btn ghost" href="${esc(mail.rfq)}" target="_blank" rel="noopener">Open RFQ email ${ICON.external}</a>` : ""}${latest}</p>`;
 }
 
-export function renderHtml(decision, { lifecycle, now = new Date(), quoteTemplate = null, mail = null } = {}) {
+export function renderHtml(decision, { lifecycle, now = new Date(), quoteTemplate = null, mail = null, progress = null } = {}) {
   const view = lifecycleView(decision, lifecycle);
   const state = stateOf(decision, view);
   const groups = groupLines(decision.lines);
@@ -317,6 +317,7 @@ ${PAGE_STYLE}
       ${waiting != null ? `<li class="${waiting >= 2 ? "late" : ""}">${waiting} business day${waiting === 1 ? "" : "s"} waiting</li>` : ""}
       <li>From ${esc(decision.rfq.initiatedBy)}</li>
     </ul>
+    ${progressHtml(progress)}
     ${mailLinks(mail)}
     <p class="status ${state.status.tone}">${esc(state.status.text)}</p>
   </div>

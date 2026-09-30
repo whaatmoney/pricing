@@ -4,6 +4,28 @@ import { escapeHtml } from "./render.js";
 // tokens, components, icons and the small script behind copy buttons, the
 // before-you-send checklist and the section tabs.
 
+// Where an RFQ stands: RFQ in -> Priced -> Decided -> Quote sent. Each step
+// is done, current (the first not done) or ahead; a partly done step says so.
+const stepDay = (iso) => (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "");
+const stepEsc = (text) => String(text).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
+export function progressHtml(steps, { compact = false } = {}) {
+  if (!steps?.length) return "";
+  const current = steps.findIndex((step) => !step.done);
+  if (compact) {
+    // One line for a card still waiting: four dots and the current step's name;
+    // every step's date is in the tooltip. The price page keeps the full view.
+    const now = steps[current] || steps.at(-1);
+    const title = steps.map((step, index) => `${step.done ? step.label : step.pending || step.label}${step.done && step.at ? ` ${stepDay(step.at)}` : index === current ? " (now)" : ""}`).join(" → ");
+    const dots = steps.map((step, index) => `<span class="mini-dot ${step.done ? "done" : index === current ? `current${step.tone ? ` ${step.tone}` : ""}` : "ahead"}"></span>`).join("");
+    return `<span class="tracker-mini${now.tone && !now.done ? ` ${now.tone}` : ""}" title="${stepEsc(title)}" aria-label="Progress: ${stepEsc(title)}">${dots}<span class="mini-label">${stepEsc(now.done ? now.label : now.pending || now.label)}</span></span>`;
+  }
+  return `<ol class="tracker" aria-label="Progress">${steps.map((step, index) => {
+    const state = step.done ? "done" : index === current ? "current" : "ahead";
+    const label = step.done ? step.label : step.pending || step.label;
+    return `<li class="step ${state}${!step.done && step.tone ? ` ${step.tone}` : ""}"${index === current ? ' aria-current="step"' : ""}><span class="dot" aria-hidden="true"></span><span class="step-label">${stepEsc(label)}</span>${step.done && step.at ? `<span class="step-when">${stepDay(step.at)}</span>` : ""}</li>`;
+  }).join("")}</ol>`;
+}
+
 export const ICON = {
   copy: '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M10.5 5V3.5A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5H5"/></svg>',
   check: '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7"/></svg>',
@@ -87,6 +109,31 @@ code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12p
 .subtitle { font-size:15px; color:var(--ink-2); }
 .meta { list-style:none; margin:var(--s1) 0 0; padding:0; display:flex; flex-wrap:wrap; gap:var(--s2); }
 .meta li { font-size:13px; color:var(--ink-2); background:var(--surface-2); border-radius:999px; padding:2px var(--s3); }
+.tracker { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); }
+.tracker .step { position:relative; display:grid; justify-items:start; gap:2px; padding-top:14px; font-size:12px; color:var(--ink-3); min-width:0; }
+.tracker .step::before { content:""; position:absolute; top:4px; left:0; right:0; height:2px; background:var(--line-2); }
+.tracker .step:first-child::before { left:5px; } .tracker .step:last-child::before { right:auto; width:5px; }
+.tracker .step.done::before { background:var(--ok); }
+.tracker .dot { position:absolute; top:0; left:0; width:10px; height:10px; border-radius:50%; background:var(--surface); border:2px solid var(--line-2); box-sizing:border-box; }
+.tracker .step.done .dot { background:var(--ok); border-color:var(--ok); }
+.tracker .step.current .dot { border-color:var(--ink); box-shadow:0 0 0 3px color-mix(in srgb, var(--ink) 15%, transparent); }
+.tracker .step.current.warn .dot { border-color:var(--warn); box-shadow:0 0 0 3px color-mix(in srgb, var(--warn) 20%, transparent); }
+.tracker .step-label { font-weight:600; color:var(--ink-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; padding-right:var(--s2); }
+.tracker .step.done .step-label { color:var(--ink); }
+.tracker .step.current .step-label { color:var(--ink); }
+.tracker .step.current.warn .step-label { color:var(--warn); }
+.tracker .step.ahead .step-label { color:var(--ink-3); font-weight:500; }
+.tracker .step-when { font-variant-numeric:tabular-nums; }
+.tracker-mini { display:inline-flex; align-items:center; gap:0; font-size:12px; font-weight:600; color:var(--ink-2); padding:1px var(--s2) 1px 0; }
+.tracker-mini .mini-dot { position:relative; width:8px; height:8px; border-radius:50%; border:1.5px solid var(--line-2); background:var(--surface); box-sizing:border-box; margin-right:10px; flex:none; }
+.tracker-mini .mini-dot:not(:last-of-type)::after { content:""; position:absolute; left:100%; top:50%; width:10px; height:1.5px; margin-top:-.75px; margin-left:1px; background:var(--line-2); }
+.tracker-mini .mini-dot.done { background:var(--ok); border-color:var(--ok); }
+.tracker-mini .mini-dot.done::after { background:var(--ok); }
+.tracker-mini .mini-dot.current { border-color:var(--ink); box-shadow:0 0 0 2px color-mix(in srgb, var(--ink) 15%, transparent); }
+.tracker-mini .mini-dot.current.warn { border-color:var(--warn); box-shadow:0 0 0 2px color-mix(in srgb, var(--warn) 20%, transparent); }
+.tracker-mini .mini-dot:last-of-type { margin-right:6px; }
+.tracker-mini .mini-label { margin-left:0; }
+.tracker-mini.warn .mini-label { color:var(--warn); }
 .mail-links { display:flex; flex-wrap:wrap; gap:var(--s2); margin:var(--s1) 0 0; }
 .meta li.late { color:var(--warn); background:var(--warn-bg); font-weight:600; }
 .status { font-size:13px; color:var(--ink-2); margin-top:var(--s2); padding-left:var(--s3); border-left:2px solid var(--line-2); }
@@ -142,8 +189,8 @@ tr.pick td { font-weight:600; }
 /* Mise en place: the checks to do before sending, ticked off in place. */
 .checklist { border-top:1px solid var(--line); padding-top:var(--s5); display:grid; gap:var(--s2); }
 .checklist-head { display:flex; align-items:baseline; justify-content:space-between; gap:var(--s3); margin-bottom:var(--s1); }
-.progress { font-size:12px; font-weight:600; color:var(--ink-3); }
-.progress.complete { color:var(--ok); }
+.tracker { font-size:12px; font-weight:600; color:var(--ink-3); }
+.tracker.complete { color:var(--ok); }
 .check { display:flex; gap:var(--s3); align-items:flex-start; padding:var(--s2) var(--s3); margin:0 calc(-1 * var(--s3)); border-radius:var(--radius-sm); cursor:pointer; transition:background .15s; }
 .check:hover { background:var(--surface-2); }
 .check input { position:absolute; opacity:0; pointer-events:none; }
@@ -217,6 +264,15 @@ export const SCRIPT = `
 (() => {
   const toast = document.querySelector(".toast");
   let toastTimer;
+  // A short confirmation at the bottom of the screen for any action.
+  window.qpcToast = (text) => {
+    if (!toast) return;
+    const label = toast.querySelector("span");
+    if (label) label.textContent = text;
+    toast.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove("show"), 1600);
+  };
   document.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-copy]");
     if (!button) return;
@@ -228,9 +284,7 @@ export const SCRIPT = `
     }
     const label = button.querySelector("span");
     button.classList.add("done"); label.textContent = "Copied";
-    toast.classList.add("show");
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toast.classList.remove("show"), 1600);
+    window.qpcToast("Copied to clipboard");
     setTimeout(() => { button.classList.remove("done"); label.textContent = button.dataset.label; }, 1600);
   });
 

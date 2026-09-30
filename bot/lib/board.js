@@ -3,7 +3,7 @@ import path from "node:path";
 import { caseConfidence, reasonsText } from "./confidence.js";
 import { lifecyclePath, lifecycleView, readLifecycle } from "./lifecycle.js";
 import { isSameCustomer, partNumberMatch } from "./part-history.js";
-import { ICON, SCRIPT, STYLE } from "./design.js";
+import { ICON, progressHtml, SCRIPT, STYLE } from "./design.js";
 import { displayStatus, escapeHtml } from "./render.js";
 import { readManifest } from "./router-snapshot.js";
 import { priceSource } from "./review-card.js";
@@ -122,7 +122,9 @@ export function monitorLink(decision, queue) {
 // "quoted per ledger; unverified").
 // A customer confirming receipt of the quote also proves it went out
 // ("Customer confirmed quote receipt", "confirmed receipt of the quote").
-const SENT_CLAUSE = /\bquote\s+(?:\w+\s+){0,2}sent\b|\bsent\s+(?:an?\s+|the\s+)?(?:\w+\s+)?quote\b|\bquoted\b|\b(?:confirmed|acknowledged)\s+(?:the\s+)?quote\s+receipt\b|\bquote\s+receipt\s+(?:confirmed|acknowledged)\b|\b(?:confirmed|acknowledged)\s+receipt\s+of\s+(?:the\s+|our\s+)?quote\b/i;
+// So does QPC telling the customer an earlier quote still stands ("Prior quote
+// confirmed valid in customer-facing response").
+const SENT_CLAUSE = /\bquote\s+(?:\w+\s+){0,2}sent\b|\bsent\s+(?:an?\s+|the\s+)?(?:\w+\s+)?quote\b|\bquoted\b|\b(?:confirmed|acknowledged)\s+(?:the\s+)?quote\s+receipt\b|\bquote\s+receipt\s+(?:confirmed|acknowledged)\b|\b(?:confirmed|acknowledged)\s+receipt\s+of\s+(?:the\s+|our\s+)?quote\b|\bquote\s+confirmed\s+valid\s+in\s+customer-facing\b/i;
 const DOUBT = /\b(?:not|no|never|unverified|unconfirmed|provisional|pending|draft|per ledger|will|shall|would|to be|going to|plan|plans|planned|scheduled|tomorrow|later|awaiting)\b/i;
 const BARE_DOUBT = /^(?:still\s+)?(?:unverified|unconfirmed|provisional|not verified|not confirmed)\.?$/i;
 export function quoteSentStatus(status) {
@@ -174,6 +176,34 @@ const domainOf = (address) => String(address || "").toLowerCase().split("@")[1] 
 function readTracker(trackerPath) {
   if (!trackerPath || !fs.existsSync(trackerPath)) return { history: [] };
   return { history: JSON.parse(fs.readFileSync(trackerPath, "utf8")).history || [] };
+}
+
+// When the mail monitor first saw the quote go out: the earliest sent event
+// that reads as a sent quote, else its verified time, else the last activity.
+function sentAt(monitor) {
+  const hit = (monitor?.events || []).filter((event) => !event.is_draft && quoteSentStatus(String(event.meaning || "").split(/[.;]\s/)[0])).sort((a, b) => String(a.at).localeCompare(String(b.at)))[0];
+  return hit?.at || monitor?.quote_sent_verified_at || monitor?.last_observed_activity_at || null;
+}
+
+// When the first page for this RFQ was built (a later version keeps that date).
+function firstBuilt(outputsDir, caseId, version, decision) {
+  if (version <= 1) return decision.generatedAt;
+  const first = path.join(outputsDir, `CLAUDE-DECISION-${caseId}-v1.json`);
+  try { return JSON.parse(fs.readFileSync(first, "utf8")).generatedAt || decision.generatedAt; } catch { return decision.generatedAt; }
+}
+
+// RFQ in -> Priced -> Decided -> Quote sent, with dates, for the card and page.
+export function progressOf({ decision, lines, monitor, sent, firstPricedAt = null }) {
+  const total = lines.length;
+  const priced = lines.filter((line) => line.suggested != null).length;
+  const decided = lines.filter((line) => line.decided && line.decided.choice !== "correction");
+  const lastDecided = decided.map((line) => line.decided.decidedAt).filter(Boolean).sort().at(-1) || null;
+  return [
+    { key: "asked", label: "RFQ in", done: true, at: decision.rfq.initiatedAt || null },
+    { key: "priced", label: "Priced", done: priced === total || decided.length === total, at: firstPricedAt || decision.generatedAt, pending: priced ? `Priced ${priced} of ${total}` : "Needs facts", tone: "warn" },
+    { key: "decided", label: "Decided", done: decided.length === total, at: lastDecided, pending: decided.length ? `Decided ${decided.length} of ${total}` : "Your decision" },
+    { key: "sent", label: "Quote sent", done: Boolean(sent), at: sent ? sentAt(monitor) : null, pending: "Quote sent" },
+  ];
 }
 
 function caseEvents({ caseId, version, decision, lifecycle, monitor, sent }) {
@@ -243,6 +273,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       confidence: (() => { const grade = caseConfidence(decision.lines, view); return { level: grade.level, reasons: reasonsText(grade.weakest) }; })(),
       feedback: lifecycle.entries.filter((entry) => entry.type === "method-review" || entry.choice === "correction").map((entry) => ({ ...entry, caseId })),
       events: caseEvents({ caseId, version, decision, lifecycle, monitor, sent }),
+      get progress() { return progressOf({ decision, lines: this.lines, monitor, sent, firstPricedAt: firstBuilt(outputsDir, caseId, version, decision) }); },
       monitorReference: decision.rfq.monitorReference || null,
       rfqLink: monitor?.evidence_links?.[0] || owaLink(decision.rfq.sourceMessageIds?.[0]),
       latestLink: latestMessageLink(monitor, monitor?.evidence_links?.[0] || owaLink(decision.rfq.sourceMessageIds?.[0])),
@@ -329,7 +360,8 @@ function dueChip(kase, now) {
     if (days === 1) return '<span class="chip warn">Due tomorrow</span>';
     return `<span class="chip muted">Due ${day(kase.dueDate)}</span>`;
   }
-  if (kase.open && kase.waitingBusinessDays >= 3) return `<span class="chip ${kase.waitingBusinessDays >= WAITING_TOO_LONG ? "warn" : "muted"}">${kase.waitingBusinessDays} business days waiting</span>`;
+  // Red is kept for a due date; a long wait gets a quiet orange dot, not a colour.
+  if (kase.open && kase.waitingBusinessDays >= 3) return `<span class="chip muted${kase.waitingBusinessDays >= WAITING_TOO_LONG ? " late" : ""}">${kase.waitingBusinessDays} business days waiting</span>`;
   return "";
 }
 // Soonest due first, then longest waiting.
@@ -376,26 +408,40 @@ function headline(kase, group) {
   return `<div class="headline"><span class="big">${low === high ? usd(low) : `${usd(low)}–${usd(high)}`}</span><span class="sub">${status} · ${lines}</span></div>`;
 }
 
+// The sender's address and the subject, each copied with one click (the card's
+// own link covers the rest of the card, so plain text there can't be selected).
+function mailRow(email) {
+  const chip = (text, shown, title, extra = "") => `<button type="button" class="copy-chip above${extra}" data-copy="${esc(text)}" data-label="${esc(shown)}" title="${esc(title)}">${ICON.copy}<span>${esc(shown)}</span></button>`;
+  const parts = [
+    email?.from ? chip(email.from, email.from, `Copy email address${email.fromName ? ` (${email.fromName})` : ""}`) : "",
+    email?.subject ? chip(email.subject, email.subject, "Copy subject", " subject") : "",
+  ].filter(Boolean);
+  return parts.length ? `<div class="mail-row">${parts.join("")}</div>` : "";
+}
+
 function caseCard(kase, now) {
   const group = caseGroup(kase);
   const notes = [
     kase.monitorAmbiguous.length ? `Monitor link unresolved: ${kase.monitorAmbiguous.length} entries match (${esc(kase.monitorAmbiguous.join("; "))})` : "",
     kase.open && kase.staleSnapshot ? `Priced on ${esc(kase.priceSnapshot)}; newer Router History is in. Ask to rebuild.` : "",
   ].filter(Boolean);
-  const from = kase.email.fromName || kase.email.from;
-  return `<article class="card is-${group}" data-page="${esc(kase.page)}">
+  const open = group === "ready" || group === "facts";
+  return `<article class="card is-${group}" id="case-${esc(kase.caseId)}" data-page="${esc(kase.page)}" data-case="${esc(kase.caseId)}" data-asked="${esc(kase.askedAt || "")}">
     <div class="card-head">
       <div class="card-title">
         <a class="card-link" href="${esc(kase.page)}">${esc(kase.customer)}</a>
         <p class="ref">${esc(kase.reference || kase.caseId)}</p>
-        <p class="marks">${dueChip(kase, now)}<span class="chip muted opened-mark">${ICON.check}Opened</span></p>
+        <p class="marks">${open ? progressHtml(kase.progress, { compact: true }) : ""}${kase.askedAt ? `<span class="chip muted">Asked ${day(kase.askedAt)}</span>` : ""}${dueChip(kase, now)}<span class="chip ok done-mark">${ICON.check}Done</span><span class="chip muted opened-mark">${ICON.check}Opened</span></p>
       </div>
       ${headline(kase, group)}
     </div>
+    ${open ? "" : progressHtml(kase.progress)}
     ${group === "facts" ? `<p class="parts">${partsSummary(kase)}</p>` : linesTable(kase)}
     ${notes.map((note) => `<p class="hint">${ICON.alert}<span>${note}</span></p>`).join("")}
+    ${mailRow(kase.email)}
     <div class="card-foot">
-      <p class="from" title="${esc(kase.email.from || "")}">${from ? `${esc(from)}${kase.email.subject ? ` · “${esc(kase.email.subject)}”` : ""}` : ""}</p>
+      <label class="done-check above"><input type="checkbox" class="done-box" aria-label="Mark ${esc(kase.customer)} done"><span>Done</span></label>
+      <span class="spacer"></span>
       ${kase.rfqLink ? `<a class="btn ghost above" href="${esc(kase.rfqLink)}" target="_blank" rel="noopener">Open RFQ email ${ICON.external}</a>` : ""}
       ${kase.latestLink ? `<a class="btn ghost above" href="${esc(kase.latestLink.href)}" target="_blank" rel="noopener" title="Newest message in the thread${kase.latestLink.actor ? `, from ${esc(kase.latestLink.actor)}` : ""}, ${esc(String(kase.latestLink.at).slice(0, 10))}">Latest reply ${ICON.external}</a>` : ""}
       <span class="go">Price page ${ICON.chevron}</span>
@@ -459,14 +505,15 @@ export function renderBoard(board, { badge = null } = {}) {
   const pill = alerts.length ? ["alert", "Needs attention"] : openCount ? ["warn", `${openCount} waiting on you`] : ["ok", "Nothing waiting"];
   const unpriced = monitor ? monitor.withoutPage : [];
   const today = localDay(now.toISOString());
-  const dated = [...grouped.ready, ...grouped.facts].filter((kase) => kase.dueDate).map((kase) => localDay(kase.dueDate));
-  const pastDue = dated.filter((date) => date < today).length;
-  const dueToday = dated.filter((date) => date === today).length;
+  const dated = [...grouped.ready, ...grouped.facts].filter((kase) => kase.dueDate);
+  const pastDueCases = dated.filter((kase) => localDay(kase.dueDate) < today);
+  const dueTodayCases = dated.filter((kase) => localDay(kase.dueDate) === today);
+  const pastDue = pastDueCases.length, dueToday = dueTodayCases.length;
   const summary = [
     grouped.ready.length ? `<a class="n-ready" href="#ready"><b>${grouped.ready.length}</b> ready for your yes</a>` : "",
     grouped.facts.length ? `<a class="n-facts" href="#facts"><b>${grouped.facts.length}</b> need facts first</a>` : "",
-    pastDue ? `<span class="due-now">${pastDue} past due</span>` : "",
-    dueToday ? `<span class="due-now">${dueToday} due today</span>` : "",
+    pastDue ? `<a class="due-now" href="#case-${esc(pastDueCases[0].caseId)}">${pastDue} past due</a>` : "",
+    dueToday ? `<a class="due-now" href="#case-${esc(dueTodayCases[0].caseId)}">${dueToday} due today</a>` : "",
   ].filter(Boolean).join('<span class="sep">·</span>') || "Nothing waiting on you.";
   const tabs = [["ready", "Ready", grouped.ready.length], ["facts", "Needs facts", grouped.facts.length], ["closed", "Decided & sent", closed.length], ["unpriced", "No page yet", unpriced.length], ["log", "Log", null]]
     .filter(([id, , count]) => count !== 0 && (id !== "unpriced" || monitor));
@@ -496,6 +543,7 @@ ${BOARD_STYLE}
     ${alerts.map((alert) => `<div class="status alert">${esc(alert)}</div>`).join("")}
     <p class="eyebrow">QPC · RFQ pricing</p>
     <h1 class="summary">${summary}</h1>
+    <div class="sortbar" role="group" aria-label="Sort the cards"><span>Sort</span><button type="button" data-sort="urgent" aria-pressed="true">Most urgent</button><button type="button" data-sort="newest" aria-pressed="false">Newest first</button><button type="button" data-sort="oldest" aria-pressed="false">Oldest first</button></div>
   </div>
 
   ${grouped.ready.length ? section("ready", "Ready for your yes", grouped.ready.length, "Each has a suggested price. Click a card to open its price page, then approve it or give yours.", `<div class="cards">${grouped.ready.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
@@ -506,7 +554,7 @@ ${BOARD_STYLE}
 
   ${closed.length ? section("closed", "Decided & sent", closed.length, "", `<details class="fold"><summary>${ICON.chevron}<h3>Show ${closed.length}</h3></summary><div class="cards">${closed.map((kase) => caseCard(kase, now)).join("")}</div></details>`) : ""}
 
-  ${monitor && unpriced.length ? section("unpriced", "No price page yet", unpriced.length, "Open in the mail monitor with no page here. The RFQ Pricing list tracks them; ask Claude to price any of them.", `${monitorTable(unpriced.filter((item) => item.pricing), "Status mentions a quote, RFQ or inquiry")}${monitorTable(unpriced.filter((item) => !item.pricing), "Status doesn't say (may be a follow-up or an RFQ)")}`) : ""}
+  ${monitor && unpriced.length ? section("unpriced", "No price page yet", unpriced.length, "Open in the mail monitor with no page here; ask Claude to price any of them.", `${monitorTable(unpriced.filter((item) => item.pricing), "Status mentions a quote, RFQ or inquiry")}${monitorTable(unpriced.filter((item) => !item.pricing), "Status doesn't say (may be a follow-up or an RFQ)")}`) : ""}
 
   <section id="log" class="group" aria-labelledby="log-title">
     <div class="group-head"><h2 id="log-title">Log</h2></div>
@@ -519,6 +567,7 @@ ${BOARD_STYLE}
     <br>Private working file · keep inside QPC</span>
   </footer>
 </main>
+<div class="toast" role="status" aria-live="polite">${ICON.check}<span>Copied to clipboard</span></div>
 <script>
 // Checked when the page is opened, so a board nothing has rebuilt still says so.
 (() => {
@@ -547,6 +596,47 @@ ${SCRIPT}
   });
   mark();
 })();
+// Done marks and the sort order are this viewer's own, kept in this browser
+// by RFQ (so a rebuilt page keeps them). Done cards sink to the bottom of their
+// group. The board reads the same without them.
+(() => {
+  const read = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key) || "null") ?? fallback; } catch { return fallback; } };
+  const write = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
+  const DONE = "qpc-board-notes", SORT = "qpc-board-sort";
+  const marks = read(DONE, {});
+  let sort = read(SORT, "urgent");
+  const cards = [...document.querySelectorAll(".card[data-case]")];
+  cards.forEach((card, index) => { card.dataset.order = index; });
+  const byAsked = (a, b) => (a.dataset.asked || "").localeCompare(b.dataset.asked || "");
+  const order = { urgent: (a, b) => a.dataset.order - b.dataset.order, newest: (a, b) => byAsked(b, a), oldest: byAsked };
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Cards glide to their new place (first/last/invert/play) so the eye can follow.
+  const arrange = (animate = true) => {
+    const before = new Map(cards.map((card) => [card, card.getBoundingClientRect().top]));
+    for (const list of document.querySelectorAll(".cards")) {
+      const items = [...list.children].filter((el) => el.matches(".card"));
+      items.sort((a, b) => a.classList.contains("done") - b.classList.contains("done") || (order[sort] || order.urgent)(a, b) || a.dataset.order - b.dataset.order);
+      items.forEach((el) => list.appendChild(el));
+    }
+    if (animate && !still) for (const card of cards) {
+      const moved = before.get(card) - card.getBoundingClientRect().top;
+      if (Math.abs(moved) > 1 && card.offsetParent) card.animate([{ transform: "translateY(" + moved + "px)" }, { transform: "none" }], { duration: 260, easing: "cubic-bezier(.2,.7,.2,1)" });
+    }
+    document.querySelectorAll(".sortbar button").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.sort === sort)));
+  };
+  for (const card of cards) {
+    const id = card.dataset.case, box = card.querySelector(".done-box");
+    const show = () => { card.classList.toggle("done", Boolean(marks[id]?.done)); box.checked = Boolean(marks[id]?.done); };
+    box.addEventListener("change", () => {
+      if (box.checked) marks[id] = { done: true, at: new Date().toISOString() }; else delete marks[id];
+      write(DONE, marks); show(); arrange();
+      window.qpcToast?.(box.checked ? "Marked " + (card.querySelector(".card-link")?.textContent || "RFQ") + " done" : "Moved back to waiting");
+    });
+    show();
+  }
+  document.querySelectorAll(".sortbar button").forEach((button) => button.addEventListener("click", () => { sort = button.dataset.sort; write(SORT, sort); arrange(); }));
+  arrange(false);
+})();
 </script>
 </body>
 </html>`;
@@ -572,7 +662,12 @@ h1.summary { font-size:24px; font-weight:650; letter-spacing:-.02em; line-height
 h1.summary a { color:var(--ink); text-decoration:none; border-bottom:1px solid var(--line-2); transition:border-color .15s; }
 h1.summary a:hover { border-bottom-color:currentColor; }
 h1.summary .n-ready b { color:var(--gold-text); } h1.summary .n-facts b { color:var(--warn); }
-h1.summary .due-now { color:var(--alert); }
+h1.summary .due-now { color:var(--alert); border-bottom-color:color-mix(in srgb, var(--alert) 40%, transparent); }
+.chip.late::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--warn); }
+.card { scroll-margin-top:120px; }
+.card:target { animation:card-flash 1.6s ease-out; }
+@keyframes card-flash { 0%, 30% { border-color:var(--alert); box-shadow:0 0 0 3px color-mix(in srgb, var(--alert) 25%, transparent); } 100% { box-shadow:0 0 0 0 transparent; } }
+@media (prefers-reduced-motion: reduce) { .card:target { animation:none; border-color:var(--alert); } }
 h1.summary .sep { color:var(--line-2); font-weight:400; }
 
 .group { display:grid; gap:var(--s3); }
@@ -583,7 +678,7 @@ h1.summary .sep { color:var(--line-2); font-weight:400; }
 .fold .cards { margin-top:var(--s1); }
 
 /* A card is one link to its price page; only the email button sits above it. */
-.card { position:relative; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:var(--s4) var(--s5); display:grid; gap:var(--s3); transition:background .15s, border-color .15s, transform .15s; }
+.card { min-width:0; position:relative; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:var(--s4) var(--s5); display:grid; gap:var(--s3); transition:background .15s, border-color .15s, transform .15s; }
 .card::before { content:""; position:absolute; left:-1px; top:var(--s3); bottom:var(--s3); width:3px; border-radius:0 3px 3px 0; background:var(--bar, var(--line-2)); }
 .card.is-ready { --bar:var(--gold); } .card.is-facts { --bar:var(--warn); } .card.is-sent, .card.is-decided { --bar:var(--ok); }
 .card:hover { background:var(--hover); border-color:var(--line-2); transform:translateY(-1px); }
@@ -612,12 +707,30 @@ table.lines { table-layout:fixed; margin:0; }
 .lines tr.more td { color:var(--ink-3); font-size:12px; border-bottom:0; }
 .parts { font-size:13px; color:var(--ink-2); }
 
-.card-foot { display:flex; align-items:center; gap:var(--s3); }
-.card-foot .from { flex:1; min-width:0; font-size:12px; color:var(--ink-3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.card-foot { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s2) var(--s3); }
 .go { display:inline-flex; align-items:center; gap:var(--s1); font-size:13px; font-weight:600; color:var(--ink-3); transition:color .15s; }
 .go .chevron { transition:transform .15s; }
 .card:hover .go { color:var(--ink); } .card:hover .go .chevron { transform:translateX(2px); }
 a.btn { text-decoration:none; }
+.done-check { display:inline-flex; align-items:center; gap:var(--s2); font-size:13px; font-weight:600; color:var(--ink-2); cursor:pointer; flex:none; }
+.done-check input { width:16px; height:16px; margin:0; accent-color:var(--ok); cursor:pointer; }
+.mail-row { display:flex; flex-wrap:wrap; gap:var(--s2); min-width:0; }
+.copy-chip { display:inline-flex; align-items:center; gap:var(--s1); max-width:100%; min-width:0; font:500 12px/20px var(--font); color:var(--ink-2); background:transparent; border:1px solid var(--line); border-radius:999px; padding:1px var(--s2); cursor:copy; transition:background .15s, border-color .15s, color .15s; }
+.copy-chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.copy-chip.subject { max-width:min(100%, 460px); }
+.copy-chip:hover { color:var(--ink); background:var(--surface-2); border-color:var(--line-2); }
+.copy-chip:active { transform:scale(.98); }
+.copy-chip:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+.copy-chip.done { color:var(--ok); border-color:var(--ok); }
+.copy-chip .icon { flex:none; }
+.card-foot .spacer { flex:1; }
+.done-mark { display:none; } .card.done .done-mark { display:inline-flex; }
+.card.done { opacity:.6; } .card.done:hover, .card.done:focus-within { opacity:1; }
+.sortbar { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s2); margin-top:var(--s3); font-size:13px; color:var(--ink-3); }
+.sortbar button { font:600 13px/20px var(--font); padding:2px var(--s3); border-radius:999px; border:1px solid var(--line-2); background:transparent; color:var(--ink-2); cursor:pointer; }
+.sortbar button:hover { color:var(--ink); background:var(--surface-2); }
+.sortbar button[aria-pressed="true"] { background:var(--ink); color:var(--surface); border-color:var(--ink); }
+.sortbar button:focus-visible, .done-check input:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
 
 td.date { white-space:nowrap; } td.date .why-not { white-space:normal; }
 table.queue td.status-cell { min-width:220px; }
@@ -636,7 +749,6 @@ table.queue td.status-cell { min-width:220px; }
   .card-head { flex-direction:column; gap:var(--s2); }
   .headline { justify-items:start; text-align:left; }
   .card-foot { flex-wrap:wrap; }
-  .card-foot .from { flex-basis:100%; white-space:normal; }
 }
 `;
 

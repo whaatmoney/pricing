@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { buildBoard, caseGroup, latestMessageLink, mirrorPages, monitorLink, quoteSentStatus, readBrandBadge, renderBoard, writeBoard } from "../../bot/lib/board.js";
+import { progressHtml } from "../../bot/lib/design.js";
+import { buildBoard, caseGroup, latestMessageLink, mirrorPages, monitorLink, progressOf, quoteSentStatus, readBrandBadge, renderBoard, writeBoard } from "../../bot/lib/board.js";
 import { buildDecision } from "../../bot/lib/decision.js";
 import { readManifest } from "../../bot/lib/router-snapshot.js";
 import { isCloudOnly, readLastSync, runSync } from "../../bot/lib/sync.js";
@@ -42,6 +43,12 @@ test("a case leaves the waiting list only when the monitor's status says a quote
   assert.equal(po.state, "Waiting on you");
   assert.match(html, /href="RFQ-CHECK-2026-09-28-0300\.md"/);
   assert.match(html, /<th>Company · reference<\/th><th>Sender<\/th><th>Email subject<\/th>/);
+  assert.match(html, /<article class="card [^"]+" id="case-[^"]+" data-page="[^"]+" data-case="[^"]+" data-asked="\d{4}-\d{2}-\d{2}/, "cards carry an anchor, the RFQ id and the ask date");
+  assert.doesNotMatch(html, /<ol class="tracker"[\s\S]*?<\/article>[\s\S]*id="ready"/, "no full tracker before the open groups");
+  assert.match(html, /class="done-box"/);
+  assert.doesNotMatch(html, /note-box|note-toggle/, "no notes on the board");
+  assert.match(html, /class="toast"/, "copy feedback has a toast to show");
+  assert.match(html, /data-sort="newest"[^>]*>Newest first/);
 });
 
 test("sync imports a new weekly export, flags cases priced on the older one, and never rebuilds a recommendation", () => {
@@ -128,11 +135,30 @@ test("the board links the newest sent or received message in the thread, never a
   assert.equal(latestMessageLink(null, "L1"), null);
 });
 
+test("progress runs RFQ in -> Priced -> Decided -> Quote sent, with partial steps named", () => {
+  const decision = { rfq: { initiatedAt: "2026-09-01T10:00:00Z" }, generatedAt: "2026-09-02T10:00:00Z" };
+  const line = (suggested, decided = null) => ({ suggested, decided });
+  const labels = (steps) => steps.map((step) => (step.done ? step.label : `(${step.pending})`)).join(" > ");
+  assert.equal(labels(progressOf({ decision, lines: [line(null), line(null)], sent: false })), "RFQ in > (Needs facts) > (Your decision) > (Quote sent)");
+  assert.equal(labels(progressOf({ decision, lines: [line(8), line(null)], sent: false })), "RFQ in > (Priced 1 of 2) > (Your decision) > (Quote sent)");
+  const approved = { choice: "approved", unitPrice: 8, decidedAt: "2026-09-03T10:00:00Z" };
+  const steps = progressOf({ decision, lines: [line(8, approved), line(9)], sent: false });
+  assert.equal(labels(steps), "RFQ in > Priced > (Decided 1 of 2) > (Quote sent)");
+  const monitor = { events: [{ at: "2026-09-04T10:00:00Z", meaning: "Draft ready" , is_draft: true }, { at: "2026-09-05T10:00:00Z", meaning: "Quote sent; waiting on customer" }], last_observed_activity_at: "2026-09-09T10:00:00Z" };
+  const done = progressOf({ decision, lines: [line(8, approved), line(null, { ...approved, decidedAt: "2026-09-04T10:00:00Z" })], monitor, sent: true });
+  assert.equal(labels(done), "RFQ in > Priced > Decided > Quote sent");
+  assert.deepEqual(done.map((step) => step.at), ["2026-09-01T10:00:00Z", "2026-09-02T10:00:00Z", "2026-09-04T10:00:00Z", "2026-09-05T10:00:00Z"]);
+  const mini = progressHtml(progressOf({ decision, lines: [line(null)], sent: false }), { compact: true });
+  assert.match(mini, /<span class="tracker-mini warn" title="RFQ in [^"]+ → Needs facts \(now\) → Your decision → Quote sent"/, "the compact tracker names every step in its tooltip");
+  assert.match(mini, /<span class="mini-label">Needs facts<\/span>/);
+  assert.equal((mini.match(/mini-dot/g) || []).length, 4);
+});
+
 test("only status wording that plainly says a quote went out counts as sent", () => {
-  for (const status of ["Quote sent; waiting on customer", "Quote already sent; internal part identification added", "Pat sent estimated quote; waiting on customer", "Sam sent quote attachment; contents unverified", "Quote sent; attachment scope unverified", "Sam quote sent; customer thanked QPC", "Customer confirmed quote receipt", "Customer confirmed receipt of the quote", "Quote receipt acknowledged by buyer"]) {
+  for (const status of ["Quote sent; waiting on customer", "Quote already sent; internal part identification added", "Pat sent estimated quote; waiting on customer", "Sam sent quote attachment; contents unverified", "Quote sent; attachment scope unverified", "Sam quote sent; customer thanked QPC", "Customer confirmed quote receipt", "Customer confirmed receipt of the quote", "Quote receipt acknowledged by buyer", "Prior quote confirmed valid in customer-facing response"]) {
     assert.equal(quoteSentStatus(status), true, status);
   }
-  for (const status of ["not quoted", "quoted per ledger; unverified", "Quote sent; unverified", "Quote will be sent tomorrow", "Quote to be sent after approval", "Quote scheduled to be sent Monday", "Awaiting approval before quote sent", "Customer PO received and acknowledged", "QPC reports ready for pickup September25 13:30", "Draft quote prepared", "Customer has not confirmed quote receipt", "Quote receipt unconfirmed", "Customer confirmed PO receipt", "Receipt reported; ECD October8", "", null]) {
+  for (const status of ["not quoted", "quoted per ledger; unverified", "Quote sent; unverified", "Quote will be sent tomorrow", "Quote to be sent after approval", "Quote scheduled to be sent Monday", "Awaiting approval before quote sent", "Customer PO received and acknowledged", "QPC reports ready for pickup September25 13:30", "Draft quote prepared", "Customer has not confirmed quote receipt", "Quote receipt unconfirmed", "Customer confirmed PO receipt", "Prior quote not confirmed valid in customer-facing response", "Quote confirmed valid internally", "Receipt reported; ECD October8", "", null]) {
     assert.equal(quoteSentStatus(status), false, String(status));
   }
 });
