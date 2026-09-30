@@ -9,7 +9,7 @@ import { buildDecision, loadMessages } from "./lib/decision.js";
 import { customerJobs } from "./lib/job-numbers.js";
 import { lifecyclePath, lifecycleView, readLifecycle, recordDecision } from "./lib/lifecycle.js";
 import { readSentQuote, sentQuoteNote } from "./lib/sent-quote.js";
-import { renderHtml, renderMarkdown } from "./lib/render.js";
+import { refreshPages, writePage } from "./lib/pages.js";
 import { DEFAULT_LIMITS, importSnapshot, listExports, loadSnapshotRecords, snapshotStatus } from "./lib/router-snapshot.js";
 import { nextVersion, versionsOf } from "./lib/versioning.js";
 
@@ -58,23 +58,16 @@ function printImport(result) {
   if (result.summary) console.log(`  rows ${result.summary.rows}, received ${result.summary.receivedMin}…${result.summary.receivedMax}, blank dates ${result.summary.blankDates}, repeated occurrences ${result.summary.repeatedSharedOccurrences}`);
 }
 
-// Pages are rendered from the saved record plus its lifecycle file, so a
-// recorded decision shows without rebuilding (or changing) the record itself.
 // The quote text follows the reviewer's own RFQ response template, kept in
 // private config (config.quoteTemplate) because it carries company terms.
+const readQuoteTemplate = (config) => (config.quoteTemplate ? fs.readFileSync(config.quoteTemplate, "utf8") : null);
 function renderVersion(config, caseId, version) {
-  const { outputsDir } = config;
-  const base = path.join(outputsDir, `CLAUDE-DECISION-${caseId}-v${version}`);
-  const decision = readJson(`${base}.json`);
-  const lifecycle = readLifecycle(lifecyclePath(outputsDir, caseId), caseId);
-  const quoteTemplate = config.quoteTemplate ? fs.readFileSync(config.quoteTemplate, "utf8") : null;
-  fs.writeFileSync(`${base}.md`, renderMarkdown(decision, { lifecycle, quoteTemplate }));
-  fs.writeFileSync(`${base}.html`, renderHtml(decision, { lifecycle, quoteTemplate }));
-  return base;
+  return writePage({ outputsDir: config.outputsDir, caseId, version, quoteTemplate: readQuoteTemplate(config) }).base;
 }
 
 function refreshBoard(config) {
   const { file, board } = writeBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, lastSync: readLastSync(config), trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null });
+  refreshPages({ outputsDir: config.outputsDir, board, quoteTemplate: readQuoteTemplate(config) });
   let mirrored = "";
   if (config.pagesMirror) {
     try {

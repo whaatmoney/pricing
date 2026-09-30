@@ -59,6 +59,10 @@ test("a case takes its weakest line's grade, and the page and Markdown show it w
   assert.match(html, /<span class="chip alert">Confidence: Low<\/span>/);
   assert.match(html, /Weakest line: L3\./);
   assert.match(html, /<a class="back" href="CLAUDE-DECISIONS-OPEN\.html"[^>]*>.*All RFQs/, "every price page links back to the board");
+  assert.doesNotMatch(html, /class="mail-links"/, "no email buttons without links");
+  const linked = renderHtml(v1, { mail: { rfq: "https://mail.example/rfq", latest: { href: "https://mail.example/reply", at: "2026-09-03T10:00:00Z", actor: "pat@shop.example" } } });
+  assert.match(linked, /href="https:\/\/mail\.example\/rfq"[^>]*>Open RFQ email/);
+  assert.match(linked, /href="https:\/\/mail\.example\/reply"[^>]*title="Newest message in the thread, from pat@shop\.example, 2026-09-03">Latest reply/);
   assert.match(renderMarkdown(v1), /\*\*Confidence: Low\*\* — /);
 });
 

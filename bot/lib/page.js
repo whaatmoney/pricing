@@ -271,7 +271,14 @@ function evidenceSection(decision, groups) {
   </section>`;
 }
 
-export function renderHtml(decision, { lifecycle, now = new Date(), quoteTemplate = null } = {}) {
+// The RFQ email and the newest message in its thread, as the board links them.
+function mailLinks(mail) {
+  if (!mail?.rfq && !mail?.latest) return "";
+  const latest = mail.latest ? `<a class="btn ghost" href="${esc(mail.latest.href)}" target="_blank" rel="noopener" title="Newest message in the thread${mail.latest.actor ? `, from ${esc(mail.latest.actor)}` : ""}, ${esc(String(mail.latest.at).slice(0, 10))}">Latest reply ${ICON.external}</a>` : "";
+  return `<p class="mail-links">${mail.rfq ? `<a class="btn ghost" href="${esc(mail.rfq)}" target="_blank" rel="noopener">Open RFQ email ${ICON.external}</a>` : ""}${latest}</p>`;
+}
+
+export function renderHtml(decision, { lifecycle, now = new Date(), quoteTemplate = null, mail = null } = {}) {
   const view = lifecycleView(decision, lifecycle);
   const state = stateOf(decision, view);
   const groups = groupLines(decision.lines);
@@ -310,6 +317,7 @@ ${PAGE_STYLE}
       ${waiting != null ? `<li class="${waiting >= 2 ? "late" : ""}">${waiting} business day${waiting === 1 ? "" : "s"} waiting</li>` : ""}
       <li>From ${esc(decision.rfq.initiatedBy)}</li>
     </ul>
+    ${mailLinks(mail)}
     <p class="status ${state.status.tone}">${esc(state.status.text)}</p>
   </div>
   ${quoteSection(decision, view, groups, quote, state)}

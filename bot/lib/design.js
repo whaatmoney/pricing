@@ -87,6 +87,7 @@ code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12p
 .subtitle { font-size:15px; color:var(--ink-2); }
 .meta { list-style:none; margin:var(--s1) 0 0; padding:0; display:flex; flex-wrap:wrap; gap:var(--s2); }
 .meta li { font-size:13px; color:var(--ink-2); background:var(--surface-2); border-radius:999px; padding:2px var(--s3); }
+.mail-links { display:flex; flex-wrap:wrap; gap:var(--s2); margin:var(--s1) 0 0; }
 .meta li.late { color:var(--warn); background:var(--warn-bg); font-weight:600; }
 .status { font-size:13px; color:var(--ink-2); margin-top:var(--s2); padding-left:var(--s3); border-left:2px solid var(--line-2); }
 .status.ok { border-left-color:var(--ok); } .status.warn { border-left-color:var(--warn); } .status.alert { border-left-color:var(--alert); color:var(--alert); }
