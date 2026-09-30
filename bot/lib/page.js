@@ -1,7 +1,7 @@
 import { BOARD_FILE, businessDaysSince } from "./board.js";
 import { lifecycleView } from "./lifecycle.js";
 import { describeDecision, describeReview, displayStatus, escapeHtml, sizeText, STATUS_LABEL, summarizeLine, whyNot } from "./render.js";
-import { answerLines, approveAllLine, assumptions, methodPath, poTotal, quoteSummary, reviewCard } from "./review-card.js";
+import { answerLines, approveAllLine, assumptions, methodPath, poTotal, pricedEnvelope, quoteSummary, reviewCard } from "./review-card.js";
 import { caseConfidence, reasonsText } from "./confidence.js";
 import { copyButton, ICON, progressHtml, SCRIPT as PAGE_SCRIPT, STYLE as PAGE_STYLE } from "./design.js";
 
@@ -99,6 +99,24 @@ function story(group, decision) {
   return steps;
 }
 
+// The part's size, up front where the price is decided: the L x W x H the
+// volume method priced, the size, weight and complexity classes it used, and
+// the print's own wording. An inferred or missing size says so.
+const inches = (value) => String(Number(Number(value).toFixed(4)));
+function sizeFact(line) {
+  const calc = line.calculations || {};
+  const envelope = pricedEnvelope(calc);
+  const parts = calc.onlineCalculator?.components || {};
+  const drawn = line.request.drawing?.dimensions;
+  const drawnText = drawn?.summary || (drawn?.maxOdAfterCoating != null ? sizeText(drawn) : null);
+  const inferred = /\b(?:inferred|assumed|estimated|approx\w*|about)\b/i.test(drawnText || "") || (calc.sq2?.flags || []).some((flag) => String(flag).startsWith("DIM:"));
+  const classes = [parts.sizeKey, parts.weightKey, parts.complexityKey ? `${parts.complexityKey} complexity` : null].filter(Boolean);
+  const main = envelope
+    ? `<span class="dims">${envelope.map(inches).join(" × ")}<small> in</small></span><span class="dims-key">L × W × H priced${inferred ? ' · <span class="chip warn">inferred, confirm on the print</span>' : ""}</span>`
+    : `<span class="dims unknown">Size unknown</span><span class="dims-key">Needed to price. Read it off the drawing or ask the customer.</span>`;
+  return `<div class="size-fact"><dt>Size</dt><dd>${main}${classes.length ? `<span class="size-classes">${classes.map((item) => `<span class="chip muted">${esc(item)}</span>`).join("")}</span>` : ""}${drawnText ? `<span class="print-note">Print: ${esc(drawnText)}${drawn.source ? ` <span class="muted">· ${esc(drawn.source)}</span>` : ""}</span>` : ""}</dd></div>`;
+}
+
 function quoteSection(decision, view, groups, quote, state) {
   const byLine = new Map(quote.entries.map((entry) => [entry.lineId, entry]));
   const po = poTotal(decision, view);
@@ -119,6 +137,8 @@ function quoteSection(decision, view, groups, quote, state) {
     return `<div class="quote-part">
       <dl class="facts">
         <div><dt>P/N</dt><dd class="strong">${esc(request.partNumber)}${request.revision && request.revision !== "-" ? ` Rev. ${esc(request.revision)}` : ""}</dd></div>
+        ${sizeFact(group[0])}
+        ${request.material?.value ? `<div><dt>Material</dt><dd>${esc(request.material.value)}</dd></div>` : ""}
         <div><dt>Process</dt><dd>${esc(request.process.verbatim)}</dd></div>
       </dl>
       <div class="scroll"><table class="tiers"><thead><tr><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Total</th><th class="col-state">State</th></tr></thead><tbody>${rows}</tbody></table></div>

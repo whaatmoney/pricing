@@ -154,6 +154,14 @@ code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12p
 .facts > div { display:grid; grid-template-columns:120px minmax(0,1fr); gap:var(--s4); }
 .facts dt { font-size:12px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-3); padding-top:2px; }
 .facts dd { margin:0; min-width:0; overflow-wrap:anywhere; }
+.size-fact dd { display:grid; gap:var(--s1); justify-items:start; }
+.size-fact .dims { font-size:24px; font-weight:700; letter-spacing:-.02em; line-height:1.2; color:var(--ink); font-variant-numeric:tabular-nums; }
+.size-fact .dims small { font-size:15px; font-weight:600; color:var(--ink-2); letter-spacing:0; }
+.size-fact .dims.unknown { font-size:17px; color:var(--warn); }
+.size-fact .dims-key { display:inline-flex; flex-wrap:wrap; align-items:center; gap:var(--s2); font-size:12px; color:var(--ink-3); }
+.size-fact .size-classes { display:flex; flex-wrap:wrap; gap:var(--s1) var(--s2); margin-top:var(--s1); }
+.size-fact .print-note { font-size:13px; color:var(--ink-2); line-height:1.5; }
+.size-fact .print-note .muted { font-size:12px; color:var(--ink-3); }
 .facts .source { display:block; font-size:12px; color:var(--ink-3); margin-top:2px; }
 .card.facts { background:var(--surface-2); border-radius:var(--radius-sm); padding:var(--s4); margin-top:var(--s3); }
 
