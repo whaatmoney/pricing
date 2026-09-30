@@ -53,8 +53,8 @@ test("scope comparison separates stated differences from facts not stated", () =
   assert.deepEqual(compareScope(scopeFlags("LEVEL 300R4 NOT FOR OXYGEN SERVICE"), "B", line), { comparable: true, differences: [], unknown: [] });
   assert.equal(compareScope(scopeFlags("LEVEL 300R4 FOR OXYGEN SERVICE"), "B", line).comparable, false);
   assert.deepEqual(compareScope(scopeFlags("LEVEL 100 NOT FOR OXYGEN SERVICE"), "B", line).differences, ["level 100 vs 300R4"]);
-  assert.deepEqual(compareScope(scopeFlags("LEVEL 300R4 NOT FOR OXYGEN SERVICE"), "C", line).differences, ["revision C vs B"]);
-  assert.deepEqual(compareScope(scopeFlags("LEVEL 300R4"), null, line).unknown, ["revision not stated", "oxygen service not stated"]);
+  assert.deepEqual(compareScope(scopeFlags("LEVEL 300R4 NOT FOR OXYGEN SERVICE"), "C", line), { comparable: true, differences: [], unknown: [] }, "another revision is the same part");
+  assert.deepEqual(compareScope(scopeFlags("LEVEL 300R4"), null, line).unknown, ["oxygen service not stated"], "an unstated revision is not a gap");
 });
 
 test("another customer's record for the same P/N is kept apart", () => {

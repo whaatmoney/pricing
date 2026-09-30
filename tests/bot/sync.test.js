@@ -75,11 +75,11 @@ test("sync imports a new weekly export, flags cases priced on the older one, and
   assert.equal(fs.readFileSync(config.syncLog, "utf8").trim().split("\n").length, 2);
 });
 
-test("a page links to a monitor entry only on customer, full part number and revision, and never guesses between two", () => {
+test("a page links to a monitor entry on customer and full part number whatever the revision, and never guesses between two", () => {
   const entry = (customer, reference, evidence = ["rfq"]) => ({ customer, reference, priority_section: 1, status: "RFQ chased", evidence_ids: evidence });
   assert.equal(boardFor([entry("Acme Precision Corp", "77 / ABC-100 Rev B")]).cases[0].monitor.reference, "77 / ABC-100 Rev B");
   assert.equal(boardFor([entry("Other Aerospace", "77 / ABC-100 Rev B")]).cases[0].monitor, null);
-  assert.equal(boardFor([entry("Acme Precision Corp", "77 / ABC-100 Rev C")]).cases[0].monitor, null);
+  assert.equal(boardFor([entry("Acme Precision Corp", "77 / ABC-100 Rev C")]).cases[0].monitor.reference, "77 / ABC-100 Rev C", "revision is not compared");
   assert.equal(boardFor([entry("Acme Precision Corp", "77 / ABC-10")]).cases[0].monitor, null);
   assert.equal(boardFor([entry("Acme Precision Corp", "77 / ABC-1000")]).cases[0].monitor, null);
   assert.equal(boardFor([entry("Acme Precision Corp", "77 / ABC-100-1 Rev B")]).cases[0].monitor, null);

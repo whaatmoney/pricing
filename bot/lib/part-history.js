@@ -138,13 +138,12 @@ export function classifyRecord(record, scope) {
   return { category: "ordinary", reason: "" };
 }
 
+// Revision is not compared (ruling revision-irrelevant-v1): a part number
+// match is a match whatever revision either side states. The record's
+// revision is still read and shown, never used.
 export function compareScope(recordScope, recordRevision, line) {
   const differences = [];
   const unknown = [];
-  if (line.revision) {
-    if (!recordRevision) unknown.push("revision not stated");
-    else if (recordRevision !== line.revision.toUpperCase()) differences.push(`revision ${recordRevision} vs ${line.revision}`);
-  }
   if (line.scope?.oxygen) {
     if (!recordScope.oxygen) unknown.push("oxygen service not stated");
     else if (recordScope.oxygen !== line.scope.oxygen) differences.push(`oxygen service: ${recordScope.oxygen} vs requested ${line.scope.oxygen}`);

@@ -30,9 +30,9 @@ test("another customer's record and a longer part token never enter the history"
   assert.equal(byEvidence(l1, "5003WA").length, 0);
 });
 
-test("changed revision, changed process, oxygen scope and returned work are shown but not used", () => {
-  assert.equal(byEvidence(l1, "3001WA")[0].status, "different");
-  assert.deepEqual(byEvidence(l1, "3001WA")[0].differences, ["revision C vs B"]);
+test("a changed revision is the same part; changed process, oxygen scope and returned work are shown but not used", () => {
+  assert.notEqual(byEvidence(l1, "3001WA")[0].status, "different", "revision is never compared (ruling revision-irrelevant-v1)");
+  assert.deepEqual(byEvidence(l1, "3001WA")[0].differences || [], []);
   assert.deepEqual(byEvidence(l1, "2001WA")[0].differences, ["level 100 vs 300R4"]);
   assert.equal(byEvidence(l1, "4001WA")[0].status, "different");
   const workOrder = byEvidence(l1, "5001WA");

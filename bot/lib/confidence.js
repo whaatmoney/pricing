@@ -32,7 +32,7 @@ export function lineConfidence(line, { recorded = null } = {}) {
   const repeatLed = rec.preferred.basis.startsWith("REPEAT-ACCEPTED");
   const orders = [...new Set(rec.repeatCandidates.map((po) => po.poNumber))];
   if (repeatLed) {
-    add(2, "History", `The customer accepted ${usd(rec.preferred.unitPrice)} on ${orders.length === 1 ? "a PO" : `${orders.length} POs`} for this exact part, revision and scope in the last 12 months.`);
+    add(2, "History", `The customer accepted ${usd(rec.preferred.unitPrice)} on ${orders.length === 1 ? "a PO" : `${orders.length} POs`} for this exact part and scope in the last 12 months.`);
     const jobs = line.history.jobs.filter((job) => rec.repeatCandidates.some((po) => po.poNumber && job.sources.some((source) => source.evidence.startsWith(po.poNumber))));
     if (jobs.length && jobs.every((job) => job.agree)) add(1, "Work orders", "QPC's own work orders for those jobs carry the same price.");
   } else if (rec.preferred.basis.startsWith("PREVIOUS-QUOTE")) {

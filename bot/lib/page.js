@@ -1,6 +1,6 @@
 import { BOARD_FILE, businessDaysSince } from "./board.js";
 import { lifecycleView } from "./lifecycle.js";
-import { describeDecision, describeReview, displayStatus, escapeHtml, sizeText, STATUS_LABEL, summarizeLine, whyNot } from "./render.js";
+import { describeDecision, describeReview, displayStatus, escapeHtml, revSuffix, sizeText, STATUS_LABEL, summarizeLine, whyNot } from "./render.js";
 import { answerLines, approveAllLine, assumptions, methodPath, poTotal, pricedEnvelope, quoteSummary, reviewCard } from "./review-card.js";
 import { caseConfidence, reasonsText } from "./confidence.js";
 import { copyButton, ICON, progressHtml, SCRIPT as PAGE_SCRIPT, STYLE as PAGE_STYLE } from "./design.js";
@@ -23,12 +23,12 @@ const esc = (value) => escapeHtml(value);
 const plain = (text) => String(text).replace(/ \(Price Lab chain \(SQ5, SQ6 pending\)\)/g, " (method price)").replace(/Price Lab chain \(SQ5, SQ6 pending\)/g, "method price");
 
 
-// Lines that describe the same part, revision and process (quantity tiers)
+// Lines that describe the same part and process (quantity tiers)
 // share one story; only what differs per quantity is shown per line.
 function groupLines(lines) {
   const groups = new Map();
   for (const line of lines) {
-    const key = [line.request.partNumber, line.request.revision, line.request.process.verbatim].join("|");
+    const key = [line.request.partNumber, line.request.process.verbatim].join("|");
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(line);
   }
@@ -62,7 +62,7 @@ function story(group, decision) {
   const orders = [...new Set(rec.repeatCandidates.map((po) => po.poNumber))];
   if (orders.length) {
     const po = rec.repeatCandidates[0];
-    steps.push(["History", `${customer} accepted ${usd(po.unitPrice)} on ${orders.length === 1 ? "a PO" : `${orders.length} POs`} in the last 12 months for this exact part, revision and scope (newest ${po.poNumber}, ${po.quantity} pcs, ${day(po.date)}).`]);
+    steps.push(["History", `${customer} accepted ${usd(po.unitPrice)} on ${orders.length === 1 ? "a PO" : `${orders.length} POs`} in the last 12 months for this exact part and scope (newest ${po.poNumber}, ${po.quantity} pcs, ${day(po.date)}).`]);
   } else {
     steps.push(["History", "No accepted price for this part from this customer in the last 12 months."]);
   }
@@ -136,7 +136,7 @@ function quoteSection(decision, view, groups, quote, state) {
     }).join("");
     return `<div class="quote-part">
       <dl class="facts">
-        <div><dt>P/N</dt><dd class="strong">${esc(request.partNumber)}${request.revision && request.revision !== "-" ? ` Rev. ${esc(request.revision)}` : ""}</dd></div>
+        <div><dt>P/N</dt><dd class="strong">${esc(request.partNumber)}${esc(revSuffix(request))}</dd></div>
         ${sizeFact(group[0])}
         ${request.material?.value ? `<div><dt>Material</dt><dd>${esc(request.material.value)}</dd></div>` : ""}
         <div><dt>Process</dt><dd>${esc(request.process.verbatim)}</dd></div>
@@ -186,7 +186,7 @@ function whySection(decision, groups) {
       const card = reviewCard(first, decision).filter((row) => !row.steps).map((row) => `<div><dt>${esc(row.label)}</dt><dd>${esc(row.value)}${row.source ? `<span class="source">${esc(row.source)}</span>` : ""}</dd></div>`).join("");
       const checks = assumptions(first);
       return `<div class="why-group">
-        ${groups.length > 1 ? `<h3>${esc(first.request.partNumber)}${first.request.revision && first.request.revision !== "-" ? ` Rev. ${esc(first.request.revision)}` : ""}</h3>` : ""}
+        ${groups.length > 1 ? `<h3>${esc(first.request.partNumber)}${esc(revSuffix(first.request))}</h3>` : ""}
         <ol class="story">${story(group, decision).map(([tag, text]) => `<li><span class="tag">${esc(tag)}</span><span>${Array.isArray(text) ? text.map((item) => `<span class="result">${esc(item)}</span>`).join("") : esc(text)}</span></li>`).join("")}</ol>
         ${flags.length ? `<div class="callout warn">${ICON.alert}<div><b>Worth knowing</b><ul>${flags.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div></div>` : ""}
         <details class="fold"><summary>${ICON.chevron}Facts and the math behind it</summary>
@@ -306,7 +306,7 @@ export function renderHtml(decision, { lifecycle, now = new Date(), quoteTemplat
   const first = decision.lines[0].request;
   const rfqRef = (decision.rfq.reference || "").match(/RFQ\s*#?\s*\d[\w-]*/i)?.[0] || "Email RFQ";
   const waiting = businessDaysSince(decision.rfq.initiatedAt, now);
-  const title = groups.length === 1 ? `${first.partNumber} Rev. ${first.revision}` : `${groups.length} parts`;
+  const title = groups.length === 1 ? `${first.partNumber}${revSuffix(first)}` : `${groups.length} parts`;
   return `<!doctype html>
 <html lang="en">
 <head>

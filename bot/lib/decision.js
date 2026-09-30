@@ -77,7 +77,7 @@ function withinQuantity(quantity, requested) {
   return quantity != null && Math.abs(quantity - requested) / requested <= 0.25;
 }
 
-// comparable: same customer, part, revision and scope, all stated.
+// comparable: same customer, part and scope, all stated (revision is not compared).
 // unverified: nothing contradicts the request, but a scope fact is not stated.
 // different: a stated fact differs. excluded: returned, credit, zero or blank price.
 function historyEntry(base) {

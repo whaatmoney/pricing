@@ -81,8 +81,8 @@ function shortNameOf(monitorName, customer) {
 // (outputs/RFQ-PRICING-INTEGRATION.md). The customer must match (a shortened
 // monitor name counts only with the exact reference), and then
 // either the case's exact rfq.monitorReference matches, or all of these hold:
-// a full part number (not a longer part) appears in the reference, any
-// revision stated there agrees, any RFQ number the case states appears there,
+// a full part number (not a longer part) appears in the reference (revision
+// is not compared), any RFQ number the case states appears there,
 // and the two sides share a source email (required whenever the case lists
 // its source emails; otherwise the stated RFQ number must agree). More than
 // one candidate is left unresolved rather than guessed.
@@ -100,13 +100,11 @@ export function monitorLink(decision, queue) {
     const caseMessages = new Set((decision.rfq.sourceMessageIds || []).flatMap((id) => [id, id.replace(/_/g, "+")]));
     candidates = sameCustomer.filter((item) => {
       const reference = item.reference || "";
-      const partAndRevision = decision.lines.some((line) => {
+      const samePart = decision.lines.some((line) => {
         const match = partNumberMatch(reference, line.request.partNumber, line.request.aliases || []);
-        if (!match || match.kind === "partial-token") return false;
-        const stated = reference.match(/\brev\.?\s*([A-Z0-9]+)/i)?.[1];
-        return !stated || !line.request.revision || stated.toUpperCase() === String(line.request.revision).toUpperCase();
+        return Boolean(match) && match.kind !== "partial-token";
       });
-      if (!partAndRevision) return false;
+      if (!samePart) return false;
       const tokens = new Set(reference.toUpperCase().split(/[^A-Z0-9-]+/).filter(Boolean));
       const rfqAgrees = caseRfqs.some((number) => tokens.has(number));
       if (caseRfqs.length && !rfqAgrees) return false;

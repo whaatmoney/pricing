@@ -1,6 +1,7 @@
 import { caseConfidence, reasonsText } from "./confidence.js";
 import { lifecycleView } from "./lifecycle.js";
-import { answerLines, approveAllLine, poTotal, quoteSummary, reviewCard } from "./review-card.js";
+import { answerLines, approveAllLine, poTotal, quoteSummary, reviewCard, revSuffix } from "./review-card.js";
+export { revSuffix };
 
 // The HTML review page lives in page.js and the shared design in design.js;
 // this module keeps the Markdown copy and the shared summary.
@@ -86,7 +87,7 @@ export function summarizeLine(line, decision) {
     .sort((a, b) => (b.revision || 0) - (a.revision || 0))
     .map((po) => [po.poNumber, po])).values()];
   if (repeatPos.length) {
-    why.push(`${decision.customer.name.replace(/\.$/, "")} issued ${repeatPos.length === 1 ? "a PO" : `${repeatPos.length} POs`} at ${usd(repeatPos[0].unitPrice)} for this exact part, revision and scope in the last 12 months: ${repeatPos.map((po) => `${po.poNumber} (${po.quantity} pcs, ${day(po.date)})`).join(" and ")}. This request is ${request.quantity} pcs.`);
+    why.push(`${decision.customer.name.replace(/\.$/, "")} issued ${repeatPos.length === 1 ? "a PO" : `${repeatPos.length} POs`} at ${usd(repeatPos[0].unitPrice)} for this exact part and scope in the last 12 months: ${repeatPos.map((po) => `${po.poNumber} (${po.quantity} pcs, ${day(po.date)})`).join(" and ")}. This request is ${request.quantity} pcs.`);
     const matched = repeatPos.map((po) => ({ po, job: history.jobs.find((job) => job.job === po.customerWorkOrder) })).filter((item) => item.job);
     if (matched.length) {
       const text = matched.map(({ po, job }) => {
@@ -180,7 +181,7 @@ export function renderMarkdown(decision, { lifecycle, quoteTemplate = null } = {
     const request = line.request;
     const calc = line.calculations;
     const online = calc.onlineCalculator;
-    out.push("", `## ${line.lineId}: ${request.partNumber} Rev. ${request.revision} × ${request.quantity} ${request.uom}`, "");
+    out.push("", `## ${line.lineId}: ${request.partNumber}${revSuffix(request)} × ${request.quantity} ${request.uom}`, "");
     for (const row of reviewCard(line, decision)) {
       if (row.steps) {
         out.push(`- **${row.label}:**`, ...row.steps.map((step, index) => `  ${index + 1}. ${step}`));

@@ -8,6 +8,10 @@ const usd = (value) => (value == null ? "—" : `$${Number(value).toLocaleString
 const isBlocked = (result) => Boolean(result?.blocked?.length);
 const num = (value, digits) => Number(value).toFixed(digits).replace(/\.?0+$/, "");
 
+// A revision is shown only when the request states a real one (a short code
+// such as "A" or "NC"); it is never used to match anything.
+export const revSuffix = (request) => (/^[A-Z0-9][A-Z0-9.\-]{0,5}$/i.test(String(request?.revision ?? "").trim()) ? ` Rev. ${String(request.revision).trim()}` : "");
+
 // The L x W x H the volume method actually priced, from its own trace.
 export function pricedEnvelope(calc) {
   const raw = (calc.sq2.trace || []).map((step) => step.match(/^Raw volume ([\d.]+) x ([\d.]+) x ([\d.]+)/)).find(Boolean);
@@ -35,9 +39,9 @@ export function methodPath(line) {
   const checked = `${db.sameCustomerExact} work-order and ${inv.sameCustomerExact} invoice records for this customer and part, ${history.email.evidence.length} emails`;
   if (rec.repeatCandidates.length) {
     const po = rec.repeatCandidates[0];
-    steps.push(`History: this customer issued ${rec.repeatCandidates.length === 1 ? "a PO" : `${rec.repeatCandidates.length} POs`} for this exact part, revision and scope in the last 12 months; newest ${po.poNumber}${po.revision ? ` Rev. ${po.revision}` : ""}, ${po.quantity} pcs at ${usd(po.unitPrice)} on ${po.date} (checked ${checked}).`);
+    steps.push(`History: this customer issued ${rec.repeatCandidates.length === 1 ? "a PO" : `${rec.repeatCandidates.length} POs`} for this exact part and scope in the last 12 months; newest ${po.poNumber}${po.revision ? ` Rev. ${po.revision}` : ""}, ${po.quantity} pcs at ${usd(po.unitPrice)} on ${po.date} (checked ${checked}).`);
   } else {
-    steps.push(`History: no accepted PO from this customer for this part, revision and scope in the last 12 months (checked ${checked}).`);
+    steps.push(`History: no accepted PO from this customer for this part and scope in the last 12 months (checked ${checked}).`);
   }
   const sq2 = calc.sq2;
   if (isBlocked(sq2)) {
@@ -97,7 +101,7 @@ export function reviewCard(line, decision) {
   const drawn = request.drawing?.dimensions;
   const drawnText = drawn?.summary || (drawn ? `ø${drawn.maxOdAfterCoating} in max OD after coating × ${drawn.F_max} in thick` : null);
   return [
-    { field: "pn", label: "P/N", value: `${request.partNumber} Rev. ${request.revision}${request.description ? ` — ${request.description}` : ""}`, source: `${decision.customer.name}${decision.rfq.reference ? `, ${decision.rfq.reference}` : ""}` },
+    { field: "pn", label: "P/N", value: `${request.partNumber}${revSuffix(request)}${request.description ? ` — ${request.description}` : ""}`, source: `${decision.customer.name}${decision.rfq.reference ? `, ${decision.rfq.reference}` : ""}` },
     { field: "envelope", label: "Envelope Dimensions", value: envelope ? `${envelope.join(" × ")} in (L × W × H priced)` : "not priced", source: [drawnText ? `print: ${drawnText}` : null, (calc.sq2.flags || []).find((flag) => String(flag).startsWith("DIM:"))].filter(Boolean).join("; ") },
     { field: "qty", label: "Qty", value: `${request.quantity} ${request.uom}${tiers}`, source: "RFQ" },
     { field: "process", label: "Process", value: request.process.verbatim, source: request.process.source },
@@ -192,7 +196,7 @@ export function quoteSummary(decision, view, { template = null } = {}) {
   const groups = new Map();
   for (const item of lines) {
     const { request } = item.line;
-    const key = JSON.stringify([request.partNumber, request.revision, request.process.verbatim, item.unitPrice]);
+    const key = JSON.stringify([request.partNumber, request.process.verbatim, item.unitPrice]);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(item);
   }
@@ -202,7 +206,7 @@ export function quoteSummary(decision, view, { template = null } = {}) {
     const { request } = group[0].line;
     const quantities = group.map((item) => `${item.line.request.quantity}${item.line.request.uom && item.line.request.uom !== "EA" ? ` ${item.line.request.uom}` : ""}`);
     const price = group[0].unitPrice == null ? "not priced" : usd(group[0].unitPrice);
-    const revision = request.revision && request.revision !== "-" ? ` Rev. ${request.revision}` : "";
+    const revision = revSuffix(request);
     return [`P/N: ${request.partNumber}${revision}`, `Qty: ${joinQuantities(quantities)}`, `Unit Price: ${price}`]
       .concat(shared == null ? [`Process: ${request.process.verbatim}`] : []).join("\n");
   });

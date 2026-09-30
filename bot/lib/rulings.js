@@ -39,6 +39,13 @@ export const RULINGS = [
     reason: "If there is a previous quote then it should match that and that should be the suggestion.",
     rule: "When no accepted PO applies, the newest quote QPC sent the same customer for the exact part within 365 days is the suggested price (any quantity; the closest quantity on that quote is used). A quote that differs in scope or oxygen service does not qualify. An accepted PO still leads; the calculator chain is shown beside it.",
   },
+  {
+    id: "revision-irrelevant-v1",
+    date: "2026-09-30",
+    decidedBy: "Quality Manager (pricing owner)",
+    reason: "The rev on the part number does not matter in terms of this pricing. If there is a part number match then it should match; rev is irrelevant.",
+    rule: "Revision is never compared when finding price history or emails for a part: a work order, PO, quote or invoice for the same part number is the same part whatever revision the record or the request states, or whether either states one at all. Process scope, oxygen service and cleanliness level are still compared. This replaces the words \"same revision\" in repeat-accepted-hold-v0-approved and previous-quote-hold-v1.",
+  },
 ];
 
 export const ACTIVE_RULINGS = RULINGS.map((ruling) => ruling.id);
