@@ -293,9 +293,11 @@ function evidenceSection(decision, groups) {
 
 // The RFQ email and the newest message in its thread, as the board links them.
 function mailLinks(mail) {
-  if (!mail?.rfq && !mail?.latest) return "";
+  if (!mail?.rfq && !mail?.latest && !mail?.files) return "";
+  const files = mail.files ? `<a class="btn ghost" href="${esc(mail.files.href)}" target="_blank" rel="noopener" title="${esc(`${mail.files.from}, ${String(mail.files.at).slice(0, 10)}`)}">${ICON.attach}Attachments (${mail.files.names.length}) ${ICON.external}</a>` : "";
+  const list = mail.files ? `<p class="files-list">In ${esc(mail.files.from)}'s email: ${mail.files.names.map((name) => `<b>${esc(name)}</b>`).join(", ")}</p>` : "";
   const latest = mail.latest ? `<a class="btn ghost" href="${esc(mail.latest.href)}" target="_blank" rel="noopener" title="Newest message in the thread${mail.latest.actor ? `, from ${esc(mail.latest.actor)}` : ""}, ${esc(String(mail.latest.at).slice(0, 10))}">Latest reply ${ICON.external}</a>` : "";
-  return `<p class="mail-links">${mail.rfq ? `<a class="btn ghost" href="${esc(mail.rfq)}" target="_blank" rel="noopener">Open RFQ email ${ICON.external}</a>` : ""}${latest}</p>`;
+  return `<p class="mail-links">${mail.rfq ? `<a class="btn ghost" href="${esc(mail.rfq)}" target="_blank" rel="noopener">Open RFQ email ${ICON.external}</a>` : ""}${files}${latest}</p>${list}`;
 }
 
 export function renderHtml(decision, { lifecycle, now = new Date(), quoteTemplate = null, mail = null, progress = null } = {}) {

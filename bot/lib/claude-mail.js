@@ -36,15 +36,20 @@ export function caseMail(kase, events) {
   return { sent, latest: byTime.at(-1) || null };
 }
 
-// Requests and chases the check found that match no price page and no
-// monitor entry: the newest message per customer and subject.
-export function newRequests(events, cases, queue) {
+// Requests and chases the check found that nothing else on the board shows:
+// no price page, no later quote, and no monitor entry that `monitorCovers`
+// accepts (the board passes its own rule; by default any entry counts). The
+// newest message per customer and subject, with the monitor entry it matched.
+export function newRequests(events, cases, queue, monitorCovers = () => true) {
+  const entriesFor = (event) => {
+    const tokens = eventTokens(event);
+    return tokens.length ? queue.filter((entry) => tokens.some((token) => norm(entry.reference).includes(token))) : [];
+  };
   const covered = (event) => {
     const tokens = eventTokens(event);
     const domain = String(event.customerDomain || "").toLowerCase();
     const onCase = cases.some((kase) => (kase.customerRecord?.emailDomains || []).map((d) => d.toLowerCase()).includes(domain) && (!tokens.length || caseTokens(kase).some((own) => tokens.some((token) => own === token || own.includes(token) || token.includes(own)))));
-    const inMonitor = tokens.length && queue.some((entry) => tokens.some((token) => norm(entry.reference).includes(token)));
-    return onCase || inMonitor;
+    return onCase || entriesFor(event).some((entry) => monitorCovers(entry, event));
   };
   const answered = (event) => events.some((other) => other.kind === "quote-sent" && other.customerDomain === event.customerDomain && other.at > event.at && eventTokens(other).some((token) => eventTokens(event).includes(token)));
   const latest = new Map();
@@ -52,5 +57,21 @@ export function newRequests(events, cases, queue) {
     const key = `${String(event.customerDomain).toLowerCase()}|${norm(event.subject).replace(/^(RE|FW|FWD):/g, "")}`;
     if (!latest.has(key) || latest.get(key).at < event.at) latest.set(key, event);
   }
-  return [...latest.values()].sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  return [...latest.values()].sort((a, b) => String(b.at).localeCompare(String(a.at))).map((event) => {
+    const byNumber = entriesFor(event)[0];
+    const entry = byNumber || sameCustomerEntry(event, queue);
+    return { ...event, monitor: entry ? { reference: entry.reference, section: entry.priority_section ?? null, status: entry.status ?? null, dueDate: entry.explicit_due_date || null, lastActivityAt: entry.last_observed_activity_at || null, matchedBy: byNumber ? "number" : "customer" } : null };
+  });
+}
+
+// With no shared number, the customer's most recently active monitor entry:
+// one whose senders use the message's email domain. Shown for context only;
+// it never hides a message, since the customer may have more than one request.
+function sameCustomerEntry(event, queue) {
+  const domain = String(event.customerDomain || "").toLowerCase();
+  if (!domain) return null;
+  const actors = (entry) => [entry.last_observed_actor, ...(entry.events || []).map((item) => item.actor)];
+  return queue
+    .filter((entry) => actors(entry).some((actor) => String(actor || "").toLowerCase().endsWith(`@${domain}`)))
+    .sort((a, b) => String(b.last_observed_activity_at || "").localeCompare(String(a.last_observed_activity_at || "")))[0] || null;
 }

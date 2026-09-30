@@ -27,6 +27,7 @@ export function progressHtml(steps, { compact = false } = {}) {
 }
 
 export const ICON = {
+  attach: '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 4.5 5.8 9.2a1.4 1.4 0 0 0 2 2l5-5a2.8 2.8 0 0 0-4-4l-5 5a4.2 4.2 0 0 0 6 6l4.2-4.2"/></svg>',
   copy: '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M10.5 5V3.5A1.5 1.5 0 0 0 9 2H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5H5"/></svg>',
   check: '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7"/></svg>',
   alert: '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 5.5v3.5M8 11.5v.01"/><path d="M7.1 2.6L1.7 12a1 1 0 0 0 .9 1.5h10.8a1 1 0 0 0 .9-1.5L8.9 2.6a1 1 0 0 0-1.8 0z"/></svg>',
@@ -134,6 +135,8 @@ code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12p
 .tracker-mini .mini-dot:last-of-type { margin-right:6px; }
 .tracker-mini .mini-label { margin-left:0; }
 .tracker-mini.warn .mini-label { color:var(--warn); }
+.files-list { font-size:13px; color:var(--ink-2); overflow-wrap:anywhere; margin-top:calc(-1 * var(--s1)); }
+.files-list b { font-weight:600; color:var(--ink); }
 .mail-links { display:flex; flex-wrap:wrap; gap:var(--s2); margin:var(--s1) 0 0; }
 .meta li.late { color:var(--warn); background:var(--warn-bg); font-weight:600; }
 .status { font-size:13px; color:var(--ink-2); margin-top:var(--s2); padding-left:var(--s3); border-left:2px solid var(--line-2); }
