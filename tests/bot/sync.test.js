@@ -112,10 +112,10 @@ test("a decision for one RFQ number never links to another RFQ for the same cust
 });
 
 test("only status wording that plainly says a quote went out counts as sent", () => {
-  for (const status of ["Quote sent; waiting on customer", "Quote already sent; internal part identification added", "Pat sent estimated quote; waiting on customer", "Sam sent quote attachment; contents unverified", "Quote sent; attachment scope unverified", "Sam quote sent; customer thanked QPC"]) {
+  for (const status of ["Quote sent; waiting on customer", "Quote already sent; internal part identification added", "Pat sent estimated quote; waiting on customer", "Sam sent quote attachment; contents unverified", "Quote sent; attachment scope unverified", "Sam quote sent; customer thanked QPC", "Customer confirmed quote receipt", "Customer confirmed receipt of the quote", "Quote receipt acknowledged by buyer"]) {
     assert.equal(quoteSentStatus(status), true, status);
   }
-  for (const status of ["not quoted", "quoted per ledger; unverified", "Quote sent; unverified", "Quote will be sent tomorrow", "Quote to be sent after approval", "Quote scheduled to be sent Monday", "Awaiting approval before quote sent", "Customer PO received and acknowledged", "QPC reports ready for pickup September25 13:30", "Draft quote prepared", "", null]) {
+  for (const status of ["not quoted", "quoted per ledger; unverified", "Quote sent; unverified", "Quote will be sent tomorrow", "Quote to be sent after approval", "Quote scheduled to be sent Monday", "Awaiting approval before quote sent", "Customer PO received and acknowledged", "QPC reports ready for pickup September25 13:30", "Draft quote prepared", "Customer has not confirmed quote receipt", "Quote receipt unconfirmed", "Customer confirmed PO receipt", "Receipt reported; ECD October8", "", null]) {
     assert.equal(quoteSentStatus(status), false, String(status));
   }
 });

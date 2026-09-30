@@ -106,7 +106,9 @@ export function monitorLink(decision, queue) {
 // as sent only when a clause of the monitor's status says a quote went out
 // and neither that clause nor a bare qualifier doubts it ("not quoted",
 // "quoted per ledger; unverified").
-const SENT_CLAUSE = /\bquote\s+(?:\w+\s+){0,2}sent\b|\bsent\s+(?:an?\s+|the\s+)?(?:\w+\s+)?quote\b|\bquoted\b/i;
+// A customer confirming receipt of the quote also proves it went out
+// ("Customer confirmed quote receipt", "confirmed receipt of the quote").
+const SENT_CLAUSE = /\bquote\s+(?:\w+\s+){0,2}sent\b|\bsent\s+(?:an?\s+|the\s+)?(?:\w+\s+)?quote\b|\bquoted\b|\b(?:confirmed|acknowledged)\s+(?:the\s+)?quote\s+receipt\b|\bquote\s+receipt\s+(?:confirmed|acknowledged)\b|\b(?:confirmed|acknowledged)\s+receipt\s+of\s+(?:the\s+|our\s+)?quote\b/i;
 const DOUBT = /\b(?:not|no|never|unverified|unconfirmed|provisional|pending|draft|per ledger|will|shall|would|to be|going to|plan|plans|planned|scheduled|tomorrow|later|awaiting)\b/i;
 const BARE_DOUBT = /^(?:still\s+)?(?:unverified|unconfirmed|provisional|not verified|not confirmed)\.?$/i;
 export function quoteSentStatus(status) {
