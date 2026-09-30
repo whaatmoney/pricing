@@ -5,6 +5,7 @@ import { lifecyclePath, lifecycleView, readLifecycle } from "./lifecycle.js";
 import { isSameCustomer, partNumberMatch } from "./part-history.js";
 import { ICON, progressHtml, SCRIPT, STYLE } from "./design.js";
 import { displayStatus, escapeHtml } from "./render.js";
+import { caseMail, newRequests, readClaudeMail } from "./claude-mail.js";
 import { followupThreads, matchThread, monitorFor, readQuotePrepChat } from "./followups.js";
 import { readManifest } from "./router-snapshot.js";
 import { priceSource } from "./review-card.js";
@@ -194,7 +195,7 @@ function firstBuilt(outputsDir, caseId, version, decision) {
 }
 
 // RFQ in -> Priced -> Decided -> Quote sent, with dates, for the card and page.
-export function progressOf({ decision, lines, monitor, sent, firstPricedAt = null }) {
+export function progressOf({ decision, lines, monitor, sent, firstPricedAt = null, sentAtOverride = null }) {
   const total = lines.length;
   const priced = lines.filter((line) => line.suggested != null).length;
   const decided = lines.filter((line) => line.decided && line.decided.choice !== "correction");
@@ -203,11 +204,11 @@ export function progressOf({ decision, lines, monitor, sent, firstPricedAt = nul
     { key: "asked", label: "RFQ in", done: true, at: decision.rfq.initiatedAt || null },
     { key: "priced", label: "Priced", done: priced === total || decided.length === total, at: firstPricedAt || decision.generatedAt, pending: priced ? `Priced ${priced} of ${total}` : "Needs facts", tone: "warn" },
     { key: "decided", label: "Decided", done: decided.length === total, at: lastDecided, pending: decided.length ? `Decided ${decided.length} of ${total}` : "Your decision" },
-    { key: "sent", label: "Quote sent", done: Boolean(sent), at: sent ? sentAt(monitor) : null, pending: "Quote sent" },
+    { key: "sent", label: "Quote sent", done: Boolean(sent), at: sent ? sentAtOverride || sentAt(monitor) : null, pending: "Quote sent" },
   ];
 }
 
-function caseEvents({ caseId, version, decision, lifecycle, monitor, sent }) {
+function caseEvents({ caseId, version, decision, lifecycle, monitor, sent, mailSent = null }) {
   const name = `${decision.customer.name.replace(/\.$/, "")} ${decision.rfq.reference || caseId}`;
   const events = [{ at: decision.generatedAt, kind: "priced", text: `${name}: price page v${version} built`, caseId }];
   for (const entry of lifecycle.entries) {
@@ -218,12 +219,14 @@ function caseEvents({ caseId, version, decision, lifecycle, monitor, sent }) {
       events.push({ at: entry.decidedAt, kind: entry.choice === "correction" ? "correction" : "decision", text: `${name} ${entry.lineId} v${entry.version}: ${entry.choice}${price} — ${entry.decidedBy}${words ? ` (“${words}”)` : ""}`, caseId });
     }
   }
-  if (sent) events.push({ at: monitor.last_observed_activity_at || null, kind: "sent", text: `${name}: quote seen sent by the mail monitor (“${monitor.status}”)`, caseId });
+  if (sent && monitor && quoteSentStatus(monitor.status)) events.push({ at: monitor.last_observed_activity_at || null, kind: "sent", text: `${name}: quote seen sent by the mail monitor (“${monitor.status}”)`, caseId });
+  else if (sent && mailSent) events.push({ at: mailSent.at, kind: "sent", text: `${name}: quote seen sent by Claude's mail check (${mailSent.from} to ${(mailSent.to || []).join(", ")}, “${mailSent.subject}”)`, caseId });
   return events;
 }
 
-export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, now = new Date() }) {
+export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, claudeMailPath = null, now = new Date() }) {
   const mailCache = readMailCache(mailCachePath);
+  const claudeMail = readClaudeMail(claudeMailPath);
   const state = monitorStatePath && fs.existsSync(monitorStatePath) ? JSON.parse(fs.readFileSync(monitorStatePath, "utf8")) : null;
   const queue = state?.operational_queue || [];
   const currentSnapshot = storeDir ? readManifest(storeDir).current : null;
@@ -235,12 +238,15 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
     const partNumbers = [...new Set(decision.lines.map((line) => line.request.partNumber))];
     const link = monitorLink(decision, queue);
     const monitor = link.entry;
-    const sent = monitor?.priority_section === 3 && quoteSentStatus(monitor.status);
+    const monitorSent = monitor?.priority_section === 3 && quoteSentStatus(monitor.status);
+    // Claude's own mail check can see a quote go out before the monitor does.
+    const mail = claudeMail ? caseMail({ customerRecord: decision.customer, askedAt: decision.rfq.initiatedAt, lines: partNumbers.map((partNumber) => ({ partNumber })), reference: decision.rfq.reference, monitorReference: decision.rfq.monitorReference }, claudeMail.events) : null;
+    const sent = monitorSent || Boolean(mail?.sent);
     const priceSnapshot = decision.lines[0]?.history.database.snapshot;
     let label = status.text.startsWith("PARTLY") ? "Partly decided" : { warn: "Waiting on you", ok: "Decided — not sent", alert: "Correction requested" }[status.tone];
     let tone = status.tone;
     if (sent) {
-      label = "Quote sent (per monitor status)";
+      label = monitorSent ? "Quote sent (per monitor status)" : "Quote sent (per mail check)";
       tone = "ok";
     }
     return {
@@ -274,11 +280,15 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       partNumbers,
       confidence: (() => { const grade = caseConfidence(decision.lines, view); return { level: grade.level, reasons: reasonsText(grade.weakest) }; })(),
       feedback: lifecycle.entries.filter((entry) => entry.type === "method-review" || entry.choice === "correction").map((entry) => ({ ...entry, caseId })),
-      events: caseEvents({ caseId, version, decision, lifecycle, monitor, sent }),
-      get progress() { return progressOf({ decision, lines: this.lines, monitor, sent, firstPricedAt: firstBuilt(outputsDir, caseId, version, decision) }); },
+      events: caseEvents({ caseId, version, decision, lifecycle, monitor, sent, mailSent: mail?.sent }),
+      get progress() { return progressOf({ decision, lines: this.lines, monitor, sent, firstPricedAt: firstBuilt(outputsDir, caseId, version, decision), sentAtOverride: monitorSent ? null : mail?.sent?.at || null }); },
       monitorReference: decision.rfq.monitorReference || null,
       rfqLink: monitor?.evidence_links?.[0] || owaLink(decision.rfq.sourceMessageIds?.[0]),
-      latestLink: latestMessageLink(monitor, monitor?.evidence_links?.[0] || owaLink(decision.rfq.sourceMessageIds?.[0])),
+      latestLink: (() => {
+        const fromMonitor = latestMessageLink(monitor, monitor?.evidence_links?.[0] || owaLink(decision.rfq.sourceMessageIds?.[0]));
+        const seen = mail?.latest;
+        return seen?.link && (!fromMonitor || seen.at > fromMonitor.at) ? { href: seen.link, at: seen.at, actor: seen.from || null } : fromMonitor;
+      })(),
       email: (() => {
         const evidence = new Map(decision.lines.flatMap((line) => line.history?.email?.evidence || []).map((item) => [item.id, item]));
         const customerDomains = (decision.customer.emailDomains || []).map((item) => item.toLowerCase());
@@ -299,7 +309,8 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
     monitor = {
       cutoff,
       ageMinutes,
-      stale: Boolean(state.freshness?.stale) || ageMinutes == null || ageMinutes > MONITOR_STALE_MINUTES,
+      stale: (Boolean(state.freshness?.stale) || ageMinutes == null || ageMinutes > MONITOR_STALE_MINUTES) && !claudeFresh(claudeMail, now),
+      claudeCutoff: claudeMail?.cutoff || null,
       report: state.last_check_report ? path.basename(state.last_check_report) : null,
       sections: { 1: waiting.length, 2: queue.filter((item) => item.priority_section === 2).length, 3: queue.filter((item) => item.priority_section === 3).length },
       waiting: waiting.length,
@@ -325,8 +336,11 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
   const history = [...tracker.history.map((item) => ({ ...item, source: "log" })), ...cases.flatMap((kase) => kase.events)]
     .filter((item) => item.at)
     .sort((a, b) => b.at.localeCompare(a.at));
-  return { generatedAt: now.toISOString(), cases, monitor, lastSync, history, chasing: chasingFrom(readQuotePrepChat(quotePrepChatPath), cases, queue, now) };
+  return { generatedAt: now.toISOString(), cases, monitor, lastSync, history, mailFound: claudeMail ? newRequests(claudeMail.events, cases, queue).filter((event) => Date.parse(event.at) >= now.getTime() - CHASE_DAYS * 86400000) : [], chasing: chasingFrom(readQuotePrepChat(quotePrepChatPath), cases, queue, now) };
 }
+
+// Claude's mail check counts as fresh on the same two-hour rule as the monitor.
+const claudeFresh = (claudeMail, now) => Boolean(claudeMail?.cutoff) && (now.getTime() - Date.parse(claudeMail.cutoff)) / 60000 <= MONITOR_STALE_MINUTES;
 
 // Front desk follow-ups from the last two weeks: each one on the card it
 // belongs to (unless the quote went out after it), the rest listed as
@@ -406,6 +420,13 @@ function chaseChip(followup, now) {
   if (!followup) return "";
   const title = `Front desk, ${when(followup.lastAt)}: ${followup.contact}${followup.company ? ` from ${followup.company}` : ""} is chasing “${followup.subject}”${followup.note ? ` — ${followup.note}` : ""}`;
   return `<span class="chip ${followup.urgent ? "alert" : "muted late"}" title="${esc(title)}">Chasing · ${esc(followup.label.toLowerCase())} ${relativeDay(followup.lastAt, now)}</span>`;
+}
+
+// Requests Claude's mail check found that neither a page nor the monitor has.
+function mailFoundTable(items, now) {
+  if (!items.length) return "";
+  const rows = items.map((item) => `<tr><td><span class="strong">${esc(item.customerDomain || "—")}</span><div class="why-not">${esc(item.from || "")}</div></td><td>${esc(item.subject || "—")}${item.note ? `<div class="why-not">${esc(item.note)}</div>` : ""}${item.link ? `<div><a class="small" href="${esc(item.link)}" target="_blank" rel="noopener">Open email</a></div>` : ""}</td><td class="date"><span class="chip ${item.kind === "followup" ? "warn" : "muted"}">${item.kind === "followup" ? "Chasing" : "New request"}</span><div class="why-not">${relativeDay(item.at, now)}</div></td></tr>`).join("");
+  return `<details class="fold" open><summary>${ICON.chevron}<h3>Found by Claude's mail check, not in the monitor <small>${items.length}</small></h3></summary><div class="scroll"><table class="queue"><thead><tr><th>Customer · sender</th><th>Email subject</th><th>Seen</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
 }
 
 // Customers chasing a request that has no price page yet.
@@ -542,7 +563,7 @@ export function renderBoard(board, { badge = null } = {}) {
   const sync = board.lastSync;
   const rejected = (sync?.imports || []).filter((item) => item.outcome !== "accepted" && item.outcome !== "replay-noop" && item.outcome !== "archived-older");
   const alerts = [
-    ...(monitor?.stale ? [`Mail data is STALE: the monitor's last successful check was ${monitor.cutoff ? when(monitor.cutoff) : "never recorded"}. The monitor may have stopped; "no reply found" rows may be out of date.`] : []),
+    ...(monitor?.stale ? [`Mail data is STALE: the monitor's last successful check was ${monitor.cutoff ? when(monitor.cutoff) : "never recorded"}${monitor.claudeCutoff ? ` and Claude's mail check reached ${when(monitor.claudeCutoff)}` : ""}. A check may have stopped; "no reply found" rows may be out of date.`] : []),
     ...rejected.map((item) => item.outcome === "not-downloaded"
       ? `Router History export ${item.fileName} is in OneDrive but not downloaded to this Mac, so the background sync can't read it. Open the ROUTER HISTORY folder in Finder (or set it to "Always Keep on This Device"), or ask Claude to import it. Prices still use the last good snapshot.`
       : `Router History export ${item.fileName} was ${item.outcome}${item.failures.length ? ` (${item.failures.join(", ")})` : ""}. Prices still use the last good snapshot.`),
@@ -556,6 +577,7 @@ export function renderBoard(board, { badge = null } = {}) {
   const pastDueCases = dated.filter((kase) => localDay(kase.dueDate) < today);
   const dueTodayCases = dated.filter((kase) => localDay(kase.dueDate) === today);
   const pastDue = pastDueCases.length, dueToday = dueTodayCases.length;
+  const mailFound = board.mailFound || [];
   const chasingOpen = [...grouped.ready, ...grouped.facts].filter((kase) => kase.followup);
   const chasingNoPage = board.chasing?.unmatched || [];
   const chasingCount = chasingOpen.length + chasingNoPage.length;
@@ -567,8 +589,8 @@ export function renderBoard(board, { badge = null } = {}) {
     dueToday ? `<a class="due-now" href="#case-${esc(dueTodayCases[0].caseId)}">${dueToday} due today</a>` : "",
     chasingCount ? `<a class="chasing-now" href="${chasingNoPage.length ? "#chasing" : `#case-${esc(chaseTarget.caseId)}`}">${chasingCount} customer${chasingCount === 1 ? "" : "s"} chasing</a>` : "",
   ].filter(Boolean).join('<span class="sep">·</span>') || "Nothing waiting on you.";
-  const tabs = [["ready", "Ready", grouped.ready.length], ["facts", "Needs facts", grouped.facts.length], ["chasing", "Chasing", chasingNoPage.length], ["closed", "Decided & sent", closed.length], ["unpriced", "No page yet", unpriced.length], ["log", "Log", null]]
-    .filter(([id, , count]) => count !== 0 && (id !== "unpriced" || monitor));
+  const tabs = [["ready", "Ready", grouped.ready.length], ["facts", "Needs facts", grouped.facts.length], ["chasing", "Chasing", chasingNoPage.length], ["closed", "Decided & sent", closed.length], ["unpriced", "No page yet", unpriced.length + mailFound.length], ["log", "Log", null]]
+    .filter(([id, , count]) => count !== 0 && (id !== "unpriced" || monitor || mailFound.length));
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -608,7 +630,7 @@ ${BOARD_STYLE}
 
   ${closed.length ? section("closed", "Decided & sent", closed.length, "", `<details class="fold"><summary>${ICON.chevron}<h3>Show ${closed.length}</h3></summary><div class="cards">${closed.map((kase) => caseCard(kase, now)).join("")}</div></details>`) : ""}
 
-  ${monitor && unpriced.length ? section("unpriced", "No price page yet", unpriced.length, "Open in the mail monitor with no page here; ask Claude to price any of them.", `${monitorTable(unpriced.filter((item) => item.pricing), "Status mentions a quote, RFQ or inquiry")}${monitorTable(unpriced.filter((item) => !item.pricing), "Status doesn't say (may be a follow-up or an RFQ)")}`) : ""}
+  ${(monitor && unpriced.length) || mailFound.length ? section("unpriced", "No price page yet", unpriced.length + mailFound.length, "Open in the mail with no page here; ask Claude to price any of them.", `${mailFoundTable(mailFound, now)}${monitorTable(unpriced.filter((item) => item.pricing), "Status mentions a quote, RFQ or inquiry")}${monitorTable(unpriced.filter((item) => !item.pricing), "Status doesn't say (may be a follow-up or an RFQ)")}`) : ""}
 
   <section id="log" class="group" aria-labelledby="log-title">
     <div class="group-head"><h2 id="log-title">Log</h2></div>
@@ -617,7 +639,7 @@ ${BOARD_STYLE}
   </section>
 
   <footer class="fresh">${badge ? `<img class="badge" src="${badge}" alt="" width="20" height="20">` : ""}<span>
-    ${monitor ? `<span class="${monitor.stale ? "stale" : ""}">Mail checked ${when(monitor.cutoff)}</span>${monitor.report ? ` · <a href="${esc(monitor.report)}">latest check</a>` : ""} · ` : ""}${sync ? `synced ${when(sync.at)}${sync.imports.length ? ` (imported ${sync.imports.map((item) => `${esc(item.fileName)} ${esc(item.outcome)}`).join(", ")})` : ""}` : "no sync has run yet"}
+    ${monitor ? `<span class="${monitor.stale ? "stale" : ""}">Mail checked ${when(monitor.cutoff)} (monitor)${monitor.claudeCutoff ? ` · ${when(monitor.claudeCutoff)} (Claude)` : ""}</span>${monitor.report ? ` · <a href="${esc(monitor.report)}">latest check</a>` : ""} · ` : ""}${sync ? `synced ${when(sync.at)}${sync.imports.length ? ` (imported ${sync.imports.map((item) => `${esc(item.fileName)} ${esc(item.outcome)}`).join(", ")})` : ""}` : "no sync has run yet"}
 ${board.chasing ? ` · front desk chat read ${when(board.chasing.readAt)}` : ""}
     <br>Private working file · keep inside QPC</span>
   </footer>
@@ -844,9 +866,9 @@ export function readBrandBadge(badgePath) {
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
-export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath = null, mailCachePath = null, brandBadgePath = null, quotePrepChatPath = null, now }) {
+export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath = null, mailCachePath = null, brandBadgePath = null, quotePrepChatPath = null, claudeMailPath = null, now }) {
   const file = path.join(outputsDir, BOARD_FILE);
-  const board = buildBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath, mailCachePath, quotePrepChatPath, now });
+  const board = buildBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath, mailCachePath, quotePrepChatPath, claudeMailPath, now });
   fs.writeFileSync(file, renderBoard(board, { badge: readBrandBadge(brandBadgePath) }));
   return { file, board };
 }

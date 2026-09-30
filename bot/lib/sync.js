@@ -49,7 +49,7 @@ export function runSync({ config, limits, trigger = "manual", now = new Date(), 
     record.errors.push(`import: ${error.message}`);
   }
   try {
-    const { file, board } = writeBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, now, lastSync: record, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null });
+    const { file, board } = writeBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, now, lastSync: record, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null, claudeMailPath: config.claudeMail || null });
     try {
       record.pages = refreshPages({ outputsDir: config.outputsDir, board, quoteTemplate: config.quoteTemplate ? fs.readFileSync(config.quoteTemplate, "utf8") : null, now }).length;
     } catch (error) {
