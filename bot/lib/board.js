@@ -280,7 +280,7 @@ function caseEvents({ caseId, version, decision, lifecycle, monitor, sent, mailS
   return events;
 }
 
-export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, now = new Date() }) {
+export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, triagePath = null, now = new Date() }) {
   if (org) useOrg(org);
   const mailCache = readMailCache(mailCachePath);
   const ownerOf = (href) => privateOwner(href, mailboxIdPrefixes, sharedMailbox);
@@ -373,7 +373,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
     if (kase && (!kase.mailChase || Date.parse(kase.mailChase.at) < Date.parse(placement.event.at))) kase.mailChase = placement.event;
   }
   const mailRows = claudeMail ? foundRows(placements, claudeMail.events) : [];
-  const chasing = chasingFrom(readQuotePrepChat(quotePrepChatPath), cases, queue, now);
+  const chasing = chasingFrom(readQuotePrepChat(quotePrepChatPath), cases, queue, now, readAnswered(triagePath));
   // A customer email the front desk also logged in the chat is one chase: keep
   // the chat row and give it the email's monitor match.
   const chatKeys = new Map((chasing?.unmatched || []).map((thread) => [subjectKey(thread.subject), thread]));
@@ -480,9 +480,20 @@ function claudeStale(claudeMail, now) {
 // belongs to (unless the quote went out after it), the rest listed as
 // customers chasing a request with no price page.
 const CHASE_DAYS = 14;
-function chasingFrom(chat, cases, queue, now) {
+// Chases a Claude session confirmed answered in the mail (private triage
+// file, config.triageFile): key "chat|<company>|<subject>" with answered: true.
+// One comes back if the customer chases again after it was checked.
+function readAnswered(file) {
+  if (!file || !fs.existsSync(file)) return new Map();
+  try {
+    return new Map(Object.entries(JSON.parse(fs.readFileSync(file, "utf8"))).filter(([key, entry]) => key.startsWith("chat|") && entry?.answered));
+  } catch { return new Map(); }
+}
+
+function chasingFrom(chat, cases, queue, now, answered = new Map()) {
   if (!chat) return null;
-  const recent = followupThreads(chat.messages).filter((thread) => Date.parse(thread.lastAt) >= now.getTime() - CHASE_DAYS * 86400000);
+  const recent = followupThreads(chat.messages).filter((thread) => Date.parse(thread.lastAt) >= now.getTime() - CHASE_DAYS * 86400000)
+    .filter((thread) => { const seen = answered.get(`chat|${thread.company}|${thread.subject}`); return !seen || String(thread.lastAt) > String(seen.at); });
   const unmatched = [];
   for (const thread of recent) {
     const hits = matchThread(thread, cases);
@@ -1137,9 +1148,9 @@ export function readBrandBadge(badgePath) {
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
-export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath = null, mailCachePath = null, brandBadgePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, now }) {
+export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath = null, mailCachePath = null, brandBadgePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, triagePath = null, now }) {
   const file = path.join(outputsDir, BOARD_FILE);
-  const board = buildBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath, mailCachePath, quotePrepChatPath, claudeMailPath, evidenceDir, sharedMailbox, mailboxIdPrefixes, org, now });
+  const board = buildBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath, mailCachePath, quotePrepChatPath, claudeMailPath, evidenceDir, sharedMailbox, mailboxIdPrefixes, org, triagePath, now });
   board.codeVersion = codeVersion();
   fs.writeFileSync(file, renderBoard(board, { badge: readBrandBadge(brandBadgePath) }));
   return { file, board };
@@ -1148,7 +1159,7 @@ export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, t
 // The one place the private config becomes the board's inputs, for every
 // command that writes it.
 export function boardInputs(config) {
-  return { outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null, claudeMailPath: config.claudeMail || null, evidenceDir: config.evidenceDir || null, sharedMailbox: config.sharedMailbox || null, mailboxIdPrefixes: config.mailboxIdPrefixes || null, org: config.org || null };
+  return { outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null, claudeMailPath: config.claudeMail || null, evidenceDir: config.evidenceDir || null, sharedMailbox: config.sharedMailbox || null, mailboxIdPrefixes: config.mailboxIdPrefixes || null, org: config.org || null, triagePath: config.triageFile || null };
 }
 
 // The commit the board was built from, marked when the working tree has
