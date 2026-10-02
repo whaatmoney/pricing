@@ -741,6 +741,13 @@ function mailRow(email) {
   return parts.length ? `<div class="mail-row">${parts.join("")}</div>` : "";
 }
 
+// Sort key for the board's confidence sorts: High 3, Medium 2, Low 1, and 0
+// when any line has no price yet (those always sort last).
+export function confidenceRank(kase) {
+  if ((kase.lines || []).some((line) => line.suggested == null && !line.decided)) return 0;
+  return { High: 3, Medium: 2, Low: 1 }[kase.confidence?.level] || 0;
+}
+
 function caseCard(kase, now) {
   const group = caseGroup(kase);
   const notes = [
@@ -748,7 +755,7 @@ function caseCard(kase, now) {
     kase.open && kase.staleSnapshot ? `Priced on ${esc(kase.priceSnapshot)}; newer Router History is in. Ask to rebuild.` : "",
   ].filter(Boolean);
   const open = group === "ready" || group === "facts";
-  return `<article class="card is-${group}" id="case-${esc(kase.caseId)}" data-page="${esc(kase.page)}" data-case="${esc(kase.caseId)}" data-asked="${esc(kase.askedAt || "")}">
+  return `<article class="card is-${group}" id="case-${esc(kase.caseId)}" data-page="${esc(kase.page)}" data-case="${esc(kase.caseId)}" data-asked="${esc(kase.askedAt || "")}" data-confidence="${confidenceRank(kase)}">
     <div class="card-head">
       <div class="card-title">
         <a class="card-link" href="${esc(kase.page)}">${esc(kase.customer)}</a>
@@ -897,7 +904,7 @@ ${BOARD_STYLE}
     <p class="eyebrow">QPC · RFQ pricing</p>
     <h1 class="summary">${summary}</h1>
     ${claudeRunLine(claude)}
-    <div class="sortbar" role="group" aria-label="Sort the cards"><span>Sort</span><button type="button" data-sort="urgent" aria-pressed="true">Most urgent</button><button type="button" data-sort="newest" aria-pressed="false">Newest first</button><button type="button" data-sort="oldest" aria-pressed="false">Oldest first</button></div>
+    <div class="sortbar" role="group" aria-label="Sort the cards"><span>Sort</span><button type="button" data-sort="urgent" aria-pressed="true">Most urgent</button><button type="button" data-sort="newest" aria-pressed="false">Newest first</button><button type="button" data-sort="oldest" aria-pressed="false">Oldest first</button><button type="button" data-sort="confident" aria-pressed="false">Most confident</button><button type="button" data-sort="unsure" aria-pressed="false">Least confident</button></div>
   </div>
 
   ${dueItems.length ? section("due", "Due now", dueItems.length, "Due today or past due, with a page or without one. Each should have a quote or an answer before the day ends.", dueStrip(dueItems, now)) : ""}
@@ -970,7 +977,10 @@ ${SCRIPT}
   const cards = [...document.querySelectorAll(".card[data-case]")];
   cards.forEach((card, index) => { card.dataset.order = index; });
   const byAsked = (a, b) => (a.dataset.asked || "").localeCompare(b.dataset.asked || "");
-  const order = { urgent: (a, b) => a.dataset.order - b.dataset.order, newest: (a, b) => byAsked(b, a), oldest: byAsked };
+  // Confidence: High 3, Medium 2, Low 1; 0 = a line still has no price, always last.
+  const rank = (card) => Number(card.dataset.confidence || 0);
+  const byConfidence = (direction) => (a, b) => (rank(a) === 0) - (rank(b) === 0) || direction * (rank(b) - rank(a)) || a.dataset.order - b.dataset.order;
+  const order = { urgent: (a, b) => a.dataset.order - b.dataset.order, newest: (a, b) => byAsked(b, a), oldest: byAsked, confident: byConfidence(1), unsure: byConfidence(-1) };
   const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   // Cards glide to their new place (first/last/invert/play) so the eye can follow.
   const arrange = (animate = true) => {

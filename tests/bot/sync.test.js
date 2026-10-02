@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { progressHtml } from "../../bot/lib/design.js";
-import { buildBoard, caseGroup, latestMessageLink, mirrorPages, monitorLink, progressOf, quoteSentStatus, readBrandBadge, renderBoard, writeBoard } from "../../bot/lib/board.js";
+import { buildBoard, caseGroup, confidenceRank, latestMessageLink, mirrorPages, monitorLink, progressOf, quoteSentStatus, readBrandBadge, renderBoard, writeBoard } from "../../bot/lib/board.js";
 import { buildDecision } from "../../bot/lib/decision.js";
 import { readManifest } from "../../bot/lib/router-snapshot.js";
 import { isCloudOnly, readLastSync, runSync } from "../../bot/lib/sync.js";
@@ -49,6 +49,16 @@ test("a case leaves the waiting list only when the monitor's status says a quote
   assert.doesNotMatch(html, /note-box|note-toggle/, "no notes on the board");
   assert.match(html, /class="toast"/, "copy feedback has a toast to show");
   assert.match(html, /data-sort="newest"[^>]*>Newest first/);
+  assert.match(html, /data-sort="confident"[^>]*>Most confident<\/button><button type="button" data-sort="unsure"[^>]*>Least confident/);
+  assert.match(html, /data-case="[^"]+" data-asked="[^"]*" data-confidence="[0-3]"/, "cards carry a confidence sort key");
+});
+
+test("confidence sort key: High 3, Medium 2, Low 1, and 0 while a line has no price", () => {
+  const priced = [{ suggested: 8, decided: null }];
+  assert.equal(confidenceRank({ lines: priced, confidence: { level: "High" } }), 3);
+  assert.equal(confidenceRank({ lines: priced, confidence: { level: "Medium" } }), 2);
+  assert.equal(confidenceRank({ lines: priced, confidence: { level: "Low" } }), 1);
+  assert.equal(confidenceRank({ lines: [...priced, { suggested: null, decided: null }], confidence: { level: "Low" } }), 0);
 });
 
 test("sync imports a new weekly export, flags cases priced on the older one, and never rebuilds a recommendation", () => {
