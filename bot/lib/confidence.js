@@ -37,6 +37,10 @@ export function lineConfidence(line, { recorded = null } = {}) {
     if (jobs.length && jobs.every((job) => job.agree)) add(1, "Work orders", "QPC's own work orders for those jobs carry the same price.");
   } else if (rec.preferred.basis.startsWith("PREVIOUS-QUOTE")) {
     add(1, "History", `QPC already quoted this customer ${usd(rec.preferred.unitPrice)} for this exact part; the suggestion matches it (a quote, not a customer PO).`);
+  } else if (rec.preferred.basis.startsWith("OTHER-CUSTOMER")) {
+    const other = (rec.otherCustomerCandidates || []).find((item) => item.eligible && item.unitPrice === rec.preferred.unitPrice);
+    add(0, "History", `Another customer${other ? ` (${other.customer})` : ""} was ${other?.source === "QPC quote" ? "quoted" : "charged"} ${usd(rec.preferred.unitPrice)} for this part number; not this customer's own price.`);
+    for (const flag of other?.flags || []) add(-1, "Check", `${flag[0].toUpperCase()}${flag.slice(1)}.`);
   } else if (line.history.timeline.some((entry) => entry.status === "comparable")) {
     add(0, "History", "Comparable history exists but did not set the price.");
   } else {
@@ -44,7 +48,7 @@ export function lineConfidence(line, { recorded = null } = {}) {
   }
 
   // Size only matters when the size method sets the price.
-  if (!repeatLed && !rec.preferred.basis.startsWith("PREVIOUS-QUOTE")) {
+  if (!repeatLed && !/^(PREVIOUS-QUOTE|OTHER-CUSTOMER)/.test(rec.preferred.basis)) {
     if (isBlocked(calc.sq2)) {
       add(-3, "Size", "The size method could not run.");
     } else {

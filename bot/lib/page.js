@@ -87,6 +87,10 @@ function story(group, decision) {
     const quote = rec.quoteCandidates?.find((item) => item.unitPrice === rec.preferred.unitPrice);
     steps.push(["Pick", `Match QPC's previous quote to ${customer}, ${usd(rec.preferred.unitPrice)}${quote ? ` (${quote.quantity ?? "?"} pcs, ${day(quote.date)})` : ""}. The method alone gives ${usd(calc.sq5.settled)}.`]);
   }
+  if (rec.preferred?.basis.startsWith("OTHER-CUSTOMER")) {
+    const other = (rec.otherCustomerCandidates || []).find((item) => item.eligible && item.unitPrice === rec.preferred.unitPrice);
+    steps.push(["Pick", `Nothing from ${customer} for this part, so use what another customer was ${other?.source === "QPC quote" ? "quoted" : "charged"} for the same part number: ${usd(rec.preferred.unitPrice)}${other ? ` (${other.customer}, ${other.evidence}, ${day(other.date)})` : ""}.${other?.flags?.length ? ` Check: ${other.flags.join("; ")}.` : ""} The method alone gives ${usd(calc.sq5.settled)}.`]);
+  }
   if (rec.preferred?.basis.startsWith("REPEAT-ACCEPTED")) steps.push(["Pick", `Hold the price ${customer} already accepted, ${usd(rec.preferred.unitPrice)}. The method alone gives ${usd(calc.sq5.settled)}.`]);
   const results = group.map((line) => {
     const p = line.recommendation.preferred;
@@ -260,6 +264,15 @@ function calcBlock(line) {
     <p class="calc-title">Online calculator — <b>${isBlocked(online) ? "blocked" : usd(online.price)}</b></p><ul class="trace">${list(online.trace || online.blocked || [])}</ul>`;
 }
 
+// Every other-customer match for the part (ruling other-customer-hold-v1),
+// used or not, with the reason a match was skipped.
+function otherCustomers(line, fold) {
+  const items = line.recommendation.otherCustomerCandidates || [];
+  if (!items.length) return "";
+  const rows = items.map((item) => `<tr class="${item.eligible ? "" : "muted"}"><td>${esc(item.date || "—")}</td><td>${esc(item.customer)}</td><td>${item.link ? `<a href="${esc(item.link)}" target="_blank" rel="noopener">${esc(item.source)}</a>` : esc(item.source)} ${esc(item.evidence)}</td><td class="num">${item.quantity ?? "—"}</td><td class="num">${usd(item.unitPrice)}</td><td>${item.eligible ? (item.flags.length ? item.flags.map((flag) => `<span class="chip warn">${esc(flag)}</span>`).join(" ") : '<span class="chip ok">usable</span>') : `<span class="chip muted">${esc(item.why)}</span>`}</td></tr>`).join("");
+  return fold("Other customers, same part number", items.length, `<div class="scroll"><table><thead><tr><th>Date</th><th>Customer</th><th>Source</th><th class="num">Qty</th><th class="num">Unit</th><th>Use</th></tr></thead><tbody>${rows}</tbody></table></div>`);
+}
+
 function evidenceSection(decision, groups) {
   const fresh = decision.freshness;
   const db = fresh.database.current;
@@ -274,6 +287,7 @@ function evidenceSection(decision, groups) {
       ${jobs ? fold("Job cross-check", first.history.jobs.length, `<div class="scroll"><table><thead><tr><th>Job</th><th>First date</th><th>Sources</th><th>Prices</th></tr></thead><tbody>${jobs}</tbody></table></div>`) : ""}
       ${fold("Calculations and options", group.length, group.map(calcBlock).join(""))}
       ${fold("Request facts", null, `<ul class="plain"><li>Drawing ${esc(request.drawing.number)} Rev. ${esc(request.drawing.revision)} ${esc(request.drawing.title)}. ${esc(request.drawing.caveat)}</li><li>Size: ${esc(sizeText(request.drawing.dimensions))} (${esc(request.drawing.dimensions.source)})</li><li>Material: ${esc(request.material.value)} — ${esc(request.material.source)}</li><li>Packaging: ${esc(request.packaging.requirement)}</li></ul>`)}
+      ${otherCustomers(first, fold)}
       ${fold("Emails considered", first.history.email.evidence.length, `<ul class="plain">${emails}</ul>`)}`;
   }).join("");
   const freshness = `<ul class="plain">

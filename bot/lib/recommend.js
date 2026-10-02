@@ -1,3 +1,5 @@
+import { otherCustomerBasis } from "./other-customer.js";
+
 // Recommendation policies. Each is named and versioned so a decision record
 // always says which rule picked its preferred price. No policy here approves a
 // price or sends anything; the output is a recommendation for a person.
@@ -6,7 +8,7 @@ export const POLICIES = {
   "repeat-accepted-hold-v0": {
     status: "APPROVED 2026-09-27 by the Quality Manager (pricing owner)",
     approved: { date: "2026-09-27", by: "Quality Manager (pricing owner)" },
-    rule: "When the same customer issued a purchase order within 365 days for the exact part number (any revision) and same process scope, at a quantity within ±25% of the request, recommend that PO's unit price and show the Price Lab chain beside it. Otherwise recommend the Price Lab chain result. When neither exists, leave the price uncalculated and name the missing fact.",
+    rule: "When the same customer issued a purchase order within 365 days for the exact part number (any revision) and same process scope, at a quantity within ±25% of the request, recommend that PO's unit price and show the Price Lab chain beside it. Otherwise QPC's previous quote to this customer for the part (previous-quote-hold-v1), then the newest price another customer was charged or quoted for the same part number within 365 days (other-customer-hold-v1), then the Price Lab chain result. When neither exists, leave the price uncalculated and name the missing fact.",
   },
   "chain-only-v0": {
     status: "PriceGPT-Master-v2 as written",
@@ -50,7 +52,7 @@ export function previousQuote(sentQuotes, line, requestDate) {
 
 const money = (value) => Math.round(value * 100) / 100;
 
-export function recommend({ policyId, line, requestDate, purchaseOrders, sentQuotes = [], chain }) {
+export function recommend({ policyId, line, requestDate, purchaseOrders, sentQuotes = [], chain, otherCustomer = null }) {
   const policy = POLICIES[policyId];
   if (!policy) throw new Error(`Unknown recommendation policy "${policyId}"`);
   const repeat = acceptedRepeatPrice(purchaseOrders, line, requestDate);
@@ -59,15 +61,22 @@ export function recommend({ policyId, line, requestDate, purchaseOrders, sentQuo
   const chainPrice = chain?.settled ?? null;
   const alternatives = [];
   const option = (label, unitPrice, basis) => ({ label, unitPrice, extended: money(unitPrice * line.quantity), basis });
+  const other = otherCustomer?.latest || null;
+  const otherOption = (candidate) => option(`Another customer's price (${candidate.customer}, ${candidate.date})`, candidate.unitPrice, otherCustomerBasis(candidate));
 
   let preferred = null;
   if (policyId === "repeat-accepted-hold-v0" && repeat.latest) {
     const po = repeat.latest;
     preferred = option(`Hold the customer's accepted price from ${po.poNumber}${po.revision ? ` Rev. ${po.revision}` : ""}`, po.unitPrice, `REPEAT-ACCEPTED: customer PO ${po.poNumber} dated ${po.date}, ${po.quantity} pcs at $${po.unitPrice.toFixed(2)}, same part, revision and process scope`);
     if (quoted.latest) alternatives.push(quoteOption(quoted.latest));
+    if (other) alternatives.push(otherOption(other));
     if (chainPrice != null) alternatives.push(option("Price Lab chain (SQ5, SQ6 pending)", chainPrice, "SQ2 MODEL anchored; history excluded per master v2"));
   } else if (policyId === "repeat-accepted-hold-v0" && quoted.latest) {
     preferred = quoteOption(quoted.latest);
+    if (other) alternatives.push(otherOption(other));
+    if (chainPrice != null) alternatives.push(option("Price Lab chain (SQ5, SQ6 pending)", chainPrice, "SQ2/SQ3 stabilized per master v2"));
+  } else if (policyId === "repeat-accepted-hold-v0" && other) {
+    preferred = otherOption(other);
     if (chainPrice != null) alternatives.push(option("Price Lab chain (SQ5, SQ6 pending)", chainPrice, "SQ2/SQ3 stabilized per master v2"));
   } else if (chainPrice != null) {
     preferred = option("Price Lab chain (SQ5, SQ6 pending)", chainPrice, "SQ2/SQ3 stabilized per master v2");
@@ -80,7 +89,8 @@ export function recommend({ policyId, line, requestDate, purchaseOrders, sentQuo
     alternatives,
     repeatCandidates: repeat.eligible.map((po) => ({ poNumber: po.poNumber, revision: po.revision, date: po.date, quantity: po.quantity, unitPrice: po.unitPrice })),
     quoteCandidates: quoted.eligible.map((quote) => ({ date: quote.date, quantity: quote.quantity, unitPrice: quote.unitPrice, evidence: quote.evidence })),
+    otherCustomerCandidates: (otherCustomer?.all || []).map(({ source, date, customer, unitPrice, quantity, evidence, link, eligible, why, flags }) => ({ source, date, customer, unitPrice, quantity, evidence, link, eligible, why, flags })),
     deltaVsChain: preferred && chainPrice != null ? { dollars: money(preferred.unitPrice - chainPrice), percent: (preferred.unitPrice - chainPrice) / chainPrice } : null,
-    uncalculated: preferred ? null : "No comparable accepted PO, no previous QPC quote, and the Price Lab chain is blocked; see the missing facts.",
+    uncalculated: preferred ? null : "No comparable accepted PO, no previous QPC quote, no other customer's price for this part in the last 365 days, and the Price Lab chain is blocked; see the missing facts.",
   };
 }

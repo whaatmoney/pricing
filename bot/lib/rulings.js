@@ -46,6 +46,13 @@ export const RULINGS = [
     reason: "The rev on the part number does not matter in terms of this pricing. If there is a part number match then it should match; rev is irrelevant.",
     rule: "Revision is never compared when finding price history or emails for a part: a work order, PO, quote or invoice for the same part number is the same part whatever revision the record or the request states, or whether either states one at all. Process scope, oxygen service and cleanliness level are still compared. This replaces the words \"same revision\" in repeat-accepted-hold-v0-approved and previous-quote-hold-v1.",
   },
+  {
+    id: "other-customer-hold-v1",
+    date: "2026-10-02",
+    decidedBy: "Quality Manager (pricing owner)",
+    reason: "If there is a match in part numbers but the customer is different, it should still be explored in suggested pricing.",
+    rule: "When no accepted PO and no previous quote to this customer apply, the newest price another customer was charged (Router History work order) or quoted by QPC for the same part number within 365 days is the suggested price, ahead of the calculator chain, which is shown beside it. $0 lot-priced and non-ordinary lines are skipped; on the same day a work order leads a quote. A different cleaning level does not disqualify the match but is labelled, and a price quoted for 5x the requested quantity or more, or (quantity unknown) under half the calculator, is labelled a possible large-lot price. Revision is ignored.",
+  },
 ];
 
 export const ACTIVE_RULINGS = RULINGS.map((ruling) => ruling.id);

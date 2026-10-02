@@ -101,6 +101,10 @@ export function summarizeLine(line, decision) {
     const quotes = rec.quoteCandidates || [];
     why.push(`QPC already quoted ${decision.customer.name.replace(/\.$/, "")} this exact part: ${quotes.map((quote) => `${usd(quote.unitPrice)} for ${quote.quantity ?? "?"} pcs (${day(quote.date)})`).join("; ")}. The suggestion matches the newest quote (rule previous-quote-hold-v1). This request is ${request.quantity} pcs.`);
   }
+  if (rec.preferred?.basis.startsWith("OTHER-CUSTOMER")) {
+    const used = (rec.otherCustomerCandidates || []).filter((item) => item.eligible);
+    why.push(`No accepted PO or previous quote from ${decision.customer.name.replace(/\.$/, "")} for this part. Other customers in the last 365 days: ${used.map((item) => `${item.customer} ${usd(item.unitPrice)} (${item.source} ${item.evidence}, ${day(item.date)}${item.flags.length ? `; ${item.flags.join("; ")}` : ""})`).join("; ")}. The suggestion uses the newest (rule other-customer-hold-v1).`);
+  }
   const samePriceScope = history.timeline.filter((entry) => entry.status === "comparable" && entry.unitPrice != null && rec.preferred && entry.unitPrice !== rec.preferred.unitPrice);
   if (samePriceScope.length) {
     const newest = samePriceScope[0];
@@ -111,7 +115,7 @@ export function summarizeLine(line, decision) {
     why.push(`The Price Lab chain alone gives ${usd(calc.sq5.settled)} (SQ2 ${usd(calc.sq2.price)} from the drawing envelope; SQ3 ${calc.sq3.handsOnPrice != null ? `hands-on labor ${usd(calc.sq3.handsOnPrice)}` : `labor estimate ${usd(calc.sq3.price)}`}, unmeasured). Quoting it instead would ${direction} the price ${usd(Math.abs(rec.deltaVsChain.dollars))} (${pct(Math.abs(rec.deltaVsChain.dollars) / rec.preferred.unitPrice)}) with no change in part, scope or quantity.`);
   }
   const inverted = !isBlocked(calc.sq5) && /inversion/.test(calc.sq5.rule || "");
-  const chainLeads = Boolean(rec.preferred) && !/^(REPEAT-ACCEPTED|PREVIOUS-QUOTE)/.test(rec.preferred.basis);
+  const chainLeads = Boolean(rec.preferred) && !/^(REPEAT-ACCEPTED|PREVIOUS-QUOTE|OTHER-CUSTOMER)/.test(rec.preferred.basis);
   const flatExtended = inverted && chainLeads && rec.lotMinimum ? Math.max(Math.round(calc.sq2.price * request.quantity * 100) / 100, rec.lotMinimum.minimum) : null;
   if (!history.timeline.length) why.push("No price history for this part and customer in the checked sources (Router History, invoice export, email).");
   if (inverted && chainLeads) {

@@ -80,7 +80,9 @@ export function methodPath(line) {
       ? `Pick ${usd(rec.preferred.unitPrice)}: rule ${rec.policy.id} (${rec.policy.status}) holds the accepted PO price over the chain's ${usd(chain)}.`
       : rec.preferred.basis.startsWith("PREVIOUS-QUOTE")
         ? `Pick ${usd(rec.preferred.unitPrice)}: no accepted PO applies; rule previous-quote-hold-v1 matches QPC's previous quote over the chain's ${usd(chain)}.`
-        : `Pick ${usd(rec.preferred.unitPrice)}: no accepted PO or previous quote applies, so the chain's settled price stands (rule ${rec.policy.id}).`);
+        : rec.preferred.basis.startsWith("OTHER-CUSTOMER")
+          ? `Pick ${usd(rec.preferred.unitPrice)}: no accepted PO or previous quote from this customer; rule other-customer-hold-v1 uses another customer's price for the same part number over the chain's ${usd(chain)}.`
+          : `Pick ${usd(rec.preferred.unitPrice)}: no accepted PO, previous quote or other customer's price applies, so the chain's settled price stands (rule ${rec.policy.id}).`);
   } else {
     steps.push(`Pick: none. ${rec.uncalculated}`);
   }
@@ -147,6 +149,11 @@ export function priceSource(preferred) {
   if (basis.startsWith("PREVIOUS-QUOTE")) {
     const qty = basis.match(/QPC quoted (\d[\d,]*) pcs/)?.[1];
     return { kind: "quote", date, text: `QPC quote of ${when}${qty ? ` · ${qty} pcs` : ""}` };
+  }
+  if (basis.startsWith("OTHER-CUSTOMER")) {
+    const [, customer = "another customer", source = ""] = basis.match(/^OTHER-CUSTOMER: ([^;]+); (work order|QPC quote)/) || [];
+    const qty = basis.match(/; (\d[\d,]*) pcs at/)?.[1];
+    return { kind: "other", date, text: `${customer} ${source || "price"} of ${when}${qty ? ` · ${qty} pcs` : ""} · other customer` };
   }
   return { kind: "method", date: null, text: "calculator · no price history" };
 }

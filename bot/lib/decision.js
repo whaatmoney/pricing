@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { classifyMessage } from "./email-evidence.js";
 import { compareScope, matchLineHistory, partNumberMatch, summarizeMatches } from "./part-history.js";
+import { otherCustomerPrice } from "./other-customer.js";
 import { recommend } from "./recommend.js";
 import { RULINGS } from "./rulings.js";
 import { loadSnapshotRecords, snapshotStatus } from "./router-snapshot.js";
@@ -343,6 +344,35 @@ function applyPoLotMinimum(lines, rules) {
   };
 }
 
+// QPC estimates for this part sent to someone other than this customer
+// (ruling other-customer-hold-v1): a QPC sender, external recipients none of
+// whom are this customer, and a price for the part in the newest authored text.
+function otherCustomerQuotes(messages, line, kase) {
+  const domain = (address) => String(address).toLowerCase().split("@")[1] || "";
+  const internal = kase.internalDomains.map((item) => item.toLowerCase());
+  const own = kase.customer.emailDomains.map((item) => item.toLowerCase());
+  const quotes = [];
+  for (const message of messages) {
+    if (!internal.includes(domain(message.from))) continue;
+    const domains = [...new Set([...(message.to || []), ...(message.cc || [])].map(domain).filter((item) => item && !internal.includes(item)))];
+    if (!domains.length || domains.some((item) => own.includes(item))) continue;
+    const classified = classifyMessage(message, { partNumber: line.partNumber, aliases: line.aliases, customerDomains: domains, internalDomains: kase.internalDomains });
+    if (classified.type !== "qpc-sent-estimate") continue;
+    for (const price of classified.prices) {
+      quotes.push({
+        date: classified.receivedAt.slice(0, 10),
+        customer: domains.join(", "),
+        unitPrice: price.unitPrice,
+        quantity: price.quantity ?? null,
+        evidence: `${classified.from} → ${classified.customerRecipients.join(", ")}`,
+        link: classified.webLink,
+        differences: oxygenDifference(classified.scopeLatest.oxygen, line),
+      });
+    }
+  }
+  return quotes;
+}
+
 // A QPC quote whose text names no part number ("these fittings are $35.00
 // each") can be tied to a line by the case (line.quoteLinks: messageId,
 // unitPrice, quantity, reason). It counts only when the message is from QPC to
@@ -409,7 +439,9 @@ export function buildDecision({ casePath, storeDir, routerFolder, salesExportPat
     const calculations = runCalculations(line, rules, calculator);
     const timeline = buildTimeline(line, { dbMatches, invoiceMatches, emails, purchaseOrders });
     const sentQuotes = timeline.filter((entry) => entry.source === "QPC sent estimate");
-    const recommendation = recommend({ policyId: kase.recommendationPolicy, line, requestDate, purchaseOrders, sentQuotes, chain: blocked(calculations.sq5) ? null : calculations.sq5 });
+    const chain = blocked(calculations.sq5) ? null : calculations.sq5;
+    const otherCustomer = otherCustomerPrice({ dbMatches, quotes: otherCustomerQuotes(messages, line, kase), line, requestDate, chainPrice: chain?.settled ?? null });
+    const recommendation = recommend({ policyId: kase.recommendationPolicy, line, requestDate, purchaseOrders, sentQuotes, chain, otherCustomer });
     if (recommendation.preferred) {
       recommendation.lotMinimum = lotMinimumCheck(recommendation.preferred.unitPrice, line.quantity, rules);
       if (!recommendation.lotMinimum.passes) recommendation.preferred.lotCharge = recommendation.lotMinimum.minimum;
