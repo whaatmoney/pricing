@@ -207,6 +207,10 @@ test("the board lists owed quotes, merges a chase logged twice, and says when Cl
   assert.match(html, /1 past due/, "an owed quote past its due date reaches the header");
   assert.match(html, /could not search desk@shop.example/);
   assert.match(html, /Claude&#39;s mail check last reached/);
+  const setAside = renderBoard({ ...board, triage: { "monitor|Nimbus Works|RFQ 3100 / seals": { at: "2026-09-30T16:50:00Z", reason: "status question on a job in house, not an RFQ" } } });
+  assert.doesNotMatch(setAside, /Acknowledged, quote still owed/, "an owed quote set aside leaves the list");
+  assert.doesNotMatch(setAside, /1 past due/, "and stops counting as past due");
+  assert.match(setAside, /status question on a job in house/, "it stays listed with the reason");
 });
 
 test("the trial scorecard counts runs per shop weekday, gaps, held cutoffs and what only Claude's check found", async () => {

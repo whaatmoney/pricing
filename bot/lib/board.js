@@ -839,7 +839,6 @@ export function renderBoard(board, { badge = null } = {}) {
   const openCount = grouped.ready.length + grouped.facts.length;
   const pill = alerts.length ? ["alert", "Needs attention"] : openCount ? ["warn", `${openCount} waiting on you`] : ["ok", "Nothing waiting"];
   const unpricedAll = monitor ? monitor.withoutPage : [];
-  const owed = monitor?.owed || [];
   const mailFound = board.mailFound || [];
   const mailChases = mailFound.filter((item) => item.kind === "followup" || item.kind === "question");
   const mailAll = mailFound.filter((item) => !mailChases.includes(item));
@@ -850,6 +849,7 @@ export function renderBoard(board, { badge = null } = {}) {
   const keep = (item, key, lastAt, customer, reference) => { const entry = checked(key, lastAt); if (!entry) return true; setAside.push({ customer, reference, lastAt, reason: entry.reason, group: triageGroup(entry.reason) }); return false; };
   const mailNew = mailAll.filter((item) => keep(item, `mail|${item.customerDomain}|${String(item.subject).replace(/^(re|fw|fwd):\s*/gi, "")}`, item.at, item.customerDomain, item.subject));
   const unpriced = unpricedAll.filter((item) => keep(item, `monitor|${item.customer}|${item.reference}`, item.lastActivityAt, item.customer, item.reference));
+  const owed = (monitor?.owed || []).filter((item) => keep(item, `monitor|${item.customer}|${item.reference}`, item.lastActivityAt, item.customer, item.reference));
   // Due today or past due, from every source: cards, mail-check rows, and
   // the monitor's lists without a page.
   const dueItems = [
