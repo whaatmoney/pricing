@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { progressHtml } from "../../bot/lib/design.js";
-import { buildBoard, caseGroup, confidenceRank, latestMessageLink, mirrorPages, monitorLink, progressOf, quoteSentStatus, readBrandBadge, renderBoard, writeBoard } from "../../bot/lib/board.js";
+import { buildBoard, caseGroup, confidenceRank, potentialValue, latestMessageLink, mirrorPages, monitorLink, progressOf, quoteSentStatus, readBrandBadge, renderBoard, writeBoard } from "../../bot/lib/board.js";
 import { buildDecision } from "../../bot/lib/decision.js";
 import { readManifest } from "../../bot/lib/router-snapshot.js";
 import { isCloudOnly, readLastSync, runSync } from "../../bot/lib/sync.js";
@@ -51,6 +51,21 @@ test("a case leaves the waiting list only when the monitor's status says a quote
   assert.match(html, /data-sort="newest"[^>]*>Newest first/);
   assert.match(html, /data-sort="confident"[^>]*>Most confident<\/button><button type="button" data-sort="unsure"[^>]*>Least confident/);
   assert.match(html, /data-case="[^"]+" data-asked="[^"]*" data-confidence="[0-3]"/, "cards carry a confidence sort key");
+  assert.match(html, /data-sort="value"[^>]*>Highest value/);
+  assert.match(html, /data-confidence="[0-3]" data-value="-?[\d.]+"/, "cards carry a value sort key");
+});
+
+test("potential value: whole PO with the lot minimum, largest tier for one part, decided prices first, null when unpriced", () => {
+  const line = (lineId, quantity, unitPrice) => ({ lineId, request: { quantity }, recommendation: { preferred: unitPrice == null ? null : { unitPrice }, lotMinimum: { minimum: 350 } } });
+  const empty = { current: new Map() };
+  const multi = { lines: [line("L1", 18, 8), line("L2", 46, 8)], poLotMinimum: { lineIds: ["L1", "L2"], minimum: 350 } };
+  assert.deepEqual(potentialValue(multi, empty), { amount: 512, kind: "po", partial: false });
+  const small = { lines: [line("L1", 3, 8), line("L2", 5, null)], poLotMinimum: { lineIds: ["L1", "L2"], minimum: 350 } };
+  assert.deepEqual(potentialValue(small, empty), { amount: 350, kind: "po", partial: true });
+  const tiers = { lines: [line("L1", 43, 13.5), line("L2", 170, 13.5)], poLotMinimum: null };
+  assert.deepEqual(potentialValue(tiers, empty), { amount: 2295, kind: "tiers", partial: false });
+  assert.equal(potentialValue(tiers, { current: new Map([["L2", { choice: "alternative", unitPrice: 12 }]]) }).amount, 2040);
+  assert.equal(potentialValue({ lines: [line("L1", 10, null)], poLotMinimum: null }, empty), null);
 });
 
 test("confidence sort key: High 3, Medium 2, Low 1, and 0 while a line has no price", () => {

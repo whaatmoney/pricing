@@ -10,7 +10,7 @@ import { ASKING_KINDS, caseMail, foundRows, placeMailEvents, readClaudeMail, sub
 import { isOwnAddress, mailSources, useOrg } from "./org.js";
 import { followupThreads, matchThread, monitorCandidates, readQuotePrepChat } from "./followups.js";
 import { readManifest } from "./router-snapshot.js";
-import { priceSource } from "./review-card.js";
+import { poTotal, priceSource } from "./review-card.js";
 
 // The pricing front door: where the price pages live. One page joins the mail
 // monitor's view of every RFQ with the pricing side's work on it: which RFQs
@@ -340,6 +340,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       })),
       partNumbers,
       confidence: (() => { const grade = caseConfidence(decision.lines, view); return { level: grade.level, reasons: reasonsText(grade.weakest) }; })(),
+      value: potentialValue(decision, view),
       feedback: lifecycle.entries.filter((entry) => entry.type === "method-review" || entry.choice === "correction").map((entry) => ({ ...entry, caseId })),
       events: caseEvents({ caseId, version, decision, lifecycle, monitor, sent, mailSent: mail?.sent }),
       get progress() { return progressOf({ decision, lines: this.lines, monitor, sent, firstPricedAt: firstBuilt(outputsDir, caseId, version, decision), sentAtOverride: monitorSent ? null : mail?.sent?.at || null }); },
@@ -741,6 +742,39 @@ function mailRow(email) {
   return parts.length ? `<div class="mail-row">${parts.join("")}</div>` : "";
 }
 
+// What the quote could be worth, for the Highest value sort and the card chip:
+// a multi-part RFQ is the whole PO (every priced line, lot minimum as the
+// floor); a one-part RFQ quoted at several quantities is its largest tier.
+// Decided prices count over suggested ones. Null when nothing is priced.
+export function potentialValue(decision, view) {
+  const priceOf = (line) => {
+    const recorded = view?.current.get(line.lineId);
+    const decided = recorded && recorded.choice !== "correction" ? recorded : null;
+    return decided?.unitPrice ?? line.recommendation.preferred?.unitPrice ?? null;
+  };
+  const po = poTotal(decision, view);
+  if (po) {
+    const counted = decision.lines.filter((line) => decision.poLotMinimum.lineIds.includes(line.lineId));
+    if (counted.every((line) => priceOf(line) == null)) return null;
+    return { amount: po.charge, kind: "po", partial: po.unpriced.length > 0 };
+  }
+  const tiers = decision.lines.map((line) => {
+    const unit = priceOf(line);
+    if (unit == null) return null;
+    return Math.max(Math.round(unit * line.request.quantity * 100) / 100, line.recommendation.lotMinimum?.minimum ?? 0);
+  }).filter((amount) => amount != null);
+  if (!tiers.length) return null;
+  return { amount: Math.max(...tiers), kind: decision.lines.length > 1 ? "tiers" : "single", partial: tiers.length < decision.lines.length };
+}
+
+function valueChip(value) {
+  if (!value) return "";
+  const amount = `$${Math.round(value.amount).toLocaleString("en-US")}`;
+  const text = value.kind === "tiers" ? `up to ${amount}` : `${amount} potential`;
+  const title = value.kind === "po" ? "Whole PO at the decided or suggested prices, lot minimum as the floor" : value.kind === "tiers" ? "Largest quantity tier at its decided or suggested price" : "Quantity times the decided or suggested price, lot minimum as the floor";
+  return `<span class="chip muted value-chip" title="${title}${value.partial ? "; some lines not priced yet" : ""}">${text}${value.partial ? "+" : ""}</span>`;
+}
+
 // Sort key for the board's confidence sorts: High 3, Medium 2, Low 1, and 0
 // when any line has no price yet (those always sort last).
 export function confidenceRank(kase) {
@@ -755,12 +789,12 @@ function caseCard(kase, now) {
     kase.open && kase.staleSnapshot ? `Priced on ${esc(kase.priceSnapshot)}; newer Router History is in. Ask to rebuild.` : "",
   ].filter(Boolean);
   const open = group === "ready" || group === "facts";
-  return `<article class="card is-${group}" id="case-${esc(kase.caseId)}" data-page="${esc(kase.page)}" data-case="${esc(kase.caseId)}" data-asked="${esc(kase.askedAt || "")}" data-confidence="${confidenceRank(kase)}">
+  return `<article class="card is-${group}" id="case-${esc(kase.caseId)}" data-page="${esc(kase.page)}" data-case="${esc(kase.caseId)}" data-asked="${esc(kase.askedAt || "")}" data-confidence="${confidenceRank(kase)}" data-value="${kase.value ? kase.value.amount : -1}">
     <div class="card-head">
       <div class="card-title">
         <a class="card-link" href="${esc(kase.page)}">${esc(kase.customer)}</a>
         <p class="ref">${esc(kase.reference || kase.caseId)}</p>
-        <p class="marks">${open ? progressHtml(kase.progress, { compact: true }) : ""}${kase.askedAt ? `<span class="chip muted">Asked ${day(kase.askedAt)}</span>` : ""}${dueChip(kase, now)}${chaseChip(kase.followup, now)}${mailChip(kase, now)}<span class="chip ok done-mark">${ICON.check}Done</span><span class="chip muted opened-mark">${ICON.check}Opened</span></p>
+        <p class="marks">${open ? progressHtml(kase.progress, { compact: true }) : ""}${kase.askedAt ? `<span class="chip muted">Asked ${day(kase.askedAt)}</span>` : ""}${valueChip(kase.value)}${dueChip(kase, now)}${chaseChip(kase.followup, now)}${mailChip(kase, now)}<span class="chip ok done-mark">${ICON.check}Done</span><span class="chip muted opened-mark">${ICON.check}Opened</span></p>
       </div>
       ${headline(kase, group)}
     </div>
@@ -904,7 +938,7 @@ ${BOARD_STYLE}
     <p class="eyebrow">QPC · RFQ pricing</p>
     <h1 class="summary">${summary}</h1>
     ${claudeRunLine(claude)}
-    <div class="sortbar" role="group" aria-label="Sort the cards"><span>Sort</span><button type="button" data-sort="urgent" aria-pressed="true">Most urgent</button><button type="button" data-sort="newest" aria-pressed="false">Newest first</button><button type="button" data-sort="oldest" aria-pressed="false">Oldest first</button><button type="button" data-sort="confident" aria-pressed="false">Most confident</button><button type="button" data-sort="unsure" aria-pressed="false">Least confident</button></div>
+    <div class="sortbar" role="group" aria-label="Sort the cards"><span>Sort</span><button type="button" data-sort="urgent" aria-pressed="true">Most urgent</button><button type="button" data-sort="newest" aria-pressed="false">Newest first</button><button type="button" data-sort="oldest" aria-pressed="false">Oldest first</button><button type="button" data-sort="confident" aria-pressed="false">Most confident</button><button type="button" data-sort="unsure" aria-pressed="false">Least confident</button><button type="button" data-sort="value" aria-pressed="false">Highest value</button></div>
   </div>
 
   ${dueItems.length ? section("due", "Due now", dueItems.length, "Due today or past due, with a page or without one. Each should have a quote or an answer before the day ends.", dueStrip(dueItems, now)) : ""}
@@ -980,7 +1014,9 @@ ${SCRIPT}
   // Confidence: High 3, Medium 2, Low 1; 0 = a line still has no price, always last.
   const rank = (card) => Number(card.dataset.confidence || 0);
   const byConfidence = (direction) => (a, b) => (rank(a) === 0) - (rank(b) === 0) || direction * (rank(b) - rank(a)) || a.dataset.order - b.dataset.order;
-  const order = { urgent: (a, b) => a.dataset.order - b.dataset.order, newest: (a, b) => byAsked(b, a), oldest: byAsked, confident: byConfidence(1), unsure: byConfidence(-1) };
+  const order = { urgent: (a, b) => a.dataset.order - b.dataset.order, newest: (a, b) => byAsked(b, a), oldest: byAsked, confident: byConfidence(1), unsure: byConfidence(-1),
+    // Highest value first; cards with nothing priced (-1) last.
+    value: (a, b) => Number(b.dataset.value) - Number(a.dataset.value) || a.dataset.order - b.dataset.order };
   const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   // Cards glide to their new place (first/last/invert/play) so the eye can follow.
   const arrange = (animate = true) => {
