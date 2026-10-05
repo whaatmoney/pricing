@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { progressHtml } from "../../bot/lib/design.js";
-import { buildBoard, caseGroup, confidenceRank, factsLine, potentialValue, latestMessageLink, mirrorPages, monitorLink, progressOf, quoteSentStatus, readBrandBadge, renderBoard, writeBoard } from "../../bot/lib/board.js";
+import { buildBoard, caseGroup, confidenceRank, factsLine, lastDueRefresh, potentialValue, latestMessageLink, mirrorPages, monitorLink, progressOf, quoteSentStatus, readBrandBadge, renderBoard, writeBoard } from "../../bot/lib/board.js";
 import { buildDecision } from "../../bot/lib/decision.js";
 import { readManifest } from "../../bot/lib/router-snapshot.js";
 import { isCloudOnly, readLastSync, runSync } from "../../bot/lib/sync.js";
@@ -73,6 +73,20 @@ test("the FACTS copy line names the customer and the RFQ, not the part twice, an
   assert.equal(factsLine(kase, "ABC-100"), "FACTS Acme / RFQ-AB-1001 / ABC-100: _ x _ x _ in");
   assert.equal(factsLine({ customer: "Beta Inc.", monitor: { reference: "ABC-100 / cl2" }, lines: [{ partNumber: "ABC-100" }] }, "ABC-100"), "FACTS Beta / cl2 / ABC-100: _ x _ x _ in");
   assert.equal(factsLine({ customer: "Gamma LLC", monitor: null, lines: [] }, "X-1"), "FACTS Gamma / [RFQ] / X-1: _ x _ x _ in");
+});
+
+test("a board on a weekday timetable is stale only when a scheduled refresh did not arrive", () => {
+  const schedule = { days: [1, 2, 3, 4, 5], firstUtc: "14:35", lastUtc: "23:35", everyMinutes: 60, graceMinutes: 30 };
+  const at = (iso) => Date.parse(iso);
+  // 2026-10-04 is a Sunday: the newest due run is Friday's last one.
+  assert.equal(lastDueRefresh(schedule, at("2026-10-05T03:00:00Z")), at("2026-10-02T23:35:00Z"));
+  // Monday before the first run plus grace: still Friday's.
+  assert.equal(lastDueRefresh(schedule, at("2026-10-05T15:00:00Z")), at("2026-10-02T23:35:00Z"));
+  assert.equal(lastDueRefresh(schedule, at("2026-10-05T15:05:00Z")), at("2026-10-05T14:35:00Z"));
+  assert.equal(lastDueRefresh(schedule, at("2026-10-05T18:10:00Z")), at("2026-10-05T17:35:00Z"));
+  // Overnight on a weekday: that day's last run.
+  assert.equal(lastDueRefresh(schedule, at("2026-10-06T08:00:00Z")), at("2026-10-05T23:35:00Z"));
+  assert.equal(lastDueRefresh({ ...schedule, days: [] }, at("2026-10-05T18:10:00Z")), null);
 });
 
 test("confidence sort key: High 3, Medium 2, Low 1, and 0 while a line has no price", () => {
@@ -222,7 +236,12 @@ test("a stopped monitor shows as stale even when its own file says it is fresh, 
   const html = renderBoard(stopped);
   assert.match(html, /Codex mail monitor data is STALE: its last successful check was/);
   assert.match(html, /const generated = Date\.parse\("2026-09-28T06:00:00\.000Z"\)/);
-  assert.match(html, /The pricing sync or this Mac may have stopped/);
+  assert.match(html, /The pricing sync may have stopped/);
+  assert.match(html, /const schedule = null;/);
+  const timed = renderBoard({ ...stopped, refreshSchedule: { days: [1, 2, 3, 4, 5], firstUtc: "14:35", lastUtc: "23:35", everyMinutes: 60, label: "cloud run" } });
+  assert.match(timed, /const schedule = \{"days":\[1,2,3,4,5\],"firstUtc":"14:35"/);
+  assert.match(timed, /This board missed its scheduled refresh/);
+  assert.match(timed, /const lastDueRefresh = function lastDueRefresh\(schedule, nowMs\)/);
 });
 
 test("an export OneDrive has not downloaded is reported as waiting, not read and failed", () => {

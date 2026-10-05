@@ -28,6 +28,27 @@ export const MONITOR_STALE_MINUTES = 120;
 // this window means the sync (or the machine running it) has stopped.
 export const BOARD_STALE_MINUTES = 120;
 
+// When the board is rebuilt on a timetable (config.refreshSchedule: days of the
+// week, first and last run of the day and the step between runs, all in UTC, as
+// the scheduler states them), the newest run that should already have landed.
+// A board built before it has missed a refresh; a board opened at night or on a
+// weekend has not. Null when no run was due in the last week. Self-contained:
+// the board page embeds this function's source.
+export function lastDueRefresh(schedule, nowMs) {
+  const [firstHour, firstMinute] = schedule.firstUtc.split(":").map(Number);
+  const [lastHour, lastMinute] = schedule.lastUtc.split(":").map(Number);
+  const step = (schedule.everyMinutes || 60) * 60000;
+  const grace = (schedule.graceMinutes == null ? 30 : schedule.graceMinutes) * 60000;
+  for (let back = 0; back < 8; back++) {
+    const day = new Date(nowMs - back * 86400000);
+    if (!schedule.days.includes(day.getUTCDay())) continue;
+    const first = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), firstHour, firstMinute);
+    const last = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), lastHour, lastMinute);
+    for (let slot = last; slot >= first; slot -= step) if (slot + grace <= nowMs) return slot;
+  }
+  return null;
+}
+
 const usd = (value) => (value == null ? "—" : `$${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 // Date-only values ("2026-09-23") are shown as written; timestamps in local time.
 const day = (iso) => {
@@ -280,7 +301,7 @@ function caseEvents({ caseId, version, decision, lifecycle, monitor, sent, mailS
   return events;
 }
 
-export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, triagePath = null, now = new Date() }) {
+export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, triagePath = null, refreshSchedule = null, now = new Date() }) {
   if (org) useOrg(org);
   const mailCache = readMailCache(mailCachePath);
   const ownerOf = (href) => privateOwner(href, mailboxIdPrefixes, sharedMailbox);
@@ -431,7 +452,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
   const history = [...tracker.history.map((item) => ({ ...item, source: "log" })), ...cases.flatMap((kase) => kase.events)]
     .filter((item) => item.at)
     .sort((a, b) => b.at.localeCompare(a.at));
-  return { generatedAt: now.toISOString(), cases, monitor, lastSync, history, mailFound, mailPlacements: placements, triage: readTriage(triagePath), claudeMail: claudeMailView(claudeMail, now), chasing };
+  return { generatedAt: now.toISOString(), refreshSchedule, cases, monitor, lastSync, history, mailFound, mailPlacements: placements, triage: readTriage(triagePath), claudeMail: claudeMailView(claudeMail, now), chasing };
 }
 
 // What the board says about Claude's own mail check: how far it reached,
@@ -986,10 +1007,22 @@ ${board.chasing ? ` · front desk chat read ${when(board.chasing.readAt)}` : ""}
 // Checked when the page is opened, so a board nothing has rebuilt still says so.
 (() => {
   const generated = Date.parse(${JSON.stringify(board.generatedAt)});
+  const schedule = ${JSON.stringify(board.refreshSchedule || null)};
+  const banner = document.getElementById("board-stale");
+  const built = new Date(generated).toLocaleString();
+  if (schedule) {
+    // Rebuilt on a timetable: stale only when a scheduled refresh did not arrive.
+    const lastDueRefresh = ${lastDueRefresh.toString()};
+    const due = lastDueRefresh(schedule, Date.now());
+    if (due != null && generated < due) {
+      banner.textContent = "This board missed its scheduled refresh (due " + new Date(due).toLocaleString() + "; built " + built + "). The " + (schedule.label || "scheduled run") + " may have failed; do not rely on it until it refreshes.";
+      banner.hidden = false;
+    }
+    return;
+  }
   const minutes = (Date.now() - generated) / 60000;
   if (minutes > ${BOARD_STALE_MINUTES}) {
-    const banner = document.getElementById("board-stale");
-    banner.textContent = "This board has not refreshed for " + Math.round(minutes / 60) + " hours (built " + new Date(generated).toLocaleString() + "). The pricing sync or this Mac may have stopped; do not rely on it until it refreshes.";
+    banner.textContent = "This board has not refreshed for " + Math.round(minutes / 60) + " hours (built " + built + "). The pricing sync may have stopped; do not rely on it until it refreshes.";
     banner.hidden = false;
   }
 })();
@@ -1247,7 +1280,7 @@ export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, t
 // The one place the private config becomes the board's inputs, for every
 // command that writes it.
 export function boardInputs(config) {
-  return { outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null, claudeMailPath: config.claudeMail || null, evidenceDir: config.evidenceDir || null, sharedMailbox: config.sharedMailbox || null, mailboxIdPrefixes: config.mailboxIdPrefixes || null, org: config.org || null, triagePath: config.triageFile || null };
+  return { outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null, claudeMailPath: config.claudeMail || null, evidenceDir: config.evidenceDir || null, sharedMailbox: config.sharedMailbox || null, mailboxIdPrefixes: config.mailboxIdPrefixes || null, org: config.org || null, triagePath: config.triageFile || null, refreshSchedule: config.refreshSchedule || null };
 }
 
 // The commit the board was built from, marked when the working tree has
