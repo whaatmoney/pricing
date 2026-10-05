@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { progressHtml } from "../../bot/lib/design.js";
-import { buildBoard, caseGroup, confidenceRank, potentialValue, latestMessageLink, mirrorPages, monitorLink, progressOf, quoteSentStatus, readBrandBadge, renderBoard, writeBoard } from "../../bot/lib/board.js";
+import { buildBoard, caseGroup, confidenceRank, factsLine, potentialValue, latestMessageLink, mirrorPages, monitorLink, progressOf, quoteSentStatus, readBrandBadge, renderBoard, writeBoard } from "../../bot/lib/board.js";
 import { buildDecision } from "../../bot/lib/decision.js";
 import { readManifest } from "../../bot/lib/router-snapshot.js";
 import { isCloudOnly, readLastSync, runSync } from "../../bot/lib/sync.js";
@@ -66,6 +66,13 @@ test("potential value: whole PO with the lot minimum, largest tier for one part,
   assert.deepEqual(potentialValue(tiers, empty), { amount: 2295, kind: "tiers", partial: false });
   assert.equal(potentialValue(tiers, { current: new Map([["L2", { choice: "alternative", unitPrice: 12 }]]) }).amount, 2040);
   assert.equal(potentialValue({ lines: [line("L1", 10, null)], poLotMinimum: null }, empty), null);
+});
+
+test("the FACTS copy line names the customer and the RFQ, not the part twice, and drops weight", () => {
+  const kase = { customer: "The Acme Company (Acme Space Systems)", monitor: { reference: "RFQ-AB-1001 / Seals" }, lines: [{ partNumber: "ABC-100" }] };
+  assert.equal(factsLine(kase, "ABC-100"), "FACTS Acme / RFQ-AB-1001 / ABC-100: _ x _ x _ in");
+  assert.equal(factsLine({ customer: "Beta Inc.", monitor: { reference: "ABC-100 / cl2" }, lines: [{ partNumber: "ABC-100" }] }, "ABC-100"), "FACTS Beta / cl2 / ABC-100: _ x _ x _ in");
+  assert.equal(factsLine({ customer: "Gamma LLC", monitor: null, lines: [] }, "X-1"), "FACTS Gamma / [RFQ] / X-1: _ x _ x _ in");
 });
 
 test("confidence sort key: High 3, Medium 2, Low 1, and 0 while a line has no price", () => {

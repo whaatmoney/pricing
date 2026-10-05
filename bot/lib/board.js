@@ -585,11 +585,22 @@ function relativeDay(iso, now) {
   const days = Math.round((Date.parse(`${localDay(now.toISOString())}T12:00:00Z`) - Date.parse(`${localDay(iso)}T12:00:00Z`)) / 86400000);
   return days === 0 ? "today" : days === 1 ? "yesterday" : day(iso);
 }
-// A ready-to-fill FACTS line per unpriced part, for the quote-prep chat.
+// A ready-to-fill FACTS line per unpriced part, for the quote-prep chat. It
+// names the customer and RFQ so the chat reader can tell pages apart when a
+// part number is on more than one (pricing owner 2026-10-04: "also needs to take into
+// account what RFQ it is and customer"); weight is left off (prints don't carry it).
+export function factsLine(kase, part) {
+  const customer = String(kase.customer || "").replace(/\s*\(.*\)\s*$/, "").replace(/^the\s+/i, "")
+    .replace(/[\s,]+(inc|incorporated|corp|corporation|co|company|llc|ltd)\.?$/i, "").trim() || "[customer]";
+  const partKey = (text) => String(text).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const parts = new Set((kase.lines || []).map((line) => partKey(line.partNumber)));
+  const rfq = String(kase.monitor?.reference || "").split("/").map((item) => item.trim()).find((item) => item && !parts.has(partKey(item))) || "[RFQ]";
+  return `FACTS ${customer} / ${rfq} / ${part}: _ x _ x _ in`;
+}
 function factsTemplates(kase) {
   const parts = [...new Set(kase.lines.filter((line) => line.suggested == null && !line.decided).map((line) => line.partNumber))];
   if (!parts.length) return "";
-  return `<div class="mail-row facts-row">${parts.map((part) => { const line = `FACTS ${part}: _ x _ x _ in, _ lb`; return `<button type="button" class="copy-chip above" data-copy="${esc(line)}" data-label="${esc(line)}" title="Copy, fill in and post in the QUOTE PREP TRACKER chat">${ICON.copy}<span>${esc(line)}</span></button>`; }).join("")}</div>`;
+  return `<div class="mail-row facts-row">${parts.map((part) => { const line = factsLine(kase, part); return `<button type="button" class="copy-chip above" data-copy="${esc(line)}" data-label="${esc(line)}" title="Copy, fill in and post in the QUOTE PREP TRACKER chat">${ICON.copy}<span>${esc(line)}</span></button>`; }).join("")}</div>`;
 }
 
 // Opens the email with the request's attachments; the file names are in the tooltip.
@@ -945,7 +956,7 @@ ${BOARD_STYLE}
 
   ${grouped.ready.length ? section("ready", "Ready for your yes", grouped.ready.length, "Each has a suggested price. Click a card to open its price page, then approve it or give yours.", `<div class="cards">${grouped.ready.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
 
-  ${grouped.facts.length ? section("facts", "Needs facts first", grouped.facts.length, "No price until the missing fact is in. Open the attachments or ask the customer, then post the size in the QUOTE PREP TRACKER chat as <b>FACTS part-number: L x W x H in, weight lb</b> (copy the line on each card). Claude reprices the page within the hour.", `<div class="cards">${grouped.facts.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
+  ${grouped.facts.length ? section("facts", "Needs facts first", grouped.facts.length, "No price until the missing fact is in. Open the attachments or ask the customer, then post the size in the QUOTE PREP TRACKER chat as <b>FACTS customer / RFQ / part number: L x W x H in</b> (copy the line on each card). To get the size, open the print in your browser and ask Gemini: <i>calculate the envelope dimensions (L x W x H, ID in inches)</i>. Claude reprices the page within the hour.", `<div class="cards">${grouped.facts.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
 
   ${openCount ? "" : `<p class="empty">${ICON.check}<span>Nothing waiting. Every priced RFQ has a decision.</span></p>`}
 
