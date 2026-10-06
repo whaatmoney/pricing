@@ -147,16 +147,37 @@ export function monitorLink(decision, queue) {
 // ("Customer confirmed quote receipt", "confirmed receipt of the quote").
 // So does QPC telling the customer an earlier quote still stands ("Prior quote
 // confirmed valid in customer-facing response").
-const SENT_CLAUSE = /\bquote\s+(?:\w+\s+){0,2}sent\b|\bsent\s+(?:an?\s+|the\s+)?(?:\w+\s+)?quote\b|\bquoted\b|\b(?:confirmed|acknowledged)\s+(?:the\s+)?quote\s+receipt\b|\bquote\s+receipt\s+(?:confirmed|acknowledged)\b|\b(?:confirmed|acknowledged)\s+receipt\s+of\s+(?:the\s+|our\s+)?quote\b|\bquote\s+confirmed\s+valid\s+in\s+customer-facing\b/i;
+// A sent estimate or price is a sent quote too ("Estimate sent by Pat",
+// "QPC sends two-line prices", "Pricing confirmed to customer"), and so is a
+// customer acknowledging or thanking QPC for one ("Customer acknowledged
+// quote", "thanked QPC after quote"), found by a TypeSafe shadow check
+// (pricing owner, 2026-10-06).
+const SENT_CLAUSE = /\bquote\s+(?:\w+\s+){0,2}sent\b|\bsent\s+(?:an?\s+|the\s+)?(?:\w+\s+)?quote\b|\bquoted\b|\b(?:confirmed|acknowledged)\s+(?:the\s+)?quote\s+receipt\b|\bquote\s+receipt\s+(?:confirmed|acknowledged)\b|\b(?:confirmed|acknowledged)\s+receipt\s+of\s+(?:the\s+|our\s+)?quote\b|\bquote\s+confirmed\s+valid\s+in\s+customer-facing\b|\b(?:estimate|pricing|prices?|price\s+list)\s+(?:[\w-]+\s+){0,2}sent\b|\bsen(?:t|ds)\s+(?:[\w-]+\s+){0,2}(?:estimate|pricing|prices?)\b|\bpricing\s+confirmed\s+to\s+(?:the\s+)?customer\b|\backnowledged\s+(?:the\s+|our\s+)?quote\b|\bafter\s+(?:the\s+|our\s+)?quote\b(?!\s+(?:request|approval|review))|\bthank(?:s|ed)\s+(?:QPC\s+)?for\s+(?:the\s+|our\s+)?(?:[\w-]+\s+){0,2}(?:quote|price|pricing)(?:\s+confirmation)?\b/i;
 const DOUBT = /\b(?:not|no|never|unverified|unconfirmed|provisional|pending|draft|per ledger|will|shall|would|to be|going to|plan|plans|planned|scheduled|tomorrow|later|awaiting)\b/i;
 const BARE_DOUBT = /^(?:still\s+)?(?:unverified|unconfirmed|provisional|not verified|not confirmed)\.?$/i;
+// A completion, pickup or shipping date estimate is not a price ("October8
+// completion estimate sent", "QPC confirms receipt and October16 estimate").
+const MONTH = "(?:January|February|March|April|May|June|July|August|September|October|November|December)";
+const DATE_ESTIMATE = new RegExp(`\\b(?:(?:completion|pickup|pick-up|ship(?:ping|ment)?|delivery|ready|readiness|ECD)\\s+(?:date\\s+)?estimates?|estimated\\s+(?:completion|pickup|ship(?:ping|ment)?|delivery|ready)|${MONTH}\\s*\\d{1,2}\\s+(?:completion\\s+)?estimates?)\\b`, "gi");
+const withoutDateEstimates = (text) => String(text || "").replace(DATE_ESTIMATE, " ");
 export function quoteSentStatus(status) {
-  const clauses = String(status || "").split(/\s*[;/]\s*/).map((clause) => clause.trim()).filter(Boolean);
+  const clauses = withoutDateEstimates(status).split(/\s*[;/]\s*/).map((clause) => clause.trim()).filter(Boolean);
   if (clauses.some((clause) => BARE_DOUBT.test(clause))) return false;
   return clauses.some((clause) => SENT_CLAUSE.test(clause) && !DOUBT.test(clause));
 }
-// Section 1 also holds acknowledgment, timing and technical follow-ups.
+// Section 1 also holds acknowledgment, timing and technical follow-ups. The
+// board is where every RFQ gets caught, so when in doubt an entry stays
+// (pricing owner, 2026-10-06): any inquiry counts except one plainly about dates or
+// paperwork (an ECD, pickup, completion, shipping, documentation, NDA or audit
+// inquiry).
 export const PRICING_REQUEST = /\bRFQ\b|\bquot|\bpric|\bestimat|\bbudgetary\b|\binquir/i;
+const NOT_PRICE_INQUIRY = /\b(?:ECD|pickup|pick-up|completion|ship(?:ping|ment)?|delivery|tracking|documentation|document|paperwork|NDA|audit|NVR)(?:\s+and\s+[\w-]+)?\s+inquir(?:y|ies)\b/gi;
+export const isPricingRequest = (text) => PRICING_REQUEST.test(withoutDateEstimates(text).replace(NOT_PRICE_INQUIRY, " "));
+// The customer withdrew, cancelled or asked QPC to disregard the RFQ, quote or
+// inquiry itself; something else withdrawn ("UPS-account request withdrawn")
+// does not take an entry off the board.
+const WITHDRAWN = /\b(?:RFQ|quote|inquiry)\s+(?:[\w-]+\s+){0,2}(?:withdr\w*|disregard\w*|cancel\w*)|\b(?:withdr\w*|disregard\w*|cancel\w*)\s+(?:the\s+|their\s+|its\s+)?(?:[\w-]+\s+){0,2}(?:RFQ|quote|inquiry)\b/i;
+export const isQuoteOwed = (text) => isPricingRequest(text) && !WITHDRAWN.test(String(text || ""));
 
 // The log of rulings, builds and commits lives in a private
 // tracker file (config.trackerFile), kept by the Claude session; the board
@@ -419,7 +440,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       reference: item.reference,
       section: item.priority_section,
       status: item.status,
-      pricing: PRICING_REQUEST.test(`${item.reference} ${item.status}`),
+      pricing: isPricingRequest(`${item.reference} ${item.status}`),
       lastActivityAt: item.last_observed_activity_at || null,
       dueDate: item.explicit_due_date || null,
       dueBasis: item.due_basis || item.due_date_basis || null,
@@ -445,7 +466,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       withoutPage: waiting.filter((item) => !covered.has(item.reference)).map(row).sort(oldestFirst),
       // Section 2: the customer got an acknowledgment, not a price. The quote
       // is still owed, but nothing else on the board lists these.
-      owed: queue.filter((item) => item.priority_section === 2 && !covered.has(item.reference) && !shownByMail.has(item.reference) && PRICING_REQUEST.test(`${item.reference} ${item.status}`) && !quoteSentStatus(item.status)).map(row).sort(oldestFirst),
+      owed: queue.filter((item) => item.priority_section === 2 && !covered.has(item.reference) && !shownByMail.has(item.reference) && isQuoteOwed(`${item.reference} ${item.status}`) && !quoteSentStatus(item.status)).map(row).sort(oldestFirst),
     };
   }
   const tracker = readTracker(trackerPath);

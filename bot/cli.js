@@ -42,6 +42,9 @@ const USAGE = `Usage:
   node bot/cli.js sync [--trigger NAME]  Import any new Router History export and rebuild the board
                                          (what the background job runs; safe to repeat)
   node bot/cli.js board                  Rewrite the open-decisions page
+  node bot/cli.js shadow                 TypeSafe shadow check: where its answers disagree with the
+                                         board's "quote sent", "price request" and chase-urgency rules
+                                         (needs TYPESAFE_API_KEY; changes nothing on the board)
   node bot/cli.js jobs <case.json>       The customer's job numbers for each line, from Router
                                          History, and which ones the saved evidence mentions`;
 
@@ -228,6 +231,39 @@ async function main() {
   }
   if (command === "board") {
     console.log(`Board: ${refreshBoard(config)}`);
+    return;
+  }
+  if (command === "shadow") {
+    // Shadow trial (pricing owner, 2026-10-06). Read-only
+    // for the board; writes only its own cache and report in the private store.
+    const { readCache, writeCache } = await import("./lib/typesafe.js");
+    const { runShadow } = await import("./lib/shadow.js");
+    const { readQuotePrepChat } = await import("./lib/followups.js");
+    const dir = config.typesafeShadowDir || path.join(path.dirname(config.storeDir), "typesafe-shadow");
+    const cacheFile = path.join(dir, "cache.json");
+    const cache = readCache(cacheFile);
+    const queue = fs.existsSync(config.monitorState) ? readJson(config.monitorState).operational_queue || [] : [];
+    const chat = readQuotePrepChat(config.quotePrepChat);
+    let report;
+    try {
+      report = await runShadow({ queue, chatMessages: chat?.messages || [], cache });
+    } finally {
+      writeCache(cacheFile, cache);
+    }
+    fs.writeFileSync(path.join(dir, "latest.json"), `${JSON.stringify(report, null, 1)}\n`);
+    fs.appendFileSync(path.join(dir, "runs.jsonl"), `${JSON.stringify({ at: report.at, model: report.model, tokens: report.tokens, monitor: { judged: report.monitor.judged, disagree: report.monitor.rows.length, errors: report.monitor.errors.length }, chases: { judged: report.chases.judged, disagree: report.chases.rows.length, errors: report.chases.errors.length } })}\n`);
+    const pct = (p) => `${Math.round(p * 100)}%`;
+    console.log(`TypeSafe shadow check (${report.model}), ${report.at.slice(0, 16)}Z. Tokens sent this run: ${report.tokens} (cached answers are not resent).`);
+    console.log(`Mail monitor: ${report.monitor.judged} statuses judged, ${report.monitor.rows.length} disagreement(s).`);
+    for (const row of report.monitor.rows) console.log(`  [${row.check}, section ${row.section}] rule ${row.rule ? "yes" : "no"} vs TypeSafe ${pct(row.typesafe)}${row.band === "unsure" ? " (unsure)" : ""}: ${row.effect}${row.ruleFromReferenceOnly ? " (rule matched the reference, which TypeSafe does not see)" : ""}\n      ${row.customer} · ${row.reference}\n      "${row.status}"`);
+    console.log(`Quote-prep chases: ${report.chases.judged} threads judged, ${report.chases.rows.length} disagreement(s).`);
+    for (const row of report.chases.rows) console.log(`  rule ${row.rule}${row.ruleWord ? ` ("${row.ruleWord}")` : ""} vs TypeSafe ${row.typesafe} (${pct(row.confidence)} confident): ${row.company} · ${row.subject} · ${row.posts} post(s), last ${String(row.lastAt).slice(0, 10)}`);
+    const errors = [...report.monitor.errors, ...report.chases.errors];
+    if (errors.length) {
+      console.log(`${errors.length} call(s) failed: ${errors.slice(0, 3).join("; ")}`);
+      process.exitCode = 1;
+    }
+    console.log(`Report: ${path.join(dir, "latest.json")}`);
     return;
   }
   if (command === "mail-scorecard") {

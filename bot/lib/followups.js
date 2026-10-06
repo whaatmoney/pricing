@@ -6,8 +6,8 @@ import fs from "node:fs";
 // quotes an earlier one ("2nd f/u", "due today") joins its thread. The board
 // only reads the store; it never posts in the chat.
 
-const URGENT = /\b(?:due today|urgent|asap|hot|past due|overdue|3rd|third|4th|fourth|in a month|month)\b/i;
-const SOON = /\bdue tomorrow\b/i;
+export const URGENT = /\b(?:due today|urgent|asap|hot|past due|overdue|3rd|third|4th|fourth|in a month|month)\b/i;
+export const SOON = /\bdue tomorrow\b/i;
 const STOP = new Set(["INC", "LLC", "CORP", "CORPORATION", "CO", "COMPANY", "US", "USA", "THE", "LTD", "LIMITED", "INC.", "OF"]);
 
 export function readQuotePrepChat(file) {
@@ -38,8 +38,8 @@ export function parsePost(text) {
 
 const ordinal = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th"}`;
 
-// One entry per chased request: the first post names it, replies count up.
-export function followupThreads(messages) {
+// Each chased request with its posts, oldest first: the first post names it.
+export function groupThreads(messages) {
   const byId = new Map(messages.map((message) => [message.id, message]));
   const rootOf = (message) => {
     let current = message;
@@ -54,7 +54,12 @@ export function followupThreads(messages) {
     if (!threads.has(root.id)) threads.set(root.id, { id: root.id, ...parsed, posts: [] });
     threads.get(root.id).posts.push(message);
   }
-  return [...threads.values()].map((thread) => {
+  return [...threads.values()];
+}
+
+// One entry per chased request: the first post names it, replies count up.
+export function followupThreads(messages) {
+  return groupThreads(messages).map((thread) => {
     const last = thread.posts.at(-1);
     const words = thread.posts.map((post) => post.text).join("\n");
     const count = thread.posts.length;
