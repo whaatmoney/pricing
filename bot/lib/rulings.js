@@ -53,6 +53,13 @@ export const RULINGS = [
     reason: "If there is a match in part numbers but the customer is different, it should still be explored in suggested pricing.",
     rule: "When no accepted PO and no previous quote to this customer apply, the newest price another customer was charged (Router History work order) or quoted by QPC for the same part number within 365 days is the suggested price, ahead of the calculator chain, which is shown beside it. $0 lot-priced and non-ordinary lines are skipped; on the same day a work order leads a quote. A different cleaning level does not disqualify the match but is labelled, and a price quoted for 5x the requested quantity or more, or (quantity unknown) under half the calculator, is labelled a possible large-lot price. Revision is ignored.",
   },
+  {
+    id: "measured-size-v1",
+    date: "2026-10-05",
+    decidedBy: "Quality Manager (pricing owner)",
+    reason: "Sizes posted by the team from a print were wrong on a live RFQ; the same parts had been measured at receiving on an earlier job.",
+    rule: "A size measured at receiving inspection (any customer's job on the same part number) is the size priced, ahead of a size the team posted or read from a print. When a posted or print size disagrees with the measured size, the page and card flag the disagreement instead of silently using either one. Measured sizes are looked up in the receiving inspection posts whenever the lookup is reachable.",
+  },
 ];
 
 export const ACTIVE_RULINGS = RULINGS.map((ruling) => ruling.id);

@@ -269,7 +269,9 @@ function runCalculations(line, rules, calculator) {
     specFee: sq1.specFee,
     aclar: sq1.aclar,
     flags: [sq1.envelope.flag, sq1.cleanliness.flag, sq1.specGroup.flag, sq1.aclar.flag, sq1.weight.flag, `GEOM: ${sq1.geometry.class} (${sq1.geometry.confidence})`, `CAVITY CONFIDENCE ${sq1.cavities.confidence}`]
-      .concat(sq1.lengthSurcharge.flag ? ["ASM: length surcharge assumed $0"] : []),
+      .concat(sq1.lengthSurcharge.flag ? ["ASM: length surcharge assumed $0"] : [])
+      // measured-size-v1: a posted or print size that disagrees with the measured one is shown, not used.
+      .concat(sq1.envelope.disagreement ? [`DIM DISAGREES: ${sq1.envelope.disagreement}`] : []),
   };
   const masterSq2 = sq2NonTube(sq2Input, rules);
   const masterSq2Sensitivity = (line.sq2Sensitivity || []).map((item) => ({

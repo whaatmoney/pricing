@@ -56,10 +56,15 @@ export function lineConfidence(line, { recorded = null } = {}) {
       const caveat = request.drawing?.caveat || "";
       if (/inferred|assum|estimat/i.test(dimFlag) || /inferred|by eye/i.test(caveat)) {
         add(-1, "Dimensions", /by eye/i.test(caveat) ? "Dimensions were read by eye from a drawing preview." : "Part of the size is inferred, not read from a labelled dimension.");
+      } else if (/MEASURED AT RECEIVING/.test(dimFlag)) {
+        add(0, "Dimensions", "Dimensions were measured at receiving on an earlier job.");
       } else if (/DRAWING/.test(dimFlag)) {
         add(0, "Dimensions", "Dimensions come from the drawing.");
       } else {
         add(-1, "Dimensions", "Dimensions are not from the drawing.");
+      }
+      if ((calc.sq2.flags || []).some((flag) => String(flag).startsWith("DIM DISAGREES"))) {
+        add(-1, "Dimensions", "A posted or print size disagrees with the one priced.");
       }
       const c = calc.sq2.components;
       if (c?.bracket) {

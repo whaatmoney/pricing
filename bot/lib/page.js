@@ -113,11 +113,15 @@ function sizeFact(line) {
   const parts = calc.onlineCalculator?.components || {};
   const drawn = line.request.drawing?.dimensions;
   const drawnText = drawn?.summary || (drawn?.maxOdAfterCoating != null ? sizeText(drawn) : null);
-  const team = (calc.sq2?.flags || []).map(String).find((flag) => flag.startsWith("DIM: FROM TEAM"))?.match(/\((.+?)(?:, (\d{4}-\d{2}-\d{2}))?\)/);
-  const inferred = !team && (/\b(?:inferred|assumed|estimated|approx\w*|about)\b/i.test(drawnText || "") || (calc.sq2?.flags || []).some((flag) => String(flag).startsWith("DIM:")));
+  const flags = (calc.sq2?.flags || []).map(String);
+  const team = flags.find((flag) => flag.startsWith("DIM: FROM TEAM"))?.match(/\((.+?)(?:, (\d{4}-\d{2}-\d{2}))?\)/);
+  // measured-size-v1: "DIM: MEASURED AT RECEIVING (WO 1234, 2026-05-11)".
+  const measured = flags.find((flag) => flag.startsWith("DIM: MEASURED AT RECEIVING"))?.match(/\((.+?)\)/);
+  const disagreement = flags.find((flag) => flag.startsWith("DIM DISAGREES: "))?.slice("DIM DISAGREES: ".length);
+  const inferred = !team && !measured && (/\b(?:inferred|assumed|estimated|approx\w*|about)\b/i.test(drawnText || "") || flags.some((flag) => flag.startsWith("DIM:")));
   const classes = [parts.sizeKey, parts.weightKey, parts.complexityKey ? `${parts.complexityKey} complexity` : null].filter(Boolean);
   const main = envelope
-    ? `<span class="dims">${envelope.map(inches).join(" × ")}<small> in</small></span><span class="dims-key">L × W × H priced${inferred ? ' · <span class="chip warn">inferred, confirm on the print</span>' : ""}${team ? ` · <span class="chip muted">from ${esc(team[1])}${team[2] ? `, ${esc(team[2])}` : ""}</span>` : ""}</span>`
+    ? `<span class="dims">${envelope.map(inches).join(" × ")}<small> in</small></span><span class="dims-key">L × W × H priced${inferred ? ' · <span class="chip warn">inferred, confirm on the print</span>' : ""}${measured ? ` · <span class="chip ok">measured at receiving, ${esc(measured[1])}</span>` : ""}${team ? ` · <span class="chip muted">from ${esc(team[1])}${team[2] ? `, ${esc(team[2])}` : ""}</span>` : ""}${disagreement ? ` · <span class="chip warn">disagrees: ${esc(disagreement)}</span>` : ""}</span>`
     : `<span class="dims unknown">Size unknown</span><span class="dims-key">Needed to price. Read it off the drawing or ask the customer.</span>`;
   return `<div class="size-fact"><dt>Size</dt><dd>${main}${classes.length ? `<span class="size-classes">${classes.map((item) => `<span class="chip muted">${esc(item)}</span>`).join("")}</span>` : ""}${drawnText ? `<span class="print-note">Print: ${esc(drawnText)}${drawn.source ? ` <span class="muted">· ${esc(drawn.source)}</span>` : ""}</span>` : ""}</dd></div>`;
 }
