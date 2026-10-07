@@ -44,7 +44,8 @@ const USAGE = `Usage:
   node bot/cli.js board                  Rewrite the open-decisions page
   node bot/cli.js shadow                 TypeSafe shadow check: where its answers disagree with the
                                          board's "quote sent", "price request" and chase-urgency rules
-                                         (needs TYPESAFE_API_KEY; changes nothing on the board)
+                                         (needs TYPESAFE_API_KEY; changes nothing on the board; use
+                                         "npm run bot -- shadow" so fetch honours HTTPS_PROXY)
   node bot/cli.js jobs <case.json>       The customer's job numbers for each line, from Router
                                          History, and which ones the saved evidence mentions`;
 

@@ -7,6 +7,11 @@ import path from "node:path";
 // TYPESAFE_API_KEY environment variable and is never written anywhere. The
 // model is pinned so a TypeSafe release cannot quietly change past answers;
 // move it on purpose and expect new disagreements.
+//
+// In the cloud routine the real key is injected by the run's HTTPS proxy and
+// TYPESAFE_API_KEY is only a placeholder. Node's fetch ignores HTTPS_PROXY unless
+// the process runs with NODE_USE_ENV_PROXY=1, which the "bot" npm script sets;
+// without it the calls go direct and TypeSafe answers 401 (2026-10-07).
 
 export const TYPESAFE_MODEL = "jev-1.13.0";
 export const TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone";
