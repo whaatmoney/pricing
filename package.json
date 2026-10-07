@@ -5,6 +5,6 @@
   "scripts": {
     "test": "node --test --test-isolation=none tests/core.test.js tests/bot/*.test.js",
     "test:production": "node tests/production-workbook.mjs",
-    "bot": "node bot/cli.js"
+    "bot": "NODE_USE_ENV_PROXY=1 node --disable-warning=UNDICI-EHPA bot/cli.js"
   }
 }
