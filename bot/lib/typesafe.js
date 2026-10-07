@@ -7,23 +7,46 @@ import path from "node:path";
 // TYPESAFE_API_KEY environment variable and is never written anywhere. The
 // model is pinned so a TypeSafe release cannot quietly change past answers;
 // move it on purpose and expect new disagreements.
-//
-// In the cloud routine the real key is injected by the run's HTTPS proxy and
-// TYPESAFE_API_KEY is only a placeholder. Node's fetch ignores HTTPS_PROXY unless
-// the process runs with NODE_USE_ENV_PROXY=1, which the "bot" npm script sets;
-// without it the calls go direct and TypeSafe answers 401 (2026-10-07).
 
 export const TYPESAFE_MODEL = "jev-1.13.0";
 export const TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone";
 
+// Node's own fetch ignores HTTPS_PROXY. The cloud routine needs the proxy: it
+// is what puts the real credential on requests to api.typesafe.ai (the key in
+// the environment there is a placeholder), so a request sent direct is refused
+// with 401. When HTTPS_PROXY (or https_proxy) is set, requests go through the
+// undici package's fetch with its proxy agent, which honours HTTPS_PROXY and
+// NO_PROXY. Node's fetch cannot take that agent (the bundled undici is an
+// older major), so the package's own fetch is used with it. With no proxy
+// variable, the request is exactly as before: Node's fetch, direct.
+let proxyAgent = null;
+export async function proxyTransport(env = process.env) {
+  const proxy = env.HTTPS_PROXY || env.https_proxy;
+  if (!proxy) return null;
+  let undici;
+  try {
+    undici = await import("undici");
+  } catch (error) {
+    throw new Error(`HTTPS_PROXY is set but the undici package is not installed (run npm install in the pricing repo): ${error.message}`);
+  }
+  if (proxyAgent?.proxy !== proxy) proxyAgent = { proxy, agent: new undici.EnvHttpProxyAgent() };
+  return { fetch: undici.fetch, dispatcher: proxyAgent.agent };
+}
+
 // One request: { state, questions } -> { model, answers, usage }.
-export async function systemOne({ state, questions, model = TYPESAFE_MODEL, apiKey = process.env.TYPESAFE_API_KEY, fetchImpl = globalThis.fetch }) {
+export async function systemOne({ state, questions, model = TYPESAFE_MODEL, apiKey = process.env.TYPESAFE_API_KEY, fetchImpl }) {
   if (!apiKey) throw new Error("TYPESAFE_API_KEY is not set");
+  const proxy = await proxyTransport();
+  const request = fetchImpl || proxy?.fetch || globalThis.fetch;
   for (let attempt = 1; ; attempt++) {
-    const response = await fetchImpl(TYPESAFE_URL, {
+    const response = await request(TYPESAFE_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model, state, questions }),
+      ...(proxy ? { dispatcher: proxy.dispatcher } : {}),
+    }).catch((error) => {
+      // fetch says only "fetch failed"; the cause names the proxy or network reason.
+      throw new Error(`TypeSafe request failed: ${error.cause?.message || error.message}`);
     });
     if (response.ok) return response.json();
     const retry = response.status === 429 || response.status >= 500;

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runShadow, scrub } from "../../bot/lib/shadow.js";
-import { cacheKey, judgeAll, topLevel } from "../../bot/lib/typesafe.js";
+import { EnvHttpProxyAgent } from "undici";
+import { cacheKey, judgeAll, systemOne, topLevel } from "../../bot/lib/typesafe.js";
 
 // A stand-in for TypeSafe: answers from keywords, records what was sent.
 function fakeTypeSafe() {
@@ -95,4 +96,31 @@ test("helpers: the top Score level and name scrubbing", () => {
   assert.equal(topLevel({}), null);
   assert.equal(scrub("Acme Precision says Acme will wait", ["Acme Precision"], "the customer"), "the customer says the customer will wait");
   assert.equal(scrub("No change", ["", "Al"], "x"), "No change", "short or empty names are left alone");
+});
+
+test("systemOne goes through HTTPS_PROXY when it is set, and direct when it is not", async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true, json: async () => ({ model: "jev-1.13.0", answers: {}, usage: { input_tokens: 1 } }) };
+  };
+  const saved = { HTTPS_PROXY: process.env.HTTPS_PROXY, https_proxy: process.env.https_proxy };
+  try {
+    process.env.HTTPS_PROXY = "http://127.0.0.1:9";
+    delete process.env.https_proxy;
+    await systemOne({ state: { status: "a" }, questions: { sent: {} }, apiKey: "test-key", fetchImpl });
+    assert.ok(calls[0].options.dispatcher instanceof EnvHttpProxyAgent, "a proxy agent is passed with the request");
+    assert.equal(calls[0].options.headers.Authorization, "Bearer test-key", "the key is still sent; the proxy may override it");
+    assert.equal(calls[0].url, "https://api.typesafe.ai/v1/systemone");
+
+    delete process.env.HTTPS_PROXY;
+    await systemOne({ state: { status: "a" }, questions: { sent: {} }, apiKey: "test-key", fetchImpl });
+    assert.equal("dispatcher" in calls[1].options, false, "no proxy variable: Node's fetch, direct, as before");
+
+    process.env.https_proxy = "http://127.0.0.1:9";
+    await systemOne({ state: { status: "a" }, questions: { sent: {} }, apiKey: "test-key", fetchImpl });
+    assert.ok(calls[2].options.dispatcher instanceof EnvHttpProxyAgent, "the lower-case variable counts too");
+  } finally {
+    for (const [name, value] of Object.entries(saved)) value === undefined ? delete process.env[name] : (process.env[name] = value);
+  }
 });
