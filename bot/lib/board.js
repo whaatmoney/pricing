@@ -109,18 +109,24 @@ function shortNameOf(monitorName, customer) {
 // and the two sides share a source email (required whenever the case lists
 // its source emails; otherwise the stated RFQ number must agree). More than
 // one candidate is left unresolved rather than guessed.
-export function monitorLink(decision, queue) {
+//
+// Cases built from Claude's mail check name their source emails by
+// internetMessageId while the monitor stores Outlook item ids; `itemIds` maps
+// one to the other (from the mail check's events), and an explicit reference
+// the monitor does not hold (an email subject) falls back to the checks above.
+export function monitorLink(decision, queue, itemIds = new Map()) {
   const sameCustomer = queue.filter((item) => isSameCustomer(item.customer, decision.customer));
   const explicit = decision.rfq.monitorReference;
-  let candidates;
+  let candidates = [];
   if (explicit) {
     // The monitor often shortens the customer ("Acme" for "Acme Precision
     // Corporation"); with the exact reference the case names, every word of the
     // monitor's name appearing in the case's name or an alias is enough.
     candidates = queue.filter((item) => item.reference === explicit && (isSameCustomer(item.customer, decision.customer) || shortNameOf(item.customer, decision.customer)));
-  } else {
+  }
+  if (!explicit || !queue.some((item) => item.reference === explicit)) {
     const caseRfqs = rfqNumbers(decision.rfq.reference);
-    const caseMessages = new Set((decision.rfq.sourceMessageIds || []).flatMap((id) => [id, id.replace(/_/g, "+")]));
+    const caseMessages = new Set((decision.rfq.sourceMessageIds || []).flatMap((id) => [id, itemIds.get(id)].filter(Boolean)).flatMap((id) => [id, id.replace(/_/g, "+"), id.replace(/\+/g, "_").replace(/\//g, "-")]));
     candidates = sameCustomer.filter((item) => {
       const reference = item.reference || "";
       const samePart = decision.lines.some((line) => {
@@ -333,13 +339,14 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
   const state = monitorStatePath && fs.existsSync(monitorStatePath) ? JSON.parse(fs.readFileSync(monitorStatePath, "utf8")) : null;
   const queue = state?.operational_queue || [];
   const currentSnapshot = storeDir ? readManifest(storeDir).current : null;
+  const itemIds = new Map((claudeMail?.events || []).filter((event) => event.id && event.itemId).map((event) => [event.id, event.itemId]));
 
   const cases = latestDecisions(outputsDir).map(({ caseId, version, file, decision }) => {
     const lifecycle = readLifecycle(lifecyclePath(outputsDir, caseId), caseId);
     const view = lifecycleView(decision, lifecycle);
     const status = displayStatus(decision, view);
     const partNumbers = [...new Set(decision.lines.map((line) => line.request.partNumber))];
-    const link = monitorLink(decision, queue);
+    const link = monitorLink(decision, queue, itemIds);
     const monitor = link.entry;
     const monitorSent = monitor?.priority_section === 3 && quoteSentStatus(monitor.status);
     // Claude's own mail check can see a quote go out before the monitor does.
@@ -489,9 +496,16 @@ function claudeMailView(claudeMail, now) {
 // (section 1, under "No page yet" or on its case) or when the monitor says the
 // quote went out and QPC wrote on the entry after the message. Section 2
 // (acknowledged, quote pending) is not listed, so those customers would
-// otherwise not appear at all.
-const monitorCovers = (entry, event) => entry.priority_section === 1
+// otherwise not appear at all. A section-1 entry covers only messages the
+// monitor has already seen: when Codex is behind, a newer reply (the facts a
+// triaged RFQ was waiting for) is listed by the mail check instead of hidden.
+export const monitorCovers = (entry, event) => (entry.priority_section === 1 && monitorSaw(entry, event.at))
   || (entry.priority_section === 3 && quoteSentStatus(entry.status) && qpcWroteAfter(entry, event.at));
+
+function monitorSaw(entry, at) {
+  const seen = Date.parse(entry.last_observed_activity_at || "");
+  return !Number.isFinite(seen) || !Number.isFinite(Date.parse(at)) || Date.parse(at) <= seen;
+}
 
 // QPC wrote on the entry after `at`: an event from our own domain's address,
 // or, for an entry with no events, an own-domain last sender. A customer's own later
@@ -541,13 +555,14 @@ function readAnswered(file) {
 export function triageGroup(reason) {
   const text = String(reason || "").toLowerCase();
   if (/\banswered\b|already ordered|already quoted|\bordered\b/.test(text)) return "Already answered or ordered";
+  if (/needs? facts|unreadable|quantity is|size (?:is )?unknown|no (?:size|quantity|dimensions)/.test(text)) return "Price request, needs facts";
   if (/protected|encrypted|kiteworks|password/.test(text)) return "Protected files";
   if (/\w+'s (?:call|number)|capability|testing|expedite|supply item/.test(text)) return "Your call";
   if (/waiting|no part|trial|clarification/.test(text)) return "Waiting on the customer";
   return "Paperwork, not pricing";
 }
-const TRIAGE_ORDER = ["Your call", "Waiting on the customer", "Protected files", "Paperwork, not pricing", "Already answered or ordered"];
-const TRIAGE_TONE = { "Your call": "warn", "Waiting on the customer": "muted", "Protected files": "muted", "Paperwork, not pricing": "muted", "Already answered or ordered": "ok" };
+const TRIAGE_ORDER = ["Price request, needs facts", "Your call", "Waiting on the customer", "Protected files", "Paperwork, not pricing", "Already answered or ordered"];
+const TRIAGE_TONE = { "Price request, needs facts": "warn", "Your call": "warn", "Waiting on the customer": "muted", "Protected files": "muted", "Paperwork, not pricing": "muted", "Already answered or ordered": "ok" };
 
 // Items checked and set aside, grouped by why, folded under the section.
 function notPricedTable(items, now) {
@@ -1290,9 +1305,9 @@ export function readBrandBadge(badgePath) {
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
-export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath = null, mailCachePath = null, brandBadgePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, triagePath = null, now }) {
+export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath = null, mailCachePath = null, brandBadgePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, triagePath = null, refreshSchedule = null, now }) {
   const file = path.join(outputsDir, BOARD_FILE);
-  const board = buildBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath, mailCachePath, quotePrepChatPath, claudeMailPath, evidenceDir, sharedMailbox, mailboxIdPrefixes, org, triagePath, now });
+  const board = buildBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath, mailCachePath, quotePrepChatPath, claudeMailPath, evidenceDir, sharedMailbox, mailboxIdPrefixes, org, triagePath, refreshSchedule, now });
   board.codeVersion = codeVersion();
   fs.writeFileSync(file, renderBoard(board, { badge: readBrandBadge(brandBadgePath) }));
   return { file, board };

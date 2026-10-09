@@ -20,12 +20,18 @@ export function writePage({ outputsDir, caseId, version, quoteTemplate = null, m
 }
 
 // Redraws every page on the board with its current email links, so "Latest
-// reply" follows the monitor. Never touches a record or its version.
-export function refreshPages({ outputsDir, board, quoteTemplate = null, now = new Date() }) {
+// reply" follows the monitor. Never touches a record or its version. One page
+// that cannot render is reported in `failures` and skipped, so it never stops
+// the rest of the board from refreshing and publishing.
+export function refreshPages({ outputsDir, board, quoteTemplate = null, now = new Date(), failures = [] }) {
   const updated = [];
   for (const kase of board.cases) {
-    const { changed } = writePage({ outputsDir, caseId: kase.caseId, version: kase.version, quoteTemplate, mail: { rfq: kase.rfqLink || null, rfqOwner: kase.rfqOwner || null, latest: kase.latestLink || null, files: kase.files || null }, progress: kase.progress, now, markdown: false });
-    if (changed) updated.push(kase.page);
+    try {
+      const { changed } = writePage({ outputsDir, caseId: kase.caseId, version: kase.version, quoteTemplate, mail: { rfq: kase.rfqLink || null, rfqOwner: kase.rfqOwner || null, latest: kase.latestLink || null, files: kase.files || null }, progress: kase.progress, now, markdown: false });
+      if (changed) updated.push(kase.page);
+    } catch (error) {
+      failures.push({ caseId: kase.caseId, version: kase.version, message: error.message });
+    }
   }
   return updated;
 }

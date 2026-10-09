@@ -1,4 +1,5 @@
 import { caseConfidence, reasonsText } from "./confidence.js";
+import { GAPS_NOT_RECORDED } from "./decision.js";
 import { lifecycleView } from "./lifecycle.js";
 import { answerLines, approveAllLine, poTotal, quoteSummary, reviewCard, revSuffix } from "./review-card.js";
 export { revSuffix };
@@ -14,6 +15,8 @@ export { renderHtml } from "./page.js";
 const usd = (value) => (value == null ? "—" : `$${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const pct = (value) => `${(value * 100).toFixed(1)}%`;
 const day = (iso) => (iso ? new Date(`${iso.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "—");
+// Records saved before gaps were required carry none; say so rather than crash.
+const emailGaps = (fresh) => (Array.isArray(fresh.email.gaps) ? fresh.email.gaps : [GAPS_NOT_RECORDED]);
 const when = (iso) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 const isBlocked = (result) => Boolean(result?.blocked?.length);
 
@@ -269,7 +272,7 @@ export function renderMarkdown(decision, { lifecycle, quoteTemplate = null } = {
   out.push(`- Router History: ${db.fileName}, exported ${db.exportDate}, received dates ${db.receivedMin}…${db.receivedMax}, ${db.rows} rows, imported ${db.importedAt}; stale ${fresh.database.stale}; unimported newer exports: ${fresh.database.unimportedNewerExports.length || "none"}.`);
   out.push(`- Invoices: ${fresh.invoices.fileName} ${fresh.invoices.dateMin}…${fresh.invoices.dateMax}. ${fresh.invoices.note}`);
   out.push(`- Price Lab package captured ${fresh.rules.priceLab.capturedAt}; online calculator sha256 ${fresh.rules.onlineCalculator.sha256.slice(0, 12)} (formula drift: ${fresh.rules.onlineCalculator.formulaDrift.length ? "YES" : "none"}).`);
-  out.push("", "### Not checked / gaps", "", ...fresh.email.gaps.map((gap) => `- ${gap}`), "");
+  out.push("", "### Not checked / gaps", "", ...emailGaps(fresh).map((gap) => `- ${gap}`), "");
   return out.join("\n");
 }
 

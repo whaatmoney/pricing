@@ -16,6 +16,10 @@ import { lotMinimumCheck, sq2NonTube, sq3Throughput, sq4Band, sq5Stabilize } fro
 // Router History snapshot. It reads only; it never sends, approves or writes
 // to any live system. Output is a recommendation for human review.
 
+// A search log written without its "gaps" list still builds, and the page says
+// the gaps were not recorded instead of implying nothing was missed.
+export const GAPS_NOT_RECORDED = "Search gaps were not recorded for this case; check what was not searched before relying on it.";
+
 export const DECISION_SCHEMA = "qpc-rfq-decision/0.1";
 
 const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
@@ -547,7 +551,7 @@ export function buildDecision({ casePath, storeDir, routerFolder, salesExportPat
       email: {
         searchedAt: searchLog.searchedAt,
         searches: searchLog.searches.map((item) => ({ mailbox: item.mailbox, query: item.query, results: item.results, complete: item.complete })),
-        gaps: searchLog.gaps,
+        gaps: Array.isArray(searchLog.gaps) ? searchLog.gaps : [GAPS_NOT_RECORDED],
         monitor: readMonitorFreshness(monitorStatePath),
       },
       database: databaseStatus,
