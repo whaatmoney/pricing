@@ -253,6 +253,14 @@ tr.pick td { font-weight:600; }
 .reply code { overflow-wrap:anywhere; color:var(--ink); }
 .reply.all { background:var(--surface); }
 
+.notes { list-style:none; margin:0; padding:0; display:grid; gap:var(--s3); }
+.note { border:1px solid var(--line); border-radius:var(--radius-sm); padding:var(--s3) var(--s4); display:grid; gap:var(--s2); }
+.note-head { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s2); }
+.note-text { white-space:pre-wrap; }
+.note-reply { display:flex; gap:var(--s2); font-size:13px; color:var(--ink-2); } .note-reply .icon { flex:none; margin-top:3px; }
+.note-form { display:grid; gap:var(--s2); }
+.note-form textarea { width:100%; font:inherit; color:var(--ink); background:var(--surface-2); border:1px solid var(--line-2); border-radius:var(--radius-sm); padding:var(--s2) var(--s3); resize:vertical; }
+.note-form textarea:focus-visible { outline:2px solid var(--focus); outline-offset:1px; }
 /* Confirmation chip after a copy. */
 .toast { position:fixed; left:50%; bottom:var(--s6); transform:translate(-50%, var(--s4)); display:flex; gap:var(--s2); align-items:center; background:var(--ink); color:var(--surface); padding:var(--s2) var(--s4); border-radius:999px; font-size:13px; font-weight:600; opacity:0; pointer-events:none; transition:opacity .18s, transform .18s; box-shadow:var(--shadow-hover); }
 .toast.show { opacity:1; transform:translate(-50%, 0); }
@@ -297,6 +305,19 @@ export const SCRIPT = `
     button.classList.add("done"); label.textContent = "Copied";
     window.qpcToast("Copied to clipboard");
     setTimeout(() => { button.classList.remove("done"); label.textContent = button.dataset.label; }, 1600);
+  });
+
+  // "Send to Claude" opens an email to the reviewer's own mailbox with the
+  // page's tag; the scheduled pricing run picks it up from there.
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-note-send]");
+    if (!button) return;
+    const form = button.closest("[data-note-to]");
+    const area = form.querySelector("textarea");
+    const text = area.value.trim();
+    if (!text) { area.focus(); window.qpcToast("Write the note first"); return; }
+    window.location.href = "mailto:" + form.dataset.noteTo + "?subject=" + encodeURIComponent(form.dataset.noteSubject) + "&body=" + encodeURIComponent(text + "\n\n— sent from " + window.location.href.split("#")[0]);
+    window.qpcToast("Email opened: press Send");
   });
 
   // Checklist ticks are a per-viewer convenience; the page works without them.
