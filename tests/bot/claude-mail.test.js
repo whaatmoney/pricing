@@ -23,6 +23,9 @@ test("a quote sent to the customer's domain naming the case's part or RFQ number
   assert.equal(caseMail(acme, [event("7", "2026-09-01T15:00:00Z", "quote-sent")]).sent, null, "a quote before the request is an older one");
   assert.equal(caseMail(acme, [event("6", "2026-09-12T15:00:00Z", "quote-sent", { partNumbers: [], rfqNumbers: ["4100"] })]).sent.id, "6", "the RFQ number is enough");
   assert.equal(caseMail(acme, [event("6", "2026-09-12T15:00:00Z", "quote-sent"), event("5", "2026-09-14T15:00:00Z", "quote-sent", { rfqNumbers: ["14100"] })]).lastSent.id, "6", "a later quote for another RFQ number is not this request's latest quote");
+  assert.equal(caseMail(acme, [event("4", "2026-09-12T15:00:00Z", "quote-sent", { partNumbers: [], rfqNumbers: ["14100"] })]).sent, null, "a quote naming only another RFQ number does not mark this one sent");
+  const placed = placeMailEvents([event("r", "2026-09-10T15:00:00Z", "rfq", { from: "buyer@acme.example", partNumbers: [], rfqNumbers: ["4100"], subject: "RFQ 4100" }), event("q", "2026-09-12T15:00:00Z", "quote-sent", { partNumbers: [], rfqNumbers: ["14100"], subject: "Quote 14100" })], [], []);
+  assert.notEqual(placed.find((item) => item.event.id === "r").place, "answered", "a quote for RFQ 14100 does not answer RFQ 4100");
 });
 
 test("new requests are the ones no page, no monitor entry and no later quote covers", () => {
