@@ -5,6 +5,7 @@ import test from "node:test";
 import { progressHtml } from "../../bot/lib/design.js";
 import { buildBoard, caseGroup, confidenceRank, factsLine, lastDueRefresh, potentialValue, latestMessageLink, mirrorPages, monitorLink, isPricingRequest, isQuoteOwed, progressOf, quoteSentStatus, readBrandBadge, renderBoard, writeBoard } from "../../bot/lib/board.js";
 import { buildDecision } from "../../bot/lib/decision.js";
+import { recordDecision } from "../../bot/lib/lifecycle.js";
 import { readManifest } from "../../bot/lib/router-snapshot.js";
 import { isCloudOnly, readLastSync, runSync } from "../../bot/lib/sync.js";
 import { buildWorld, routerRow, tempDir, workbookBuffer, writeRouterExport } from "./helpers.js";
@@ -201,7 +202,7 @@ test("progress runs RFQ in -> Priced -> Decided -> Quote sent, with partial step
 });
 
 test("only status wording that plainly says a quote went out counts as sent", () => {
-  for (const status of ["Quote sent; waiting on customer", "Quote already sent; internal part identification added", "Pat sent estimated quote; waiting on customer", "Sam sent quote attachment; contents unverified", "Quote sent; attachment scope unverified", "Sam quote sent; customer thanked QPC", "Customer confirmed quote receipt", "Customer confirmed receipt of the quote", "Quote receipt acknowledged by buyer", "Prior quote confirmed valid in customer-facing response", "Estimate sent by Pat; waiting on customer", "Sam sent passivation estimate; waiting on customer", "QPC sends two-line prices; revised PO pending", "Current pricing sent for 4100", "Pricing confirmed to customer", "Updated price list sent; contents unverified", "Customer acknowledged quote; quantity question remains", "Customer thanked QPC after quote", "PO acknowledged after quote; receipt pending", "Customer thanks QPC for scoped price confirmation"]) {
+  for (const status of ["Quote sent; waiting on customer", "Quote already sent; internal part identification added", "Pat sent estimated quote; waiting on customer", "Sam sent quote attachment; contents unverified", "Quote sent; attachment scope unverified", "Sam quote sent; customer thanked QPC", "Customer confirmed quote receipt", "Customer confirmed receipt of the quote", "Quote receipt acknowledged by buyer", "Prior quote confirmed valid in customer-facing response", "Estimate sent by Pat; waiting on customer", "Sam sent passivation estimate; waiting on customer", "QPC sends two-line prices; revised PO pending", "Current pricing sent for 4100", "Pricing confirmed to customer", "Updated price list sent; contents unverified", "Customer thanked QPC after quote", "PO acknowledged after quote; receipt pending", "Customer thanks QPC for scoped price confirmation"]) {
     assert.equal(quoteSentStatus(status), true, status);
   }
   for (const status of ["not quoted", "quoted per ledger; unverified", "Quote sent; unverified", "Quote will be sent tomorrow", "Quote to be sent after approval", "Quote scheduled to be sent Monday", "Awaiting approval before quote sent", "Customer PO received and acknowledged", "QPC reports ready for pickup September25 13:30", "Draft quote prepared", "Customer has not confirmed quote receipt", "Quote receipt unconfirmed", "Customer confirmed PO receipt", "Prior quote not confirmed valid in customer-facing response", "Quote confirmed valid internally", "Receipt reported; ECD October8", "October8 completion estimate sent; later than customer need date", "Pickup estimate sent for 4100", "Estimate will be sent tomorrow", "Draft estimate prepared", "Revised PO requested with pricing", "Acknowledged, quote still owed", "Waiting after quote request", "Acknowledged RFQ; quote pending", "", null]) {
@@ -217,6 +218,96 @@ test("a completion, pickup or shipping date estimate is not a price request", ()
   assert.equal(isQuoteOwed("RFQ 12 / Acknowledged; quote still owed"), true);
   assert.equal(isQuoteOwed("PO 13 and quote attachment / Duplicate shipping-account request withdrawn"), true, "something else withdrawn keeps the entry");
   for (const text of ["PO 77 / QPC confirms receipt and October16 estimate", "Receipt confirmed; September29 completion estimate reiterated", "QPC acknowledges receipt and separate completion estimates", "QPC supplies October13 estimated completion", "Pickup estimate sent for 4100"]) assert.equal(isPricingRequest(text), false, text);
+});
+
+test("a quote request, an open price question or a non-withdrawal never takes an RFQ off the board", () => {
+  // Inspection of 1e3e704 (2026-10-09): each of these hid a real price request.
+  for (const status of ["QPC acknowledged quote request; quote still owed", "Customer sent price request", "Quote request sent to QPC", "Customer acknowledged quote; quantity discrepancy remains", "Customer acknowledged quote; quantity question remains", "Quote sent; revised quote requested", "Customer sent request for pricing", "Quote sent; question about quantity remains open", "Quote sent; discrepancy in price remains"]) {
+    assert.equal(quoteSentStatus(status), false, status);
+  }
+  for (const text of ["RFQ 20 / RFQ not cancelled", "RFQ 21 / RFQ cancellation terms requested", "RFQ 22 / Customer withdrew the RFQ; customer now requests a new quote", "RFQ 23 / Customer may cancel the RFQ", "RFQ 24 / Customer didn't withdraw the quote", "ABC-100 pickup and pricing inquiry", "ABC-100 October 8 estimate requested for cleaning 40 parts", "ABC-101 October8 estimate for 40 pcs", "RFQ 25 / Customer will cancel the RFQ", "RFQ 26 / If parts arrive, cancel the RFQ", "RFQ 27 / Customer withdrew the RFQ and now requests a new quote", "RFQ 28 / Customer withdrew the RFQ; customer requests ABC-100, ABC-101 pricing", "ABC-100 cleaning and pickup inquiry", "ABC-100 October 8 estimate is requested for cleaning 40 parts", "ABC-100 Customer requested October 8 estimate"]) {
+    assert.equal(isQuoteOwed(text), true, text);
+  }
+  // What the 10/6 rules rightly take off still comes off.
+  for (const text of ["RFQ 9 / Customer requested RFQ be disregarded; human closure pending", "POS 1 / September29 shipment planned; customer withdraws wrong-supplier S2 inquiry", "PO 3 / pickup and ECD inquiry", "PO 4 / QPC confirms receipt and October19 estimate", "RFQ 29 / Customer asked QPC to disregard the RFQ"]) {
+    assert.equal(isQuoteOwed(text), false, text);
+  }
+});
+
+test("round-2 inspection wordings keep the RFQ on the board", () => {
+  for (const status of ["Customer sent quote/price request", "Quote sent; questions remain about quantity", "Quote sent; discrepancy remains in price", "October8 estimate sent for pickup"]) {
+    assert.equal(quoteSentStatus(status), false, status);
+  }
+  for (const text of ["RFQ 30 / Customer withdrew the RFQ; pricing requested again", "RFQ 31 / Customer asked about cancelling the RFQ", "ABC-100 / QPC will send October8 estimate", "ABC-100 cleaning and final pickup inquiry", "ABC-102 / Customer sent quote/price request"]) {
+    assert.equal(isQuoteOwed(text), true, text);
+  }
+  assert.equal(isPricingRequest("PO 5 / October8 estimate sent for pickup"), false, "a pickup-date estimate is not a price");
+});
+
+test("only whole clauses in the monitor's own wording take an entry off the board", () => {
+  // Round-3 inspection wordings: none is a known shape, so each entry stays.
+  for (const text of ["RFQ 40 / RFQ cannot be cancelled", "RFQ 41 / RFQ withdrawn; customer requests ABC-100/ABC-101 pricing", "RFQ 42 / RFQ withdrawn; customer resubmitted the RFQ", "ABC-100 / QPC promised October8 estimate"]) {
+    assert.equal(isQuoteOwed(text), true, text);
+  }
+  assert.equal(quoteSentStatus("Quote sent; revised quote is requested"), false);
+  // The monitor's vocabulary (from its snapshots, names and numbers made up).
+  for (const status of ["Quote sent by Pat", "Pat quote sent", "Quote attachment sent by Pat", "Quote sent previously", "Revised pricing sent", "Four-line quote sent", "Customer-facing two-line quote sent", "Quote email sent", "Pat sends price and entire-PO minimum", "QPC sends future unit pricing and explains increase", "Pricing sent for both POs", "Price sent and assembly readiness reported", "Pat quoted $12 each, $350 minimum, 6-8 business days", "Expedite fee quoted", "Customer thanks QPC for quote receipt", "Hydrostatic-test quote sent at $40 plus $10", "Nine P/N prices sent under the listed spec"]) {
+    assert.equal(quoteSentStatus(status), true, status);
+  }
+  for (const text of ["PO 1 / QPC confirms receiving and October5 estimate", "PO 2 / QPC repeats October21 estimate", "PO 3 / October6 estimate retained", "PO 4 / October14 estimates", "PO 5 / Customer acknowledges October1 estimate", "PO 6 / Acme thanks QPC for October8 estimate", "PO 7 / QPC answers Acme status request with October8 estimate", "PO 8 / QPC answered report with September29 and October2 completion estimates", "PO 9 / estimated completion moves to October1", "PO 10 / Completion estimate revised to September23", "PO 11 / October 1 delivery estimate", "PO 12 / September28 eight-piece completion inquiry", "PO 13 / expedite completion inquiry", "PO 14 / QPC answers pickup inquiry with overnight shipping plan", "PO 15 / Customer acknowledges QPC estimated completion date", "PO 16 / October12 estimate for identified 4100"]) {
+    assert.equal(isPricingRequest(text), false, text);
+  }
+  for (const text of ["RFQ 50 / customer withdraws wrong-supplier S2 inquiry", "RFQ 51 / Erroneous nonreceipt inquiry withdrawn", "RFQ 52 / Customer requested RFQ be disregarded"]) {
+    assert.equal(isQuoteOwed(text), false, text);
+  }
+});
+
+test("pre-push inspection wordings stay on the board", () => {
+  for (const status of ["Customer needs quote sent", "Quote sent; customer requested revised quote", "Quote sent; buyer wants a new quote"]) assert.equal(quoteSentStatus(status), false, status);
+  for (const text of ["ABC-100 ; QPC acknowledges estimate", "ABC-100 ; QPC answers status request with estimate"]) assert.equal(isQuoteOwed(text), true, `${text}: an estimate with no date or completion is a price`);
+  for (const status of ["Please have quote sent today", "Quote sent; new quote requested", "Quote sent; replacement quote needed"]) assert.equal(quoteSentStatus(status), false, status);
+  for (const text of ["ABC-100 ; Completion estimate revised to October12 and estimate requested for cleaning 40 parts", "RFQ 1004 ; Quote still owed ; Customer withdrew pickup inquiry"]) assert.equal(isQuoteOwed(text), true, text);
+  for (const text of ["ABC-100 ; Completion estimate revised to October12 and pricing requested", "ABC-100 ; QPC answers budgetary inquiry with completion estimates", "RFQ 1002 ; Replacement quote requested; previous RFQ withdrawn", "RFQ 1003 ; Duplicate RFQ withdrawn"]) assert.equal(isQuoteOwed(text), true, text);
+});
+
+test("a price question the monitor records after a mailed quote reopens the case", () => {
+  const sentAt = "2026-09-25T15:00:00Z";
+  const boardWith = (monitorAt) => {
+    const { config } = syncedWorld([{ customer: "Acme Precision Corp", reference: "77 / ABC-100 Rev B", priority_section: 2, status: "Customer acknowledged quote; quantity discrepancy remains", evidence_ids: ["rfq"], ...(monitorAt ? { last_observed_activity_at: monitorAt } : {}) }]);
+    const claudeMailPath = path.join(config.outputsDir, "..", `mail-${monitorAt || "none"}.json`);
+    const quote = { id: "q1", at: sentAt, kind: "quote-sent", customerDomain: "acme.example", from: "pat@shop.example", to: ["buyer@acme.example"], subject: "RE: RFQ", partNumbers: ["ABC-100"], rfqNumbers: [], link: "https://mail.example/q1" };
+    fs.writeFileSync(claudeMailPath, JSON.stringify({ cutoff: "2026-09-28T00:00:00Z", events: { q1: quote } }));
+    return buildBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, claudeMailPath });
+  };
+  const later = boardWith("2026-09-26T15:00:00Z").cases[0];
+  assert.equal(later.open, true, "the open question came after the mailed quote");
+  assert.equal(later.state, "Price question open after quote (per monitor status)");
+  assert.equal(boardWith(null).cases[0].open, true, "no date on the monitor entry: keep it open");
+  const earlier = boardWith("2026-09-24T15:00:00Z").cases[0];
+  assert.equal(earlier.open, false, "a quote mailed after the question counts");
+  assert.equal(earlier.state, "Quote sent (per mail check)");
+});
+
+test("a reopened case shows its warning even after every line was decided, and a corrected quote closes it again", () => {
+  const { decision, config } = syncedWorld([{ customer: "Acme Precision Corp", reference: "77 / ABC-100 Rev B", priority_section: 3, status: "Customer acknowledged quote; quantity discrepancy remains", evidence_ids: ["rfq"], last_observed_activity_at: "2026-09-26T15:00:00Z" }]);
+  for (const line of decision.lines) recordDecision({ outputsDir: config.outputsDir, caseId: decision.caseId, version: 1, lineId: line.lineId, choice: "alternative", unitPrice: 10, note: "test price", decidedBy: "Pat Reviewer", decidedAt: "2026-09-25T14:00:00Z", now: new Date("2026-09-25T14:05:00Z") });
+  const quote = (id, at) => ({ id, at, kind: "quote-sent", customerDomain: "acme.example", from: "pat@shop.example", to: ["buyer@acme.example"], subject: "RE: RFQ", partNumbers: ["ABC-100"], rfqNumbers: [], link: `https://mail.example/${id}` });
+  const boardWith = (quotes) => {
+    const claudeMailPath = path.join(config.outputsDir, "..", `mail-${quotes.length}.json`);
+    fs.writeFileSync(claudeMailPath, JSON.stringify({ cutoff: "2026-09-28T00:00:00Z", events: Object.fromEntries(quotes.map((item) => [item.id, item])) }));
+    return buildBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, claudeMailPath });
+  };
+  const reopenedBoard = boardWith([quote("q1", "2026-09-25T15:00:00Z")]);
+  const [kase] = reopenedBoard.cases;
+  assert.equal(kase.open, true, "a decided case reopens");
+  assert.notEqual(caseGroup(kase), "sent");
+  assert.match(renderBoard(reopenedBoard), /Price question open after the quote went out \(per monitor status\)/);
+  assert.match(renderBoard(reopenedBoard), /data-case="[^"]+@reopened-2026-09-26T15:00:00Z"/, "a Done mark made before the question does not hide the reopened card");
+  const otherRfq = boardWith([quote("q1", "2026-09-25T15:00:00Z"), { ...quote("q3", "2026-09-27T15:00:00Z"), rfqNumbers: ["9999"] }]).cases[0];
+  assert.equal(otherRfq.open, true, "a later quote naming another RFQ does not answer this one's question");
+  const corrected = boardWith([quote("q1", "2026-09-25T15:00:00Z"), quote("q2", "2026-09-27T15:00:00Z")]).cases[0];
+  assert.equal(corrected.open, false, "a corrected quote mailed after the question closes it again");
+  assert.equal(corrected.state, "Quote sent (per mail check)");
 });
 
 test("a failed import keeps the last good history and puts an alert on the board", () => {
