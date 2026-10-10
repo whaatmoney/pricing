@@ -22,6 +22,7 @@ test("a quote sent to the customer's domain naming the case's part or RFQ number
   assert.equal(caseMail(acme, [event("8", "2026-09-12T15:00:00Z", "quote-sent", { customerDomain: "other.example" })]).sent, null, "another customer is another request");
   assert.equal(caseMail(acme, [event("7", "2026-09-01T15:00:00Z", "quote-sent")]).sent, null, "a quote before the request is an older one");
   assert.equal(caseMail(acme, [event("6", "2026-09-12T15:00:00Z", "quote-sent", { partNumbers: [], rfqNumbers: ["4100"] })]).sent.id, "6", "the RFQ number is enough");
+  assert.equal(caseMail(acme, [event("6", "2026-09-12T15:00:00Z", "quote-sent"), event("5", "2026-09-14T15:00:00Z", "quote-sent", { rfqNumbers: ["14100"] })]).lastSent.id, "6", "a later quote for another RFQ number is not this request's latest quote");
 });
 
 test("new requests are the ones no page, no monitor entry and no later quote covers", () => {

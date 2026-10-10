@@ -119,6 +119,7 @@ export function subjectKey(subject) {
 }
 
 // Part and RFQ numbers a case answers to.
+const caseRfqNumbers = (kase) => [...String([kase.reference, kase.monitorReference].join(" ")).matchAll(/\bRFQ\s*#?\s*-?\s*([A-Z0-9-]*\d[A-Z0-9-]*)/gi)].map((match) => squash(match[1])).filter((token) => token.length >= 4);
 function caseTokens(kase) {
   const numbers = [...String([kase.reference, kase.monitorReference].join(" ")).matchAll(/\bRFQ\s*#?\s*-?\s*([A-Z0-9-]*\d[A-Z0-9-]*)/gi)].map((match) => match[1]);
   return [...(kase.lines || []).map((line) => line.partNumber), ...numbers].map(squash).filter((token) => token.length >= 4);
@@ -133,8 +134,12 @@ export function caseMail(kase, events) {
   const mine = caseTokens(kase);
   const related = events.filter((event) => domains.includes(lower(event.customerDomain)) && sharesToken(eventTokens(event), mine));
   const byTime = related.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-  const sent = byTime.find((event) => event.kind === "quote-sent" && (!kase.askedAt || Date.parse(event.at) >= Date.parse(kase.askedAt))) || null;
-  return { sent, latest: byTime.at(-1) || null };
+  const quotes = byTime.filter((event) => event.kind === "quote-sent" && (!kase.askedAt || Date.parse(event.at) >= Date.parse(kase.askedAt)));
+  // The quote that can answer an open price question must not name an RFQ
+  // number this request does not have (pricing owner, 2026-10-09).
+  const ownRfqs = caseRfqNumbers(kase);
+  const sameRequest = (event) => !(event.rfqNumbers || []).length || (ownRfqs.length > 0 && event.rfqNumbers.map(squash).some((number) => ownRfqs.includes(number)));
+  return { sent: quotes[0] || null, lastSent: quotes.filter(sameRequest).at(-1) || null, latest: byTime.at(-1) || null };
 }
 
 // Monitor entries a message belongs to: the entry that holds this very email

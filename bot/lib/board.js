@@ -139,45 +139,108 @@ export function monitorLink(decision, queue) {
   return { entry: null, ambiguous: candidates.map((item) => item.reference) };
 }
 
-// Section 3 also holds PO, readiness and shipment activity, so a case counts
-// as sent only when a clause of the monitor's status says a quote went out
-// and neither that clause nor a bare qualifier doubts it ("not quoted",
-// "quoted per ledger; unverified").
-// A customer confirming receipt of the quote also proves it went out
-// ("Customer confirmed quote receipt", "confirmed receipt of the quote").
-// So does QPC telling the customer an earlier quote still stands ("Prior quote
-// confirmed valid in customer-facing response").
-// A sent estimate or price is a sent quote too ("Estimate sent by Pat",
-// "QPC sends two-line prices", "Pricing confirmed to customer"), and so is a
-// customer acknowledging or thanking QPC for one ("Customer acknowledged
-// quote", "thanked QPC after quote"), found by a TypeSafe shadow check
-// (pricing owner, 2026-10-06).
-const SENT_CLAUSE = /\bquote\s+(?:\w+\s+){0,2}sent\b|\bsent\s+(?:an?\s+|the\s+)?(?:\w+\s+)?quote\b|\bquoted\b|\b(?:confirmed|acknowledged)\s+(?:the\s+)?quote\s+receipt\b|\bquote\s+receipt\s+(?:confirmed|acknowledged)\b|\b(?:confirmed|acknowledged)\s+receipt\s+of\s+(?:the\s+|our\s+)?quote\b|\bquote\s+confirmed\s+valid\s+in\s+customer-facing\b|\b(?:estimate|pricing|prices?|price\s+list)\s+(?:[\w-]+\s+){0,2}sent\b|\bsen(?:t|ds)\s+(?:[\w-]+\s+){0,2}(?:estimate|pricing|prices?)\b|\bpricing\s+confirmed\s+to\s+(?:the\s+)?customer\b|\backnowledged\s+(?:the\s+|our\s+)?quote\b|\bafter\s+(?:the\s+|our\s+)?quote\b(?!\s+(?:request|approval|review))|\bthank(?:s|ed)\s+(?:QPC\s+)?for\s+(?:the\s+|our\s+)?(?:[\w-]+\s+){0,2}(?:quote|price|pricing)(?:\s+confirmation)?\b/i;
-const DOUBT = /\b(?:not|no|never|unverified|unconfirmed|provisional|pending|draft|per ledger|will|shall|would|to be|going to|plan|plans|planned|scheduled|tomorrow|later|awaiting)\b/i;
-const BARE_DOUBT = /^(?:still\s+)?(?:unverified|unconfirmed|provisional|not verified|not confirmed)\.?$/i;
-// A completion, pickup or shipping date estimate is not a price ("October8
-// completion estimate sent", "QPC confirms receipt and October16 estimate").
+// The board must catch every RFQ (pricing owner, 2026-10-06), so an entry
+// leaves a list only on wording the mail monitor actually writes, matched as a
+// whole clause (pricing owner, 2026-10-09: "go with the narrow removal list").
+// Anything else stays. Each list below was built from eight daily monitor
+// snapshots; add a shape only after checking it against live data.
+// Clauses split at ";" and at a slash with a space beside it, so "quote/price
+// request" and "P/N" stay one phrase.
+const CLAUSE = /\s*;\s*|\s+\/\s*|\s*\/\s+/;
+const clausesOf = (text) => String(text || "").split(CLAUSE).map((clause) => clause.trim().replace(/[.!]+$/, "")).filter(Boolean);
+const shapes = (list) => new RegExp(`^(?:${list.join("|")})$`, "i");
 const MONTH = "(?:January|February|March|April|May|June|July|August|September|October|November|December)";
-const DATE_ESTIMATE = new RegExp(`\\b(?:(?:completion|pickup|pick-up|ship(?:ping|ment)?|delivery|ready|readiness|ECD)\\s+(?:date\\s+)?estimates?|estimated\\s+(?:completion|pickup|ship(?:ping|ment)?|delivery|ready)|${MONTH}\\s*\\d{1,2}\\s+(?:completion\\s+)?estimates?)\\b`, "gi");
-const withoutDateEstimates = (text) => String(text || "").replace(DATE_ESTIMATE, " ");
-export function quoteSentStatus(status) {
-  const clauses = withoutDateEstimates(status).split(/\s*[;/]\s*/).map((clause) => clause.trim()).filter(Boolean);
-  if (clauses.some((clause) => BARE_DOUBT.test(clause))) return false;
-  return clauses.some((clause) => SENT_CLAUSE.test(clause) && !DOUBT.test(clause));
-}
-// Section 1 also holds acknowledgment, timing and technical follow-ups. The
-// board is where every RFQ gets caught, so when in doubt an entry stays
-// (pricing owner, 2026-10-06): any inquiry counts except one plainly about dates or
-// paperwork (an ECD, pickup, completion, shipping, documentation, NDA or audit
-// inquiry).
+const DATE = `${MONTH}\\s*\\d{1,2}`;
+const TIMING = "(?:completion|pickup|pick-up|ship(?:ping|ment)?|delivery|ready|readiness|ECD)";
+const PAPERWORK = `(?:${TIMING}|tracking|documentation|document|paperwork|NDA|audit|NVR)`;
+const PLAIN_WORD = "(?:(?!(?:pric|quot|RFQ|estimat|clean|budget|inquir|cost)\\w*\\b)[\\w-]+)";
+const PLAIN = `(?:${PLAIN_WORD}\\s+)`;
+
+// Date and paperwork wording: a completion date, not a price ("QPC supplies
+// October8 estimate", "October1 ECD inquiry"). An entry stops being a price
+// request only when every clause with a pricing word is one of these.
+const NOT_PRICE = shapes([
+  `(?:${DATE}\\s+)?(?:${TIMING}\\s+(?:date\\s+)?estimates?|estimated\\s+${TIMING}(?:\\s+date)?)(?:\\s+sent(?:\\s+for\\s*[\\w-]*\\d[\\w-]*)?|\\s+(?:revised|reiterated|retained)(?:\\s+to\\s+${DATE})?|\\s+moves?\\s+to\\s+${DATE})?`,
+  `${DATE}\\s+estimates?(?:\\s+retained|\\s+for\\s+identified\\s*\\S+)?`,
+  `(?:${DATE}\\s+)?estimates?\\s+sent\\s+for\\s+(?:the\\s+)?${TIMING}`,
+  `QPC\\s+(?:confirms|acknowledges|supplies|repeats)\\s+(?:(?:receipt|receiving)\\s+and\\s+)?(?:separate\\s+)?(?:(?:${DATE}\\s+(?:and\\s+${DATE}\\s+)?)?(?:completion\\s+estimates?|estimated\\s+completion)|${DATE}\\s+(?:and\\s+${DATE}\\s+)?estimates?)`,
+  `QPC\\s+answer(?:s|ed)\\s+${PLAIN}{0,4}with\\s+(?:(?:${DATE}\\s+(?:and\\s+${DATE}\\s+)?)?(?:completion\\s+estimates?|estimated\\s+completion)|${DATE}\\s+(?:and\\s+${DATE}\\s+)?estimates?)`,
+  `(?:customer|[A-Z][\\w-]*)\\s+(?:acknowledges|thanks\\s+QPC\\s+for)\\s+(?:QPC\\s+)?(?:${DATE}\\s+estimates?|estimated\\s+completion(?:\\s+date)?)`,
+  `(?:${DATE}\\s+)?(?:(?:expedite[d]?|[\\w]+-piece)\\s+)?${PAPERWORK}(?:\\s+and\\s+${PAPERWORK})?\\s+inquir(?:y|ies)(?:\\s+repeated)?`,
+  `QPC\\s+answers\\s+${PAPERWORK}\\s+inquiry\\s+with\\s+${PLAIN}*${PLAIN_WORD}`,
+]);
 export const PRICING_REQUEST = /\bRFQ\b|\bquot|\bpric|\bestimat|\bbudgetary\b|\binquir/i;
-const NOT_PRICE_INQUIRY = /\b(?:ECD|pickup|pick-up|completion|ship(?:ping|ment)?|delivery|tracking|documentation|document|paperwork|NDA|audit|NVR)(?:\s+and\s+[\w-]+)?\s+inquir(?:y|ies)\b/gi;
-export const isPricingRequest = (text) => PRICING_REQUEST.test(withoutDateEstimates(text).replace(NOT_PRICE_INQUIRY, " "));
-// The customer withdrew, cancelled or asked QPC to disregard the RFQ, quote or
-// inquiry itself; something else withdrawn ("UPS-account request withdrawn")
-// does not take an entry off the board.
-const WITHDRAWN = /\b(?:RFQ|quote|inquiry)\s+(?:[\w-]+\s+){0,2}(?:withdr\w*|disregard\w*|cancel\w*)|\b(?:withdr\w*|disregard\w*|cancel\w*)\s+(?:the\s+|their\s+|its\s+)?(?:[\w-]+\s+){0,2}(?:RFQ|quote|inquiry)\b/i;
-export const isQuoteOwed = (text) => isPricingRequest(text) && !WITHDRAWN.test(String(text || ""));
+// A date clause that also names a price, quote, RFQ or budget ("Completion
+// estimate revised to October12 and pricing requested") is a price request.
+const PRICE_WORD = /\b(?:pric\w*|quot\w*|RFQ\w*|budget\w*|cost\w*|clean\w*)\b/i;
+const notPrice = (clause) => NOT_PRICE.test(clause) && !PRICE_WORD.test(clause) && (clause.match(/\b(?:estimat|inquir)\w*/gi) || []).length <= 1;
+export const isPricingRequest = (text) => clausesOf(text).some((clause) => PRICING_REQUEST.test(clause) && !notPrice(clause));
+
+// A clause that asks, doubts, plans or names an open issue is never evidence a
+// quote went out ("QPC acknowledged quote request", "not quoted", "quoted per
+// ledger").
+const DOUBT = /\b(?:not|no|never|cannot|unable|unverified|unconfirmed|provisional|pending|draft|per ledger|will|shall|would|could|may|might|should|if|unless|whether|to be|going to|plan|plans|planned|scheduled|tomorrow|later|awaiting|request\w*|asks?|asked|asking|inquir\w*|please|kindly|have|send|resend|get|need\w*|wants?|wanted|expect\w*|requir\w*|seek\w*|chas\w*|hop\w*|questions?|discrepanc\w*|dispute\w*|owed|cancel\w*|withdr\w*|disregard\w*)\b|n't\b/i;
+const BARE_DOUBT = /^(?:still\s+)?(?:unverified|unconfirmed|provisional|not verified|not confirmed)$/i;
+// Sent wording the monitor writes ("Quote sent by Pat", "Estimate sent by
+// Pat", "QPC sends two-line prices", "Customer confirmed quote receipt", "Pat
+// quoted $12 each"). Up to six words may lead in ("Customer-facing two-line
+// quote sent"); after the sent word anything may follow.
+const LEAD = "(?:[\\w$.,:'+/&-]+\\s+){0,6}";
+const PRICE_THING = "(?:quote|quotation|estimate|pricing|prices?|price\\s+list|price\\s+revision)";
+const SENT = shapes([
+  `${LEAD}(?:quote|quotation)(?:\\s+(?:email|attachment))?\\s+(?:already\\s+)?sent(?:[\\s:].*)?`,
+  `${LEAD}${PRICE_THING}(?:\\s+attachment)?\\s+sent(?:[\\s:].*)?`,
+  `(?:[\\w-]+\\s+){0,2}sen(?:t|ds)\\s+${LEAD}${PRICE_THING}(?:\\s+attachment)?(?:[\\s:].*)?`,
+  `(?:[\\w-]+\\s+){0,2}quoted(?:[\\s:$].*)?`,
+  `${LEAD}\\w+\\s+quoted`,
+  `(?:customer|buyer)\\s+(?:confirmed|acknowledged)\\s+(?:the\\s+)?quote(?:\\s+receipt)?`,
+  `(?:customer|buyer)\\s+confirmed\\s+receipt\\s+of\\s+(?:the\\s+|our\\s+)?quote`,
+  `quote\\s+receipt\\s+(?:confirmed|acknowledged)(?:\\s+by\\s+\\w+)?`,
+  `(?:prior\\s+)?quote\\s+confirmed\\s+valid\\s+in\\s+customer-facing\\s+response`,
+  `(?:customer|buyer|[A-Z][\\w-]*)\\s+thank(?:s|ed)\\s+QPC\\s+(?:for|after)\\s+(?:the\\s+|our\\s+)?${LEAD}(?:quote|price|pricing)(?:\\s+(?:confirmation|receipt))?`,
+  `pricing\\s+confirmed\\s+to\\s+(?:the\\s+)?customer`,
+  `(?:PO|customer|buyer)\\s+\\w+\\s+after\\s+(?:the\\s+|our\\s+)?quote`,
+]);
+// A price still open after a quote went out keeps the entry owed ("Customer
+// acknowledged quote; quantity discrepancy remains", pricing owner,
+// 2026-10-09). This only adds entries, so it reads loosely.
+const OPEN_ISSUE = "(?:questions?|discrepanc(?:y|ies)|dispute|clarifications?)";
+const PRICE_SUBJECT = "(?:quantity|quantities|price|prices|pricing|quote)";
+const STILL_OPEN = new RegExp(`\\bstill\\s+owed\\b|\\b${PRICE_SUBJECT}\\s+(?:[\\w-]+\\s+){0,3}${OPEN_ISSUE}\\b|\\b${OPEN_ISSUE}\\s+(?:[\\w-]+\\s+){0,2}(?:about|on|in|with|over|regarding|for)\\s+(?:the\\s+)?${PRICE_SUBJECT}\\b|\\b(?:re-?quote|(?:revised|new|updated|corrected|replacement|another)\\s+(?:quote|pricing|price|estimate))\\b[^;]*\\b(?:needed|requested|owed|wanted)\\b|\\b(?:request\\w*|needs?|wants?|asks?\\s+for|asked\\s+for)\\s+(?:a\\s+|an\\s+)?(?:revised|new|updated|corrected|replacement|another)\\s+(?:quote|price|pricing|estimate)\\b`, "i");
+// A clause about a timing or dated estimate is never a sent price ("Pickup
+// estimate sent for 4100", "October8 estimate sent").
+const TIMING_ESTIMATE = new RegExp(`\\b(?:${TIMING}\\s+(?:date\\s+)?estimates?|estimated\\s+${TIMING}|${DATE}\\s+(?:completion\\s+)?estimates?)\\b`, "i");
+export const openPriceIssue = (status) => STILL_OPEN.test(String(status || ""));
+export function quoteSentStatus(status) {
+  if (openPriceIssue(status)) return false;
+  const clauses = clausesOf(status);
+  if (clauses.some((clause) => BARE_DOUBT.test(clause))) return false;
+  return clauses.some((clause) => SENT.test(clause) && !DOUBT.test(clause) && !notPrice(clause) && !TIMING_ESTIMATE.test(clause));
+}
+
+// Withdrawal wording the monitor writes ("Customer requested RFQ be
+// disregarded", "customer withdraws wrong-supplier S2 inquiry"). It
+// counts only when no later clause names a price, quote or RFQ again
+// ("withdrew the RFQ; pricing requested again").
+const NOT_DONE = /\b(?:not|no|never|cannot|unable|will|shall|would|could|may|might|should|if|unless|whether|about|asking|considering|plans?|planned|intends?|expects?|going to|wants?)\b|n't\b/i;
+const OBJECT = `(?:the\\s+|its\\s+|their\\s+)?(?:(?!(?:duplicate|other|second)\\b|${PAPERWORK}\\b)[\\w-]+\\s+){0,2}(?:RFQ|quote|inquiry|quote\\s+request)`;
+const WITHDRAWN = shapes([
+  `(?:the\\s+)?customer\\s+(?:requested|asked(?:\\s+QPC)?)\\s+(?:that\\s+)?${OBJECT}\\s+be\\s+(?:disregarded|cancell?ed|withdrawn)`,
+  `(?:the\\s+)?customer\\s+asked\\s+(?:QPC|us)\\s+to\\s+(?:disregard|cancel|withdraw)\\s+${OBJECT}`,
+  `(?:the\\s+)?customer\\s+(?:withdrew|withdraws|cancell?ed|cancels|disregarded)\\s+${OBJECT}`,
+  `${OBJECT}\\s+(?:withdrawn|cancell?ed|disregarded)`,
+]);
+// A renewed or replacement request anywhere in the status keeps the entry
+// ("Replacement quote requested; previous RFQ withdrawn").
+const RENEWED = /\b(?:request\w*|need\w*|wants?|replacement|new|revised|resubmit\w*|reissu\w*|again|re-?quote|owed)\b/i;
+export function quoteWithdrawn(text) {
+  const clauses = clausesOf(text);
+  const last = clauses.findLastIndex((clause) => WITHDRAWN.test(clause) && !NOT_DONE.test(clause));
+  if (last < 0) return false;
+  if (clauses.some((clause, index) => index !== last && PRICING_REQUEST.test(clause) && RENEWED.test(clause))) return false;
+  return !clauses.slice(last + 1).some((clause) => PRICING_REQUEST.test(clause));
+}
+export const isQuoteOwed = (text) => isPricingRequest(text) && !quoteWithdrawn(text);
 
 // The log of rulings, builds and commits lives in a private
 // tracker file (config.trackerFile), kept by the Claude session; the board
@@ -344,10 +407,18 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
     const monitorSent = monitor?.priority_section === 3 && quoteSentStatus(monitor.status);
     // Claude's own mail check can see a quote go out before the monitor does.
     const mail = claudeMail ? caseMail({ customerRecord: decision.customer, askedAt: decision.rfq.initiatedAt, lines: partNumbers.map((partNumber) => ({ partNumber })), reference: decision.rfq.reference, monitorReference: decision.rfq.monitorReference }, claudeMail.events) : null;
-    const sent = monitorSent || Boolean(mail?.sent);
+    // A price question the monitor recorded after the mailed quote (or with no
+    // date to tell) reopens the case; a quote mailed after it counts again
+    // (pricing owner, 2026-10-09).
+    const reopened = Boolean(mail?.sent) && openPriceIssue(monitor?.status) && !(mail.lastSent && Date.parse(mail.lastSent.at) > Date.parse(monitor.last_observed_activity_at || ""));
+    const sent = monitorSent || (Boolean(mail?.sent) && !reopened);
     const priceSnapshot = decision.lines[0]?.history.database.snapshot;
     let label = status.text.startsWith("PARTLY") ? "Partly decided" : { warn: "Waiting on you", ok: "Decided — not sent", alert: "Correction requested" }[status.tone];
     let tone = status.tone;
+    if (reopened) {
+      label = "Price question open after quote (per monitor status)";
+      tone = "warn";
+    }
     if (sent) {
       label = monitorSent ? "Quote sent (per monitor status)" : "Quote sent (per mail check)";
       tone = "ok";
@@ -364,7 +435,8 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       waitingBusinessDays: businessDaysSince(decision.rfq.initiatedAt, now),
       tone,
       state: label,
-      open: !sent && status.tone !== "ok",
+      open: !sent && (status.tone !== "ok" || reopened),
+      reopened,
       monitor: monitor ? { reference: monitor.reference, section: monitor.priority_section, status: monitor.status, lastActivityAt: monitor.last_observed_activity_at || null } : null,
       monitorAmbiguous: link.ambiguous,
       staleSnapshot: Boolean(currentSnapshot && priceSnapshot && priceSnapshot.id !== currentSnapshot),
@@ -440,7 +512,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       reference: item.reference,
       section: item.priority_section,
       status: item.status,
-      pricing: isPricingRequest(`${item.reference} ${item.status}`),
+      pricing: isPricingRequest(`${item.reference} ; ${item.status}`),
       lastActivityAt: item.last_observed_activity_at || null,
       dueDate: item.explicit_due_date || null,
       dueBasis: item.due_basis || item.due_date_basis || null,
@@ -466,7 +538,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       withoutPage: waiting.filter((item) => !covered.has(item.reference)).map(row).sort(oldestFirst),
       // Section 2: the customer got an acknowledgment, not a price. The quote
       // is still owed, but nothing else on the board lists these.
-      owed: queue.filter((item) => item.priority_section === 2 && !covered.has(item.reference) && !shownByMail.has(item.reference) && isQuoteOwed(`${item.reference} ${item.status}`) && !quoteSentStatus(item.status)).map(row).sort(oldestFirst),
+      owed: queue.filter((item) => item.priority_section === 2 && !covered.has(item.reference) && !shownByMail.has(item.reference) && isQuoteOwed(`${item.reference} ; ${item.status}`) && !quoteSentStatus(item.status)).map(row).sort(oldestFirst),
     };
   }
   const tracker = readTracker(trackerPath);
@@ -840,9 +912,10 @@ function caseCard(kase, now) {
   const notes = [
     kase.monitorAmbiguous.length ? `Monitor link unresolved: ${kase.monitorAmbiguous.length} entries match (${esc(kase.monitorAmbiguous.join("; "))})` : "",
     kase.open && kase.staleSnapshot ? `Priced on ${esc(kase.priceSnapshot)}; newer Router History is in. Ask to rebuild.` : "",
+    kase.reopened ? `Price question open after the quote went out (per monitor status): “${esc(kase.monitor?.status || "")}”` : "",
   ].filter(Boolean);
   const open = group === "ready" || group === "facts";
-  return `<article class="card is-${group}" id="case-${esc(kase.caseId)}" data-page="${esc(kase.page)}" data-case="${esc(kase.caseId)}" data-asked="${esc(kase.askedAt || "")}" data-confidence="${confidenceRank(kase)}" data-value="${kase.value ? kase.value.amount : -1}">
+  return `<article class="card is-${group}" id="case-${esc(kase.caseId)}" data-page="${esc(kase.page)}" data-case="${esc(kase.reopened ? `${kase.caseId}@reopened-${kase.monitor?.lastActivityAt || "undated"}` : kase.caseId)}" data-asked="${esc(kase.askedAt || "")}" data-confidence="${confidenceRank(kase)}" data-value="${kase.value ? kase.value.amount : -1}">
     <div class="card-head">
       <div class="card-title">
         <a class="card-link" href="${esc(kase.page)}">${esc(kase.customer)}</a>

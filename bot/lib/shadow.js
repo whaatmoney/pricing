@@ -94,7 +94,7 @@ export async function shadowMonitor({ queue, cache, ask }) {
     const result = pricing.results[position];
     if (result.error) return errors.push(`${entry.reference}: ${result.error}`);
     const p = result.answers.pricing.noul;
-    const rule = isQuoteOwed(`${entry.reference} ${entry.status}`);
+    const rule = isQuoteOwed(`${entry.reference} ; ${entry.status}`);
     if (rule !== (p >= YES)) rows.push({ check: "price request", section: 2, customer: entry.customer, reference: entry.reference, status: entry.status, rule, typesafe: p, band: band(p), ruleFromReferenceOnly: rule && !isPricingRequest(entry.status), effect: rule ? "rule can list it under Quote owed; TypeSafe does not read a quote still owed" : "TypeSafe reads a quote still owed that the rule misses; it is not under Quote owed" });
   });
   return { judged: entries.length, tokens: sent.tokens + pricing.tokens, errors, rows };
