@@ -77,13 +77,14 @@ const dropMentions = (text) => String(text || "").replace(/@[\w.-]+(?:\s[A-Z][\w
 // "pat", "lee"), skipping role mailboxes. The list is built from the data, so
 // no name is written in this public repo.
 const ROLE_WORDS = new Set(["quote", "quotes", "rfq", "rfqs", "sales", "info", "admin", "purchasing", "buyer", "buyers", "orders", "order", "accounts", "ap", "ar", "frontdesk", "front", "desk", "office", "support", "service", "quality", "receiving", "shipping", "customer", "contact", "team", "noreply", "no", "reply", "mail", "email", "procurement", "supply", "chain", "planning", "qa", "qc"]);
-export function peopleIn({ queue = [], messages = [] }) {
+export function peopleIn({ queue = [], messages = [], common = new Set() }) {
   const names = new Set();
-  const add = (word) => { const value = String(word || "").trim(); if (value.length >= 2 && !/\d/.test(value) && !ROLE_WORDS.has(value.toLowerCase())) names.add(value); };
+  const add = (word) => { const value = String(word || "").trim(); if (value.length >= 2 && !/\d/.test(value) && !ROLE_WORDS.has(value.toLowerCase()) && !FUNCTION_WORDS.has(value.toLowerCase())) names.add(value); };
   for (const message of messages) {
     String(message.from || "").split(/[\s,()]+/).forEach(add);
-    // The contact a chase post names ("Al from Beta is F/U ...").
-    String(parsePost(message.text)?.contact || "").split(/\s+/).forEach(add);
+    // The contact a chase post names ("Al from Beta is F/U ..."); a word the
+    // texts also use in lower case ("and", "sheet") is not a name.
+    String(parsePost(message.text)?.contact || "").split(/\s+/).filter((word) => !common.has(word.toLowerCase())).forEach(add);
   }
   for (const entry of queue) {
     for (const actor of [entry.last_observed_actor, ...(entry.events || []).map((event) => event.actor)]) {
@@ -94,7 +95,7 @@ export function peopleIn({ queue = [], messages = [] }) {
       if (label && !SHARED_MAIL.has(domain)) add(label);
     }
     // Distinctive words of the customer's name ("Acme Precision Corp" -> "Acme").
-    for (const word of String(entry.customer || "").split(/[\s(),&/]+/)) if (/^[A-Z]/.test(word) && word.length >= 4 && !CORP_WORDS.has(word.toLowerCase())) add(word);
+    for (const word of String(entry.customer || "").split(/[\s(),&/]+/)) if (/^[A-Z]/.test(word) && word.length >= 4 && !CORP_WORDS.has(word.toLowerCase()) && !common.has(word.toLowerCase())) add(word);
   }
   return [...names];
 }
@@ -102,6 +103,12 @@ export function peopleIn({ queue = [], messages = [] }) {
 // a capitalised word that never appears in lower case anywhere in the texts.
 const FUNCTION_WORDS = new Set(["not", "no", "never", "none", "all", "any", "both", "each", "some", "will", "would", "can", "could", "should", "may", "might", "must", "shall", "please", "thanks", "thank", "yes", "the", "this", "that", "these", "those", "our", "their", "its", "his", "her", "new", "old", "next", "last", "per", "re", "fw", "fwd", "and", "but", "or", "if", "when", "after", "before", "still", "also", "only", "just", "again", "already", "sent", "quote", "quoted", "customer", "buyer", "pending", "ready", "waiting", "received", "revised", "updated", "current", "prior", "earlier", "older", "estimate", "estimated", "pricing", "price", "prices", "completion", "pickup", "receipt", "expedite", "acknowledged", "requested", "confirmed", "partial", "internal", "external", "urgent", "open", "closed", "duplicate", "formal", "detailed", "corrected"]);
 const CALENDAR = /^(?:Today|Tomorrow|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|April|May|June|July|August|September|October|November|December)$/;
+export function lowerCaseWords(texts) {
+  const lower = new Set();
+  // Mentions and addresses ("@al.smith", "al@…") are not ordinary use.
+  for (const text of texts) for (const word of dropMentions(text).replace(/\S+@\S+/g, " ").match(/[\p{Ll}][\p{Ll}]+/gu) || []) lower.add(word);
+  return lower;
+}
 export function properNounsIn(texts) {
   const lower = new Set();
   const capital = new Set();
@@ -200,7 +207,7 @@ export async function shadowChases({ messages, cache, ask, people = peopleIn({ m
 
 export async function runShadow({ queue = [], chatMessages = [], cache, ask, now = new Date() }) {
   const texts = [...queue.map((entry) => entry.status), ...chatMessages.map((message) => message.text)];
-  const people = [...peopleIn({ queue, messages: chatMessages }), ...properNounsIn(texts)];
+  const people = [...peopleIn({ queue, messages: chatMessages, common: lowerCaseWords(texts) }), ...properNounsIn(texts)];
   const monitor = await shadowMonitor({ queue, cache, ask, people });
   const chases = await shadowChases({ messages: chatMessages, cache, ask, people });
   return { at: now.toISOString(), model: TYPESAFE_MODEL, tokens: monitor.tokens + chases.tokens, monitor, chases };
