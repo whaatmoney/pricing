@@ -57,6 +57,8 @@ npm test                       # Part Memory tests plus the bot suite
 
 Each line on a review page opens with the reviewer's card (P/N, Envelope Dimensions, Qty, Process, Suggested Unit Price, Why) and offers answer lines to copy. `answer` reads them exactly (grammar in `lib/answer.js`): `approve <price>`, `alt <price> — <basis>`, `correct <field>: <what is right>`, `method ok` or `method wrong <field>: <what is wrong>`, joined with `; method …` and `; rule approve|reject`. Every entry an answer implies is validated before any is written, and the pasted words are kept verbatim. Method reviews are their own lifecycle entries and never count as price decisions; the board collects them as method feedback.
 
+When the private config has `feedback` (`file`, `to`, `tag`), each page also ends with **Notes for Claude**: a box whose "Send to Claude" button opens an email to `feedback.to` with the subject `[<tag>] <caseId> v<N>`. A scheduled run outside this repo reads those emails, acts on them and writes the outcome to `feedback.file`; the page lists each note with that outcome (`lib/notes.js`). The page itself stores nothing and records no decision.
+
 Before a commit, the privacy check runs over tracked files only (`git grep`), because the git-ignored `config.local.json` holds approver names.
 
 ## Pieces
@@ -76,6 +78,7 @@ Before a commit, the privacy check runs over tracked files only (`git grep`), be
 | `lib/lifecycle.js` | Decisions on a recommendation, kept append-only and hash-chained in `CLAUDE-DECISION-<case>-lifecycle.json`. A decision counts only for the version and inputs fingerprint it was made on. |
 | `lib/review-card.js` | The reviewer's six-field card, the method path behind the price (history → SQ2 → SQ3 → SQ5 → pick) and the answer lines. |
 | `lib/answer.js` | Parses a pasted answer line and records it through `lifecycle.js`, all or nothing. |
+| `lib/notes.js` | Reads the notes file for one case and renders the Notes for Claude section and its email box. |
 | `lib/board.js` | The open-decisions page: latest version per case, decision state, business days waiting, method feedback, and monitor RFQs (read only) with no page yet. |
 | `lib/claude-mail.js` | Claude's own mail check: the message kinds (who owes the next email), the checks the save tool applies, matching a message to a case or monitor entry (by Outlook item id, then whole part or RFQ numbers), and `placeMailEvents`, which says where every kept message lands on the board. Also the trial scorecard. |
 | `lib/followups.js` | Front-desk follow-ups from the quote-prep chat: parses each post, joins replies into threads, and matches a thread to a case or a monitor entry. |

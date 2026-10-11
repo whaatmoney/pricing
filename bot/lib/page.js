@@ -4,6 +4,7 @@ import { describeDecision, describeReview, displayStatus, escapeHtml, revSuffix,
 import { answerLines, approveAllLine, assumptions, methodPath, poTotal, pricedEnvelope, quoteSummary, reviewCard } from "./review-card.js";
 import { caseConfidence, reasonsText } from "./confidence.js";
 import { copyButton, ICON, progressHtml, SCRIPT as PAGE_SCRIPT, STYLE as PAGE_STYLE } from "./design.js";
+import { notesSection } from "./notes.js";
 
 // The decision page, laid out in the order a reviewer works: what is being
 // asked and where it stands, the quote ready to paste with the checks to do
@@ -319,7 +320,7 @@ function mailLinks(mail) {
   return `<p class="mail-links">${mail.rfq ? `<a class="btn ghost" href="${esc(mail.rfq)}" target="_blank" rel="noopener">Open RFQ email${mail.rfqOwner ? ` · ${esc(mail.rfqOwner)} only` : ""} ${ICON.external}</a>` : ""}${files}${latest}</p>${list}`;
 }
 
-export function renderHtml(decision, { lifecycle, now = new Date(), quoteTemplate = null, mail = null, progress = null } = {}) {
+export function renderHtml(decision, { lifecycle, now = new Date(), quoteTemplate = null, mail = null, progress = null, notes = [], feedback = null } = {}) {
   const view = lifecycleView(decision, lifecycle);
   const state = stateOf(decision, view);
   const groups = groupLines(decision.lines);
@@ -327,6 +328,7 @@ export function renderHtml(decision, { lifecycle, now = new Date(), quoteTemplat
   const first = decision.lines[0].request;
   const rfqRef = (decision.rfq.reference || "").match(/RFQ\s*#?\s*\d[\w-]*/i)?.[0] || "Email RFQ";
   const waiting = businessDaysSince(decision.rfq.initiatedAt, now);
+  const notesHtml = notesSection(decision, { notes, feedback });
   const title = groups.length === 1 ? `${first.partNumber}${revSuffix(first)}` : `${groups.length} parts`;
   return `<!doctype html>
 <html lang="en">
@@ -345,7 +347,7 @@ ${PAGE_STYLE}
     <div class="who"><span class="customer">${esc(decision.customer.name)}</span><span class="sep">·</span><span>${esc(rfqRef)}</span></div>
     <span class="pill ${state.tone}">${esc(state.label)}</span>
   </div>
-  <nav class="tabs" aria-label="Sections"><a href="#quote">Quote</a><a href="#why">Why</a><a href="#decision">Decision</a><a href="#evidence">Evidence</a></nav>
+  <nav class="tabs" aria-label="Sections"><a href="#quote">Quote</a><a href="#why">Why</a><a href="#decision">Decision</a>${notesHtml ? `<a href="#notes">Notes${notes.length ? ` (${notes.length})` : ""}</a>` : ""}<a href="#evidence">Evidence</a></nav>
 </header>
 <main>
   <div class="intro">
@@ -365,6 +367,7 @@ ${PAGE_STYLE}
   ${quoteSection(decision, view, groups, quote, state)}
   ${whySection(decision, groups)}
   ${decisionSection(decision, view)}
+  ${notesHtml}
   ${evidenceSection(decision, groups)}
 </main>
 <div class="toast" role="status" aria-live="polite">${ICON.check}<span>Copied to clipboard</span></div>

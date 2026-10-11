@@ -70,12 +70,12 @@ function printImport(result) {
 // private config (config.quoteTemplate) because it carries company terms.
 const readQuoteTemplate = (config) => (config.quoteTemplate ? fs.readFileSync(config.quoteTemplate, "utf8") : null);
 function renderVersion(config, caseId, version) {
-  return writePage({ outputsDir: config.outputsDir, caseId, version, quoteTemplate: readQuoteTemplate(config) }).base;
+  return writePage({ outputsDir: config.outputsDir, caseId, version, quoteTemplate: readQuoteTemplate(config), feedback: config.feedback || null }).base;
 }
 
 function refreshBoard(config) {
   const { file, board } = writeBoard({ ...boardInputs(config), lastSync: readLastSync(config) });
-  refreshPages({ outputsDir: config.outputsDir, board, quoteTemplate: readQuoteTemplate(config) });
+  refreshPages({ outputsDir: config.outputsDir, board, quoteTemplate: readQuoteTemplate(config), feedback: config.feedback || null });
   let mirrored = "";
   if (config.pagesMirror) {
     try {
