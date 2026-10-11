@@ -63,7 +63,9 @@ export function runSync({ config, limits, trigger = "manual", now = new Date(), 
   try {
     const { file, board } = writeBoard({ ...boardInputs(config), now, lastSync: record });
     try {
-      record.pages = refreshPages({ outputsDir: config.outputsDir, board, quoteTemplate: config.quoteTemplate ? fs.readFileSync(config.quoteTemplate, "utf8") : null, now }).length;
+      const failures = [];
+      record.pages = refreshPages({ outputsDir: config.outputsDir, board, quoteTemplate: config.quoteTemplate ? fs.readFileSync(config.quoteTemplate, "utf8") : null, now, failures }).length;
+      for (const failure of failures) record.errors.push(`page ${failure.caseId} v${failure.version}: ${failure.message}`);
     } catch (error) {
       record.errors.push(`pages: ${error.message}`);
     }

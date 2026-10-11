@@ -1,4 +1,5 @@
 import { BOARD_FILE, businessDaysSince } from "./board.js";
+import { GAPS_NOT_RECORDED } from "./decision.js";
 import { lifecycleView } from "./lifecycle.js";
 import { describeDecision, describeReview, displayStatus, escapeHtml, revSuffix, sizeText, STATUS_LABEL, summarizeLine, whyNot } from "./render.js";
 import { answerLines, approveAllLine, assumptions, methodPath, poTotal, pricedEnvelope, quoteSummary, reviewCard } from "./review-card.js";
@@ -14,6 +15,8 @@ import { copyButton, ICON, progressHtml, SCRIPT as PAGE_SCRIPT, STYLE as PAGE_ST
 const usd = (value) => (value == null ? "—" : `$${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const pct = (value) => `${(value * 100).toFixed(1)}%`;
 const day = (iso) => (iso ? new Date(`${iso.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "—");
+// Records saved before gaps were required carry none; say so rather than crash.
+const emailGaps = (fresh) => (Array.isArray(fresh.email.gaps) ? fresh.email.gaps : [GAPS_NOT_RECORDED]);
 const isBlocked = (result) => Boolean(result?.blocked?.length);
 const esc = (value) => escapeHtml(value);
 
@@ -300,12 +303,12 @@ function evidenceSection(decision, groups) {
       <li>Router History ${esc(db.fileName)}, received ${esc(db.receivedMin)}…${esc(db.receivedMax)}, ${db.rows} rows.</li>
       <li>Invoices: ${esc(fresh.invoices.fileName)} ${esc(fresh.invoices.dateMin)}…${esc(fresh.invoices.dateMax)}. ${esc(fresh.invoices.note)}</li>
       <li>Price Lab package ${esc(fresh.rules.priceLab.capturedAt)}; calculator ${esc(fresh.rules.onlineCalculator.sha256.slice(0, 12))}.</li>
-    </ul><h4>Not checked / gaps</h4><ul class="plain">${fresh.email.gaps.map((gap) => `<li>${esc(gap)}</li>`).join("")}</ul>`;
+    </ul><h4>Not checked / gaps</h4><ul class="plain">${emailGaps(fresh).map((gap) => `<li>${esc(gap)}</li>`).join("")}</ul>`;
   return `<section id="evidence" class="panel" aria-labelledby="evidence-title">
     <h2 id="evidence-title">Evidence</h2>
     <p class="muted">Everything the price rests on, with sources. Folded until you need it.</p>
     ${perGroup}
-    ${fold("Freshness and gaps", fresh.email.gaps.length, freshness)}
+    ${fold("Freshness and gaps", emailGaps(fresh).length, freshness)}
     <p class="muted small">Generated ${esc(decision.generatedAt)} · inputs ${esc(decision.inputsFingerprint.slice(0, 16))} · v${decision.lifecycle.recommendationVersion}${decision.lifecycle.supersedes ? ` supersedes v${decision.lifecycle.supersedes}` : ""} · private working file; keep inside QPC.</p>
   </section>`;
 }
