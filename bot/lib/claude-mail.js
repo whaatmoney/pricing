@@ -119,7 +119,10 @@ export function subjectKey(subject) {
 }
 
 // Part and RFQ numbers a case answers to.
-const caseRfqNumbers = (kase) => [...String([kase.reference, kase.monitorReference].join(" ")).matchAll(/\bRFQ\s*#?\s*-?\s*([A-Z0-9-]*\d[A-Z0-9-]*)/gi)].map((match) => squash(match[1])).filter((token) => token.length >= 4);
+// RFQ numbers compare by their digits ("RFQ-CA-4100" and "4100" are one
+// request; 4100 and 14100 are not).
+const rfqDigits = (value) => String(value || "").replace(/\D/g, "");
+const caseRfqNumbers = (kase) => [...String([kase.reference, kase.monitorReference].join(" ")).matchAll(/\bRFQ\s*#?\s*-?\s*([A-Z0-9-]*\d[A-Z0-9-]*)/gi)].map((match) => rfqDigits(match[1])).filter((token) => token.length >= 4);
 function caseTokens(kase) {
   const numbers = [...String([kase.reference, kase.monitorReference].join(" ")).matchAll(/\bRFQ\s*#?\s*-?\s*([A-Z0-9-]*\d[A-Z0-9-]*)/gi)].map((match) => match[1]);
   return [...(kase.lines || []).map((line) => line.partNumber), ...numbers].map(squash).filter((token) => token.length >= 4);
@@ -138,8 +141,11 @@ export function caseMail(kase, events) {
   // The quote that can answer an open price question must not name an RFQ
   // number this request does not have (pricing owner, 2026-10-09).
   const ownRfqs = caseRfqNumbers(kase);
-  const sameRequest = (event) => !(event.rfqNumbers || []).length || (ownRfqs.length > 0 && event.rfqNumbers.map(squash).some((number) => ownRfqs.includes(number)));
-  return { sent: quotes[0] || null, lastSent: quotes.filter(sameRequest).at(-1) || null, latest: byTime.at(-1) || null };
+  const sameRequest = (event) => !(event.rfqNumbers || []).length || (ownRfqs.length > 0 && event.rfqNumbers.map(rfqDigits).some((number) => ownRfqs.includes(number)));
+  // A quote naming only other RFQ numbers than this case's own is another
+  // request's quote.
+  const notOther = (event) => !(event.rfqNumbers || []).length || !ownRfqs.length || event.rfqNumbers.map(rfqDigits).some((number) => ownRfqs.includes(number));
+  return { sent: quotes.filter(notOther)[0] || null, lastSent: quotes.filter(sameRequest).at(-1) || null, latest: byTime.at(-1) || null };
 }
 
 // Monitor entries a message belongs to: the entry that holds this very email
@@ -194,7 +200,9 @@ export function placeMailEvents(events, cases, queue, { monitorCovers = () => fa
     const { sent } = caseMail(kase, events);
     if (sent) sentBy.set(sent.id, kase);
   }
-  const answeredBy = (event) => events.find((other) => other.kind === "quote-sent" && lower(other.customerDomain) === lower(event.customerDomain) && Date.parse(other.at) > Date.parse(event.at) && (sharesToken(eventTokens(other), eventTokens(event)) || subjectKey(other.subject) === subjectKey(event.subject)));
+  // Both name RFQ numbers and none agree by digits: another request's quote.
+  const rfqConflict = (a, b) => (a.rfqNumbers || []).length > 0 && (b.rfqNumbers || []).length > 0 && !a.rfqNumbers.map(rfqDigits).some((number) => b.rfqNumbers.map(rfqDigits).includes(number));
+  const answeredBy = (event) => events.find((other) => other.kind === "quote-sent" && lower(other.customerDomain) === lower(event.customerDomain) && Date.parse(other.at) > Date.parse(event.at) && !rfqConflict(other, event) && (sharesToken(eventTokens(other), eventTokens(event)) || subjectKey(other.subject) === subjectKey(event.subject)));
   const casesFor = (event, entries) => {
     const domain = lower(event.customerDomain);
     const tokens = eventTokens(event);

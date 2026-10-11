@@ -179,7 +179,7 @@ export const isPricingRequest = (text) => clausesOf(text).some((clause) => PRICI
 // A clause that asks, doubts, plans or names an open issue is never evidence a
 // quote went out ("QPC acknowledged quote request", "not quoted", "quoted per
 // ledger").
-const DOUBT = /\b(?:not|no|never|cannot|unable|unverified|unconfirmed|provisional|pending|draft|per ledger|will|shall|would|could|may|might|should|if|unless|whether|to be|going to|plan|plans|planned|scheduled|tomorrow|later|awaiting|request\w*|asks?|asked|asking|inquir\w*|please|kindly|have|send|resend|get|need\w*|wants?|wanted|expect\w*|requir\w*|seek\w*|chas\w*|hop\w*|questions?|discrepanc\w*|dispute\w*|owed|cancel\w*|withdr\w*|disregard\w*)\b|n't\b/i;
+const DOUBT = /\b(?:not|no|never|cannot|unable|unverified|unconfirmed|provisional|pending|draft|per ledger|will|shall|would|could|may|might|should|if|unless|whether|to be|going to|plan|plans|planned|scheduled|tomorrow|later|awaiting|request\w*|asks?|asked|asking|inquir\w*|please|kindly|have|send|resend|get|ensure\w*|make\s+sure|need\w*|wants?|wanted|expect\w*|requir\w*|seek\w*|chas\w*|hop\w*|questions?|discrepanc\w*|dispute\w*|owed|cancel\w*|withdr\w*|disregard\w*)\b|n't\b/i;
 const BARE_DOUBT = /^(?:still\s+)?(?:unverified|unconfirmed|provisional|not verified|not confirmed)$/i;
 // Sent wording the monitor writes ("Quote sent by Pat", "Estimate sent by
 // Pat", "QPC sends two-line prices", "Customer confirmed quote receipt", "Pat
@@ -206,16 +206,22 @@ const SENT = shapes([
 // 2026-10-09). This only adds entries, so it reads loosely.
 const OPEN_ISSUE = "(?:questions?|discrepanc(?:y|ies)|dispute|clarifications?)";
 const PRICE_SUBJECT = "(?:quantity|quantities|price|prices|pricing|quote)";
-const STILL_OPEN = new RegExp(`\\bstill\\s+owed\\b|\\b${PRICE_SUBJECT}\\s+(?:[\\w-]+\\s+){0,3}${OPEN_ISSUE}\\b|\\b${OPEN_ISSUE}\\s+(?:[\\w-]+\\s+){0,2}(?:about|on|in|with|over|regarding|for)\\s+(?:the\\s+)?${PRICE_SUBJECT}\\b|\\b(?:re-?quote|(?:revised|new|updated|corrected|replacement|another)\\s+(?:quote|pricing|price|estimate))\\b[^;]*\\b(?:needed|requested|owed|wanted)\\b|\\b(?:request\\w*|needs?|wants?|asks?\\s+for|asked\\s+for)\\s+(?:a\\s+|an\\s+)?(?:revised|new|updated|corrected|replacement|another)\\s+(?:quote|price|pricing|estimate)\\b`, "i");
+const STILL_OPEN = new RegExp(`\\bstill\\s+owed\\b|\\b${PRICE_SUBJECT}\\s+(?:[\\w-]+\\s+){0,3}${OPEN_ISSUE}\\b|\\b${OPEN_ISSUE}\\s+(?:[\\w-]+\\s+){0,2}(?:about|on|in|with|over|regarding|for)\\s+(?:the\\s+)?${PRICE_SUBJECT}\\b|\\b(?:re-?quote|(?:revised|new|updated|corrected|replacement|another)\\s+(?:quote|pricing|price|estimate))\\b[^;]*\\b(?:needed|requested|owed|wanted)\\b|\\b(?:request\\w*|needs?|wants?|asks?\\s+for|asked\\s+for)\\s+(?:a\\s+|an\\s+)?(?:revised|new|updated|corrected|replacement|another)\\s+(?:quote|price|pricing|estimate)\\b|\\b(?:customer|buyer)\\s+(?:now\\s+|also\\s+)?(?:requests?|requested|asks?\\s+for|asked\\s+for|needs?|wants?)\\s+(?:[\\w-]+\\s+){0,2}(?:pric\\w*|quot\\w*|estimat\\w*|RFQ)\\b`, "i");
 // A clause about a timing or dated estimate is never a sent price ("Pickup
 // estimate sent for 4100", "October8 estimate sent").
 const TIMING_ESTIMATE = new RegExp(`\\b(?:${TIMING}\\s+(?:date\\s+)?estimates?|estimated\\s+${TIMING}|${DATE}\\s+(?:completion\\s+)?estimates?)\\b`, "i");
-export const openPriceIssue = (status) => STILL_OPEN.test(String(status || ""));
+// A price the customer sent ("Customer sent target price") is not QPC's quote.
+const THEY_SENT = /\b(?:customer|buyer|vendor|supplier|they)\s+(?:[\w-]+\s+){0,2}(?:sen(?:t|ds)|quoted)\b/i;
+// An issue answered or resolved in the same clause is not open ("QPC answered
+// received-quantity discrepancy").
+const RESOLVED = /\b(?:answered|resolved|settled)\b/i;
+const STILL_UNRESOLVED = /\b(?:not|no|never|un\w+|pending|still|awaiting|request\w*|needs?|wants?|asks?|asked)\b|n't\b/i;
+export const openPriceIssue = (status) => clausesOf(status).some((clause) => STILL_OPEN.test(clause) && !(RESOLVED.test(clause) && !STILL_UNRESOLVED.test(clause)));
 export function quoteSentStatus(status) {
   if (openPriceIssue(status)) return false;
   const clauses = clausesOf(status);
   if (clauses.some((clause) => BARE_DOUBT.test(clause))) return false;
-  return clauses.some((clause) => SENT.test(clause) && !DOUBT.test(clause) && !notPrice(clause) && !TIMING_ESTIMATE.test(clause));
+  return clauses.some((clause) => SENT.test(clause) && !DOUBT.test(clause) && !notPrice(clause) && !TIMING_ESTIMATE.test(clause) && !THEY_SENT.test(clause));
 }
 
 // Withdrawal wording the monitor writes ("Customer requested RFQ be
@@ -539,6 +545,10 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       // Section 2: the customer got an acknowledgment, not a price. The quote
       // is still owed, but nothing else on the board lists these.
       owed: queue.filter((item) => item.priority_section === 2 && !covered.has(item.reference) && !shownByMail.has(item.reference) && isQuoteOwed(`${item.reference} ; ${item.status}`) && !quoteSentStatus(item.status)).map(row).sort(oldestFirst),
+      // Section 3: a quote went out, then the customer raised a quantity or
+      // price question. With no card or mail row, only this list shows them
+      // (pricing owner, 2026-10-09).
+      openAfterQuote: queue.filter((item) => item.priority_section === 3 && !covered.has(item.reference) && !shownByMail.has(item.reference) && openPriceIssue(item.status)).map(row).sort(oldestFirst),
     };
   }
   const tracker = readTracker(trackerPath);
@@ -1010,6 +1020,7 @@ export function renderBoard(board, { badge = null } = {}) {
   const mailNew = mailAll.filter((item) => keep(item, `mail|${item.customerDomain}|${String(item.subject).replace(/^(re|fw|fwd):\s*/gi, "")}`, item.at, item.customerDomain, item.subject));
   const unpriced = unpricedAll.filter((item) => keep(item, `monitor|${item.customer}|${item.reference}`, item.lastActivityAt, item.customer, item.reference));
   const owed = (monitor?.owed || []).filter((item) => keep(item, `monitor|${item.customer}|${item.reference}`, item.lastActivityAt, item.customer, item.reference));
+  const reopenedQuotes = (monitor?.openAfterQuote || []).filter((item) => keep(item, `monitor|${item.customer}|${item.reference}`, item.lastActivityAt, item.customer, item.reference));
   // Due today or past due, from every source: cards, mail-check rows, and
   // the monitor's lists without a page.
   const dueItems = [
@@ -1017,6 +1028,7 @@ export function renderBoard(board, { badge = null } = {}) {
     ...mailFound.filter(ownDue).map((item) => ({ customer: item.monitor.customer || item.customerDomain, reference: item.monitor.reference, dueDate: ownDue(item), where: `No page yet · ${(MAIL_CHIP[item.kind] || ["", item.kind])[1]} (Claude's mail check)`, href: item.link })),
     ...unpriced.filter((item) => item.dueDate && item.pricing).map((item) => ({ customer: item.customer, reference: item.reference, dueDate: item.dueDate, where: "No page yet (Codex mail monitor)", href: item.rfqLink })),
     ...owed.filter((item) => item.dueDate).map((item) => ({ customer: item.customer, reference: item.reference, dueDate: item.dueDate, where: "Quote still owed (Codex mail monitor)", href: item.rfqLink })),
+    ...reopenedQuotes.filter((item) => item.dueDate).map((item) => ({ customer: item.customer, reference: item.reference, dueDate: item.dueDate, where: "Price question after a quote (Codex mail monitor)", href: item.rfqLink })),
   ].filter((item) => dueDays(item.dueDate, now) <= 0).sort((a, b) => dueDays(a.dueDate, now) - dueDays(b.dueDate, now));
   const pastDue = dueItems.filter((item) => dueDays(item.dueDate, now) < 0).length;
   const dueToday = dueItems.length - pastDue;
@@ -1034,8 +1046,8 @@ export function renderBoard(board, { badge = null } = {}) {
     dueToday ? `<a class="due-now" href="#due">${dueToday} due today</a>` : "",
     chasingCount ? `<a class="chasing-now" href="${chasingNoPageCount ? "#chasing" : `#case-${esc(chaseTarget.caseId)}`}">${chasingCount} customer${chasingCount === 1 ? "" : "s"} chasing</a>` : "",
   ].filter(Boolean).join('<span class="sep">·</span>') || "Nothing waiting on you.";
-  const tabs = [["due", "Due now", dueItems.length], ["ready", "Ready", grouped.ready.length], ["facts", "Needs facts", grouped.facts.length], ["chasing", "Chasing", chasingNoPageCount], ["closed", "Decided & sent", closed.length], ["unpriced", "No page yet", unpriced.length + mailNew.length], ["owed", "Quote owed", owed.length], ["log", "Log", null]]
-    .filter(([id, , count]) => count !== 0 && (id !== "unpriced" || monitor || mailNew.length) && (id !== "owed" || owed.length) && (id !== "due" || dueItems.length));
+  const tabs = [["due", "Due now", dueItems.length], ["ready", "Ready", grouped.ready.length], ["facts", "Needs facts", grouped.facts.length], ["chasing", "Chasing", chasingNoPageCount], ["closed", "Decided & sent", closed.length], ["unpriced", "No page yet", unpriced.length + mailNew.length], ["owed", "Quote owed", owed.length], ["reopened", "Price question", reopenedQuotes.length], ["log", "Log", null]]
+    .filter(([id, , count]) => count !== 0 && (id !== "unpriced" || monitor || mailNew.length) && (id !== "owed" || owed.length) && (id !== "reopened" || reopenedQuotes.length) && (id !== "due" || dueItems.length));
   const recentPlacements = (board.mailPlacements || []).filter((item) => item.place !== "old");
   return `<!doctype html>
 <html lang="en">
@@ -1082,6 +1094,8 @@ ${BOARD_STYLE}
   ${(monitor && unpriced.length) || mailNew.length || setAside.length ? section("unpriced", "No price page yet", unpriced.length + mailNew.length, unpriced.length + mailNew.length ? "Open in the mail with no page here; ask Claude to price any of them." : `Nothing here needs pricing. ${setAside.length} item${setAside.length === 1 ? " was" : "s were"} checked and ${setAside.length === 1 ? "is" : "are"} not a price request (below).`, `${mailRowsTable(mailNew, now, "Found by Claude's mail check, not listed elsewhere here")}${monitorTable(unpriced.filter((item) => item.pricing), "Status mentions a quote, RFQ or inquiry", now)}${monitorTable(unpriced.filter((item) => !item.pricing), "Status doesn't say (may be a follow-up or an RFQ)", now)}${notPricedTable(setAside, now)}`) : ""}
 
   ${owed.length ? section("owed", "Acknowledged, quote still owed", owed.length, "The Codex mail monitor saw each of these customers get a reply but no price. Oldest first. Ask Claude to price any of them, or tell it which are not pricing work.", monitorTable(owed, `Show ${owed.length}`, now)) : ""}
+
+  ${reopenedQuotes.length ? section("reopened", "Price question after a quote", reopenedQuotes.length, "A quote went out, then the Codex mail monitor saw the customer raise a quantity or price question. No price page or mail row shows these. Oldest first.", monitorTable(reopenedQuotes, `Show ${reopenedQuotes.length}`, now)) : ""}
 
   <section id="log" class="group" aria-labelledby="log-title">
     <div class="group-head"><h2 id="log-title">Log</h2></div>

@@ -63,6 +63,40 @@ test("names, references and @-mentions are not sent; answers are reused from the
   assert.equal(again.tokens, 0);
 });
 
+test("staff, contacts, other companies, numbers, subjects and quoted email never leave QPC", async () => {
+  const { ask, sent } = fakeTypeSafe();
+  const queue = [
+    { ...entry("Acme Precision", "RFQ 4100", "Quote sent by Pat to Sam; Zorvex end user", 3), last_observed_actor: "pat.lee@shop.example", events: [{ actor: "sam@acme.example" }] },
+    entry("Beta Works", "RFQ 4200", "Al quoted $12 each; pricing not involved", 2),
+  ];
+  const chatMessages = [
+    post("1", "2026-10-01T15:00:00Z", "Al from Beta is F/U on this request: RFQ 4200\nSubject Line: RE: Beta RFQ 4200 cleaning\nneeds it by Friday\n-----Original Message-----\nFrom: buyer@beta.example\nPlease quote 40 pcs"),
+    { ...post("2", "2026-10-02T15:00:00Z", "@al.smith 2nd f/u, due today", "1"), from: "Pat Lee" },
+  ];
+  await runShadow({ queue, chatMessages, cache: {}, ask });
+  const text = JSON.stringify(sent);
+  assert.doesNotMatch(text, /Pat|Sam|Lee|\bAl\b|al\.smith|Acme|Beta|4100|4200|Subject Line|cleaning|Original Message|buyer@|Please quote/);
+  assert.match(text, /Quote sent by someone to someone/);
+  assert.match(text, /needs it by Friday/, "the poster's own deadline stays");
+  assert.match(text, /pricing not involved/);
+  assert.doesNotMatch(text, /Zorvex/, "a capitalised word never written in lower case is a name");
+});
+
+test("status headers, quoted text, accented and all-caps names stay home; a leading word keeps its meaning", async () => {
+  const { ask, sent } = fakeTypeSafe();
+  const queue = [entry("Acme", "RFQ 4100", "Quote pending\nSubject: confidential process\n> please quote 40 pcs", 2), entry("Beta", "RFQ 4200", "Quote sent by Élodie; ZORVEX end user", 3), entry("Gamma", "RFQ 4300", "Not quoted", 3), entry("Delta", "RFQ 4400", "customer wrote: \"please quote 40 pcs\"", 2)];
+  await runShadow({ queue, chatMessages: [{ ...post("1", "2026-10-01T15:00:00Z", "status?"), from: "Élodie Brun" }], cache: {}, ask });
+  const text = JSON.stringify(sent);
+  assert.doesNotMatch(text, /confidential|please quote|Élodie|ZORVEX/);
+  assert.match(text, /Not quoted/);
+});
+
+test("the price-request check compares with the board's whole Quote owed test", async () => {
+  const { ask } = fakeTypeSafe();
+  const report = await runShadow({ queue: [entry("Acme", "RFQ 4300", "Quote sent; pricing question answered", 2)], chatMessages: [], cache: {}, ask });
+  assert.equal(report.monitor.rows.filter((row) => row.check === "price request" && row.rule === true).length, 0, "a sent quote is not owed by the board's rule either");
+});
+
 test("chase urgency compares the words only, and the rule's keyword is shown", async () => {
   const { ask } = fakeTypeSafe();
   const chatMessages = [

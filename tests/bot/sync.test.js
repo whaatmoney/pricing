@@ -270,6 +270,22 @@ test("pre-push inspection wordings stay on the board", () => {
   for (const text of ["ABC-100 ; Completion estimate revised to October12 and pricing requested", "ABC-100 ; QPC answers budgetary inquiry with completion estimates", "RFQ 1002 ; Replacement quote requested; previous RFQ withdrawn", "RFQ 1003 ; Duplicate RFQ withdrawn"]) assert.equal(isQuoteOwed(text), true, text);
 });
 
+test("follow-up review: instructions, customer prices and new pricing requests are not sent quotes", () => {
+  for (const status of ["Ensure quote sent today", "Make sure quote sent", "Customer sent target price", "Buyer sends their budget pricing", "Quote sent; customer requests pricing for additional parts"]) assert.equal(quoteSentStatus(status), false, status);
+  for (const status of ["Quote sent by Pat", "Customer-facing two-line quote sent", "Customer confirmed quote receipt"]) assert.equal(quoteSentStatus(status), true, status);
+  for (const status of ["Quote sent; customer requests corrected quote", "Quote sent; pricing question not resolved"]) assert.equal(quoteSentStatus(status), false, `${status}: an issue not plainly answered stays open`);
+  assert.equal(quoteSentStatus("Quote sent; QPC answered quantity question"), true, "an answered question is closed");
+});
+
+test("a quote with an open price question and no card or mail row gets its own list", () => {
+  const board = boardFor([
+    { customer: "Gamma Co", reference: "RFQ 7700 / GG-1", priority_section: 3, status: "Customer acknowledged quote; quantity discrepancy remains" },
+    { customer: "Delta Co", reference: "RFQ 7800 / DD-1", priority_section: 3, status: "Quote sent; waiting on customer" },
+  ]);
+  assert.deepEqual(board.monitor.openAfterQuote.map((item) => item.reference), ["RFQ 7700 / GG-1"]);
+  assert.match(renderBoard(board), /Price question after a quote/);
+});
+
 test("a price question the monitor records after a mailed quote reopens the case", () => {
   const sentAt = "2026-09-25T15:00:00Z";
   const boardWith = (monitorAt) => {
