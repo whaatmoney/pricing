@@ -264,12 +264,17 @@ export function renderMarkdown(decision, { lifecycle, quoteTemplate = null } = {
   const fresh = decision.freshness;
   const db = fresh.database.current;
   out.push("", "## Freshness and coverage", "");
-  out.push(`- Email history searched ${fresh.email.searchedAt}: ${fresh.email.searches.map((item) => `${item.mailbox} "${item.query}" ${item.results}${item.complete ? " (all pages)" : " (partial)"}`).join("; ")}.`);
-  if (fresh.email.monitor) out.push(`- Codex monitor source cutoff ${fresh.email.monitor.source_cutoff} (saved ${fresh.email.monitor.as_of}; stale ${fresh.email.monitor.stale}).`);
+  // Hand-written search logs may leave any of these lists out (see page.js).
+  const email = fresh.email || {};
+  const searches = Array.isArray(email.searches) ? email.searches : [];
+  const gaps = Array.isArray(email.gaps) ? email.gaps : [];
+  const searchLabel = (item) => [item.mailbox, item.query != null ? `"${item.query}"` : null, item.results].filter((part) => part != null && part !== "").join(" ") + (item.complete ? " (all pages)" : " (partial)");
+  out.push(`- Email history searched ${email.searchedAt ?? "(time not recorded)"}: ${searches.length ? searches.map(searchLabel).join("; ") : "no searches recorded"}.`);
+  if (email.monitor) out.push(`- Codex monitor source cutoff ${email.monitor.source_cutoff} (saved ${email.monitor.as_of}; stale ${email.monitor.stale}).`);
   out.push(`- Router History: ${db.fileName}, exported ${db.exportDate}, received dates ${db.receivedMin}…${db.receivedMax}, ${db.rows} rows, imported ${db.importedAt}; stale ${fresh.database.stale}; unimported newer exports: ${fresh.database.unimportedNewerExports.length || "none"}.`);
   out.push(`- Invoices: ${fresh.invoices.fileName} ${fresh.invoices.dateMin}…${fresh.invoices.dateMax}. ${fresh.invoices.note}`);
   out.push(`- Price Lab package captured ${fresh.rules.priceLab.capturedAt}; online calculator sha256 ${fresh.rules.onlineCalculator.sha256.slice(0, 12)} (formula drift: ${fresh.rules.onlineCalculator.formulaDrift.length ? "YES" : "none"}).`);
-  out.push("", "### Not checked / gaps", "", ...fresh.email.gaps.map((gap) => `- ${gap}`), "");
+  out.push("", "### Not checked / gaps", "", ...(gaps.length ? gaps.map((gap) => `- ${gap}`) : ["- None recorded in the search log."]), "");
   return out.join("\n");
 }
 

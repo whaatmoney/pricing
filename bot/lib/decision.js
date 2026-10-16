@@ -545,9 +545,11 @@ export function buildDecision({ casePath, storeDir, routerFolder, salesExportPat
     },
     freshness: {
       email: {
-        searchedAt: searchLog.searchedAt,
-        searches: searchLog.searches.map((item) => ({ mailbox: item.mailbox, query: item.query, results: item.results, complete: item.complete })),
-        gaps: searchLog.gaps,
+        // The search log is written by hand (a helper lists what it searched),
+        // so a missing list must not stop the page: it is a gap the page shows.
+        searchedAt: searchLog.searchedAt ?? null,
+        searches: (Array.isArray(searchLog.searches) ? searchLog.searches : []).map((item) => ({ mailbox: item.mailbox, query: item.query, results: item.results, complete: item.complete })),
+        gaps: Array.isArray(searchLog.gaps) ? searchLog.gaps.map(String) : [],
         monitor: readMonitorFreshness(monitorStatePath),
       },
       database: databaseStatus,

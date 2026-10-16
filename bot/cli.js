@@ -75,7 +75,8 @@ function renderVersion(config, caseId, version) {
 
 function refreshBoard(config) {
   const { file, board } = writeBoard({ ...boardInputs(config), lastSync: readLastSync(config) });
-  refreshPages({ outputsDir: config.outputsDir, board, quoteTemplate: readQuoteTemplate(config) });
+  const { failed } = refreshPages({ outputsDir: config.outputsDir, board, quoteTemplate: readQuoteTemplate(config) });
+  for (const page of failed) console.error(`PAGE FAILED ${page.caseId} v${page.version}: ${page.message} (the board is built; this page keeps its last rendering)`);
   let mirrored = "";
   if (config.pagesMirror) {
     try {

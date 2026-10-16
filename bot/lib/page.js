@@ -294,18 +294,24 @@ function evidenceSection(decision, groups) {
       ${otherCustomers(first, fold)}
       ${fold("Emails considered", first.history.email.evidence.length, `<ul class="plain">${emails}</ul>`)}`;
   }).join("");
+  // Older records carry hand-written search logs with fields missing, so
+  // every list here may be absent; the page says so rather than failing.
+  const email = fresh.email || {};
+  const searches = Array.isArray(email.searches) ? email.searches : [];
+  const gaps = Array.isArray(email.gaps) ? email.gaps : [];
+  const searchLabel = (item) => [item.mailbox, item.query != null ? `“${item.query}”` : null, item.results].filter((part) => part != null && part !== "").map((part) => esc(part)).join(" ") + (item.complete ? "" : " (partial)");
   const freshness = `<ul class="plain">
-      <li>Email searched ${esc(fresh.email.searchedAt)}: ${fresh.email.searches.map((item) => `${esc(item.mailbox)} “${esc(item.query)}” ${item.results}${item.complete ? "" : " (partial)"}`).join("; ")}.</li>
-      ${fresh.email.monitor ? `<li>Mail monitor cutoff ${esc(fresh.email.monitor.source_cutoff)} (stale ${fresh.email.monitor.stale}).</li>` : ""}
+      <li>Email searched ${esc(email.searchedAt ?? "(time not recorded)")}: ${searches.length ? searches.map(searchLabel).join("; ") : "no searches recorded"}.</li>
+      ${email.monitor ? `<li>Mail monitor cutoff ${esc(email.monitor.source_cutoff)} (stale ${esc(email.monitor.stale)}).</li>` : ""}
       <li>Router History ${esc(db.fileName)}, received ${esc(db.receivedMin)}…${esc(db.receivedMax)}, ${db.rows} rows.</li>
       <li>Invoices: ${esc(fresh.invoices.fileName)} ${esc(fresh.invoices.dateMin)}…${esc(fresh.invoices.dateMax)}. ${esc(fresh.invoices.note)}</li>
       <li>Price Lab package ${esc(fresh.rules.priceLab.capturedAt)}; calculator ${esc(fresh.rules.onlineCalculator.sha256.slice(0, 12))}.</li>
-    </ul><h4>Not checked / gaps</h4><ul class="plain">${fresh.email.gaps.map((gap) => `<li>${esc(gap)}</li>`).join("")}</ul>`;
+    </ul><h4>Not checked / gaps</h4><ul class="plain">${gaps.length ? gaps.map((gap) => `<li>${esc(gap)}</li>`).join("") : '<li class="muted">None recorded in the search log.</li>'}</ul>`;
   return `<section id="evidence" class="panel" aria-labelledby="evidence-title">
     <h2 id="evidence-title">Evidence</h2>
     <p class="muted">Everything the price rests on, with sources. Folded until you need it.</p>
     ${perGroup}
-    ${fold("Freshness and gaps", fresh.email.gaps.length, freshness)}
+    ${fold("Freshness and gaps", gaps.length, freshness)}
     <p class="muted small">Generated ${esc(decision.generatedAt)} · inputs ${esc(decision.inputsFingerprint.slice(0, 16))} · v${decision.lifecycle.recommendationVersion}${decision.lifecycle.supersedes ? ` supersedes v${decision.lifecycle.supersedes}` : ""} · private working file; keep inside QPC.</p>
   </section>`;
 }

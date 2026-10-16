@@ -20,12 +20,20 @@ export function writePage({ outputsDir, caseId, version, quoteTemplate = null, m
 }
 
 // Redraws every page on the board with its current email links, so "Latest
-// reply" follows the monitor. Never touches a record or its version.
+// reply" follows the monitor. Never touches a record or its version. One page
+// that will not render is reported in `failed` and the rest still refresh: a
+// bad record must not stop the board (the 2026-10-15 run left three records
+// without a gaps list and every board rebuild died until they were fixed).
 export function refreshPages({ outputsDir, board, quoteTemplate = null, now = new Date() }) {
   const updated = [];
+  const failed = [];
   for (const kase of board.cases) {
-    const { changed } = writePage({ outputsDir, caseId: kase.caseId, version: kase.version, quoteTemplate, mail: { rfq: kase.rfqLink || null, rfqOwner: kase.rfqOwner || null, latest: kase.latestLink || null, files: kase.files || null }, progress: kase.progress, now, markdown: false });
-    if (changed) updated.push(kase.page);
+    try {
+      const { changed } = writePage({ outputsDir, caseId: kase.caseId, version: kase.version, quoteTemplate, mail: { rfq: kase.rfqLink || null, rfqOwner: kase.rfqOwner || null, latest: kase.latestLink || null, files: kase.files || null }, progress: kase.progress, now, markdown: false });
+      if (changed) updated.push(kase.page);
+    } catch (error) {
+      failed.push({ caseId: kase.caseId, version: kase.version, page: kase.page, message: error.message });
+    }
   }
-  return updated;
+  return { updated, failed };
 }
