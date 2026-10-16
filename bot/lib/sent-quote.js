@@ -1,4 +1,4 @@
-import { extractSheetQuotes, extractTemplateQuotes, htmlToText, splitLatestAuthored } from "./email-evidence.js";
+import { extractSheetQuotes, extractTableQuotes, extractTemplateQuotes, htmlToText, splitLatestAuthored } from "./email-evidence.js";
 
 // The reviewer's own quote email is their decision (ruling sent-quote-is-decision-v1):
 // once a quote leaves QPC for the customer, each line it prices is recorded as
@@ -28,7 +28,7 @@ export function readSentQuote({ decision, email, approverAddresses = {} }) {
   const { latest } = splitLatestAuthored(text);
   const lines = decision.lines.map((line) => {
     const aliases = (line.request.aliases || []).map((alias) => alias.value || alias);
-    const rows = [...extractTemplateQuotes(latest, line.request.partNumber, aliases), ...extractSheetQuotes(latest, line.request.partNumber, aliases)];
+    const rows = [...extractTemplateQuotes(latest, line.request.partNumber, aliases), ...extractSheetQuotes(latest, line.request.partNumber, aliases), ...extractTableQuotes(latest, line.request.partNumber, aliases)];
     const quantity = line.request.quantity;
     const exact = rows.filter((row) => row.quantity === quantity);
     const loose = rows.filter((row) => row.quantity == null);
