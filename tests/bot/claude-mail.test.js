@@ -116,6 +116,28 @@ test("the board lists mail-check requests whose monitor entry it does not show, 
   assert.doesNotMatch(html, /not in the monitor/i);
 });
 
+test("with the monitor retired, nothing it listed hides a message, and a date the customer wrote makes the row due", () => {
+  const dir = tempDir("qpc-claude-mail-");
+  const monitorStatePath = path.join(dir, "monitor.json");
+  fs.writeFileSync(monitorStatePath, JSON.stringify({ freshness: { source_cutoff: "2026-09-30T16:00:00Z", stale: false }, operational_queue: [
+    { customer: "Harbor Metals", reference: "RFQ 55120", priority_section: 1, status: "New RFQ" },
+  ] }));
+  const claudeMailPath = path.join(dir, "claude-mail.json");
+  const mail = [
+    event("harbor", "2026-09-30T14:32:34.000Z", "rfq", { customerDomain: "harbor.example", partNumbers: [], rfqNumbers: ["55120"], subject: "Re: Harbor RFQ / 55120" }),
+    event("zeta", "2026-09-30T15:00:00.000Z", "rfq", { customerDomain: "zeta.example", partNumbers: [], rfqNumbers: [], subject: "Need by 9/30", dueDate: "2026-09-30" }),
+  ];
+  fs.writeFileSync(claudeMailPath, JSON.stringify({ cutoff: "2026-09-30T16:48:02Z", events: Object.fromEntries(mail.map((item) => [item.id, item])) }));
+  const board = buildBoard({ outputsDir: dir, monitorStatePath, claudeMailPath, monitorRetiredAt: "2026-09-30T00:00:00Z", now: new Date("2026-09-30T17:00:00Z") });
+  assert.deepEqual(board.mailFound.map((item) => item.id).sort(), ["harbor", "zeta"], "the retired monitor's section-1 entry no longer hides Harbor's email");
+  const html = renderBoard(board);
+  assert.match(html, /Codex mail monitor \(retired, its last record\) · RFQ 55120/);
+  assert.match(html, /No price page yet<\/span><div><span class="chip alert">Due today/);
+  assert.match(html, /1 due today/);
+  assert.doesNotMatch(html, /No match in the mail monitor/);
+  assert.deepEqual(normalizeEvent({ ...event("x", "2026-09-30T15:00:00Z", "rfq", { link: OWA("x") }), dueDate: "10/14" }).problems.length, 1);
+});
+
 const OWA = (id) => `https://outlook.office365.com/owa/?ItemID=${encodeURIComponent(id)}&exvsurl=1&viewmodel=ReadMessageItem`;
 
 test("every kept message has one placement, and a customer writing after a closed page is listed, not hidden", () => {

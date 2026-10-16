@@ -123,7 +123,8 @@ async function main() {
       salesExportPath: config.salesExport,
       priceLabDir: config.priceLabDir,
       calculatorHtml: config.calculatorHtml,
-      monitorStatePath: config.monitorState,
+      // A retired monitor's frozen file says nothing about how fresh the mail is.
+      monitorStatePath: config.monitorRetiredAt ? null : config.monitorState,
     });
     const stem = `CLAUDE-DECISION-${decision.caseId}`;
     const { version, reused, supersedes } = nextVersion(config.outputsDir, stem, decision.inputsFingerprint);

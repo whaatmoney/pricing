@@ -62,6 +62,8 @@ export function normalizeEvent(event, index = 0) {
   const at = iso(event.at);
   if (!at) fail("a valid at is required");
   if (!MAIL_KINDS.includes(event.kind)) fail(`kind must be one of ${MAIL_KINDS.join(", ")}`);
+  // A date the customer wrote ("need by 10/14"), as YYYY-MM-DD; optional.
+  if (event.dueDate != null && !/^\d{4}-\d{2}-\d{2}$/.test(String(event.dueDate))) fail(`dueDate "${event.dueDate}" must be YYYY-MM-DD, or left out`);
   for (const field of ["to", "partNumbers", "rfqNumbers"]) {
     if (event[field] != null && !Array.isArray(event[field])) fail(`${field} must be a list, e.g. ["${event[field]}"]`);
   }
@@ -84,7 +86,7 @@ export function normalizeEvent(event, index = 0) {
   const stored = {
     mailbox: null, subject: "", note: "", ...event,
     at, from: from || null, to, partNumbers: event.partNumbers || [], rfqNumbers: event.rfqNumbers || [],
-    customerDomain: customerDomain || null, itemId: itemIdFromLink(event.link),
+    customerDomain: customerDomain || null, itemId: itemIdFromLink(event.link), dueDate: event.dueDate || null,
   };
   return { event: stored, problems, warnings };
 }
