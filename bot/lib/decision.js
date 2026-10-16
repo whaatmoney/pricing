@@ -547,7 +547,7 @@ export function buildDecision({ casePath, storeDir, routerFolder, salesExportPat
       email: {
         searchedAt: searchLog.searchedAt,
         searches: searchLog.searches.map((item) => ({ mailbox: item.mailbox, query: item.query, results: item.results, complete: item.complete })),
-        gaps: searchLog.gaps,
+        gaps: searchLog.gaps ?? [],
         monitor: readMonitorFreshness(monitorStatePath),
       },
       database: databaseStatus,

@@ -300,12 +300,12 @@ function evidenceSection(decision, groups) {
       <li>Router History ${esc(db.fileName)}, received ${esc(db.receivedMin)}…${esc(db.receivedMax)}, ${db.rows} rows.</li>
       <li>Invoices: ${esc(fresh.invoices.fileName)} ${esc(fresh.invoices.dateMin)}…${esc(fresh.invoices.dateMax)}. ${esc(fresh.invoices.note)}</li>
       <li>Price Lab package ${esc(fresh.rules.priceLab.capturedAt)}; calculator ${esc(fresh.rules.onlineCalculator.sha256.slice(0, 12))}.</li>
-    </ul><h4>Not checked / gaps</h4><ul class="plain">${fresh.email.gaps.map((gap) => `<li>${esc(gap)}</li>`).join("")}</ul>`;
+    </ul><h4>Not checked / gaps</h4><ul class="plain">${(fresh.email.gaps ?? []).map((gap) => `<li>${esc(gap)}</li>`).join("")}</ul>`;
   return `<section id="evidence" class="panel" aria-labelledby="evidence-title">
     <h2 id="evidence-title">Evidence</h2>
     <p class="muted">Everything the price rests on, with sources. Folded until you need it.</p>
     ${perGroup}
-    ${fold("Freshness and gaps", fresh.email.gaps.length, freshness)}
+    ${fold("Freshness and gaps", (fresh.email.gaps ?? []).length, freshness)}
     <p class="muted small">Generated ${esc(decision.generatedAt)} · inputs ${esc(decision.inputsFingerprint.slice(0, 16))} · v${decision.lifecycle.recommendationVersion}${decision.lifecycle.supersedes ? ` supersedes v${decision.lifecycle.supersedes}` : ""} · private working file; keep inside QPC.</p>
   </section>`;
 }

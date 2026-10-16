@@ -20,12 +20,18 @@ export function writePage({ outputsDir, caseId, version, quoteTemplate = null, m
 }
 
 // Redraws every page on the board with its current email links, so "Latest
-// reply" follows the monitor. Never touches a record or its version.
-export function refreshPages({ outputsDir, board, quoteTemplate = null, now = new Date() }) {
+// reply" follows the monitor. Never touches a record or its version. A page
+// that fails to render is reported and skipped: one bad saved record must not
+// stop the board, or every other page, from refreshing.
+export function refreshPages({ outputsDir, board, quoteTemplate = null, now = new Date(), onError = (caseId, error) => console.error(`Page not refreshed for ${caseId}: ${error.message}`) }) {
   const updated = [];
   for (const kase of board.cases) {
-    const { changed } = writePage({ outputsDir, caseId: kase.caseId, version: kase.version, quoteTemplate, mail: { rfq: kase.rfqLink || null, rfqOwner: kase.rfqOwner || null, latest: kase.latestLink || null, files: kase.files || null }, progress: kase.progress, now, markdown: false });
-    if (changed) updated.push(kase.page);
+    try {
+      const { changed } = writePage({ outputsDir, caseId: kase.caseId, version: kase.version, quoteTemplate, mail: { rfq: kase.rfqLink || null, rfqOwner: kase.rfqOwner || null, latest: kase.latestLink || null, files: kase.files || null }, progress: kase.progress, now, markdown: false });
+      if (changed) updated.push(kase.page);
+    } catch (error) {
+      onError(kase.caseId, error);
+    }
   }
   return updated;
 }
