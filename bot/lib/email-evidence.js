@@ -106,6 +106,70 @@ export function extractSheetQuotes(text, partNumber, aliases = []) {
   return rows;
 }
 
+// A quote laid out as a table: a header row naming a part column and a price
+// column (and maybe a quantity column), then one row per part. Outlook gives
+// the table two ways: as text already converted here, one row per line with
+// " | " between cells, or as the plain-text form the connector returns, one
+// cell per line. The JRI thermistor quote of 2026-10-15 was the second kind
+// ("P/N", "UNIT PRICE", then part / price lines) and was left open until it
+// was rewritten by hand. A row whose part cell is not this part (a bakeout
+// line, a heading) is skipped; the table ends at a blank line or a row whose
+// price cell is not money.
+const TABLE_HEADERS = {
+  part: /^(?:p\/n|part(?:\s*(?:no\.?|number|#))?|part\s*no\.?\s*\/\s*description)$/i,
+  price: /^(?:unit\s*)?price(?:\s*(?:\/|per)\s*(?:ea\.?|each|part|pc\.?|unit))?$/i,
+  quantity: /^(?:qty\.?|quantity)$/i,
+  other: /^(?:rev\.?|revision|description|desc\.?|process|lead\s*time|notes?|item|line|uom|u\/m|total|ext\.?(?:ended)?(?:\s*price)?)$/i,
+};
+const CELL_PRICE = /^\$?\s*\d[\d,]*(?:\.\d{1,2})?$/;
+const splitCells = (line) => line.split(/\s*\|\s*|\t/).map((cell) => cell.trim()).filter(Boolean);
+function tableHeader(cells) {
+  const columns = { part: -1, price: -1, quantity: -1 };
+  for (const [index, cell] of cells.entries()) {
+    const kind = Object.keys(TABLE_HEADERS).find((name) => TABLE_HEADERS[name].test(cell));
+    if (!kind) return null;
+    if (kind !== "other" && columns[kind] === -1) columns[kind] = index;
+  }
+  return columns.part >= 0 && columns.price >= 0 && columns.part !== columns.price ? { ...columns, width: cells.length } : null;
+}
+export function extractTableQuotes(text, partNumber, aliases = []) {
+  const rows = [];
+  const lines = normalizeText(text).split("\n").map((line) => line.trim());
+  const take = (cells, header) => {
+    const priceCell = cells[header.price];
+    if (priceCell == null || !CELL_PRICE.test(priceCell)) return false;
+    const found = partNumberMatch(cells[header.part] || "", partNumber, aliases);
+    if (found && found.kind !== "partial-token") {
+      const quantityCell = header.quantity >= 0 ? cells[header.quantity] : null;
+      const quantity = quantityCell && /^\d[\d,]*$/.test(quantityCell) ? money(quantityCell) : null;
+      rows.push({ unitPrice: money(priceCell.replace(/[$\s]/g, "")), quantity, style: "quote-table", matchKind: found.kind, line: cells.join(" | ") });
+    }
+    return true;
+  };
+  for (let index = 0; index < lines.length; index += 1) {
+    const delimited = splitCells(lines[index]);
+    let header = delimited.length >= 2 ? tableHeader(delimited) : null;
+    if (header) {
+      // One row per line, cells delimited.
+      let row = index + 1;
+      while (row < lines.length && lines[row] && take(splitCells(lines[row]), header)) row += 1;
+      index = row;
+      continue;
+    }
+    // One cell per line: the header spans `width` lines, and so does each row.
+    for (let width = 4; width >= 2 && !header; width -= 1) {
+      const cells = lines.slice(index, index + width);
+      if (cells.length === width && cells.every(Boolean) && !cells.some((cell) => cell.includes("|"))) header = tableHeader(cells);
+      if (header) {
+        let row = index + width;
+        while (row + width <= lines.length && lines.slice(row, row + width).every(Boolean) && take(lines.slice(row, row + width), header)) row += width;
+        index = row;
+      }
+    }
+  }
+  return rows;
+}
+
 export function extractTerms(text) {
   const source = normalizeText(text);
   const terms = {};

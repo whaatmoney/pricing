@@ -61,3 +61,45 @@ test("two different prices for the same part and quantity leave the line open", 
   assert.equal(l1.found, false);
   assert.match(l1.reason, /more than one price/);
 });
+
+// Quotes laid out as a table (the JRI thermistor quote of 2026-10-15 was one):
+// the connector gives the plain-text form one cell per line, and an HTML body
+// one row per line once converted. Both decide the lines they price.
+const TABLE_TEXT = `Thanks for your patience. Please see your estimated pricing below:
+
+P/N
+UNIT PRICE
+ABC-100 Rev A
+$8.50
+DEF-200 Rev A
+$11.00
+Vacuum Bakeout
+$500.00
+
+Process:
+
+Standard Lead Time: 8-10 business days`;
+
+test("a quote sent as a part / price table, one cell per line, decides each part it lists", () => {
+  const read = readSentQuote({ decision, email: email(TABLE_TEXT), approverAddresses });
+  assert.equal(read.ok, true);
+  const [l1, l2, l3] = read.lines;
+  assert.deepEqual([l1.found, l1.choice, l1.unitPrice, l1.words], [true, "approved", 8.5, "ABC-100 Rev A | $8.50"]);
+  assert.deepEqual([l2.found, l2.choice, l2.unitPrice], [true, "alternative", 11]);
+  assert.equal(l3.found, false, "a part the table does not list stays open; the bakeout row is not a part");
+});
+
+test("an HTML table with a quantity column decides at the quantity it prices", () => {
+  const html = `<div>Please see pricing:</div><table><tr><td><div>P/N</div></td><td>QTY</td><td>Unit Price</td></tr><tr><td><div>ABC-100</div></td><td>10</td><td>$8.50</td></tr><tr><td>DEF-200</td><td>40</td><td>$9.00</td></tr><tr><td>DEF-200</td><td>400</td><td>$8.00</td></tr></table><div>Lead time 8-10 days</div>`;
+  const [l1, l2] = readSentQuote({ decision, email: email(html, { bodyType: "html" }), approverAddresses }).lines;
+  assert.deepEqual([l1.found, l1.unitPrice, l1.words], [true, 8.5, "ABC-100 | 10 | $8.50"]);
+  assert.equal(l2.found, false, "priced at other quantities, at different prices");
+  assert.match(l2.reason, /other quantities/);
+});
+
+test("a table below the reply, or a header with no price column, is not a quote", () => {
+  const quoted = `We will have pricing tomorrow.\n\nFrom: Pat Reviewer <pat@shop.example>\nSent: Monday\n\n${TABLE_TEXT}`;
+  assert.ok(readSentQuote({ decision, email: email(quoted), approverAddresses }).lines.every((line) => !line.found));
+  const noPrice = "P/N\nQTY\nABC-100\n10\nDEF-200\n4";
+  assert.ok(readSentQuote({ decision, email: email(noPrice), approverAddresses }).lines.every((line) => !line.found));
+});
