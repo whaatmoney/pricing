@@ -10,6 +10,7 @@ import { customerJobs } from "./lib/job-numbers.js";
 import { lifecyclePath, lifecycleView, readLifecycle, recordDecision } from "./lib/lifecycle.js";
 import { readSentQuote, sentQuoteNote } from "./lib/sent-quote.js";
 import { refreshPages, writePage } from "./lib/pages.js";
+import { renderHtml, renderMarkdown } from "./lib/render.js";
 import { DEFAULT_LIMITS, importSnapshot, listExports, loadSnapshotRecords, snapshotStatus } from "./lib/router-snapshot.js";
 import { nextVersion, versionsOf } from "./lib/versioning.js";
 
@@ -17,6 +18,11 @@ import { nextVersion, versionsOf } from "./lib/versioning.js";
 // company location, export or evidence is committed with the code:
 //   QPC_BOT_CONFIG=/path/config.json node bot/cli.js <command>
 // or bot/config.local.json (git-ignored). See bot/README.md.
+
+// Pages and the board show QPC's local time wherever the bot runs: the cloud
+// routine renders in UTC and the Mac in Pacific, and mixed renders flipped
+// about sixty pages in every alternating commit (PR #4, 2026-10-09).
+process.env.TZ = process.env.QPC_TIMEZONE || "America/Los_Angeles";
 
 const USAGE = `Usage:
   node bot/cli.js status                 Router History snapshot age and unimported exports
@@ -131,6 +137,11 @@ async function main() {
     decision.lifecycle.recommendationVersion = version;
     decision.lifecycle.supersedes = supersedes;
     const base = path.join(config.outputsDir, `${stem}-v${version}`);
+    // Render in memory first: a record whose page cannot render is never
+    // saved, so it cannot become the case's newest version and lose its page.
+    const lifecycle = readLifecycle(lifecyclePath(config.outputsDir, decision.caseId), decision.caseId);
+    renderMarkdown(decision, { lifecycle, quoteTemplate: readQuoteTemplate(config) });
+    renderHtml(decision, { lifecycle, quoteTemplate: readQuoteTemplate(config) });
     fs.writeFileSync(`${base}.json`, JSON.stringify(decision, null, 2));
     renderVersion(config, decision.caseId, version);
     console.log(`${reused ? "Rewrote" : "Wrote"} recommendation v${version}${supersedes ? ` (supersedes v${supersedes})` : ""}:\n  ${base}.json\n  ${base}.md\n  ${base}.html\nBoard: ${refreshBoard(config)}`);
