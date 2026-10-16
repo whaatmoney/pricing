@@ -269,7 +269,7 @@ export function renderMarkdown(decision, { lifecycle, quoteTemplate = null } = {
   out.push(`- Router History: ${db.fileName}, exported ${db.exportDate}, received dates ${db.receivedMin}…${db.receivedMax}, ${db.rows} rows, imported ${db.importedAt}; stale ${fresh.database.stale}; unimported newer exports: ${fresh.database.unimportedNewerExports.length || "none"}.`);
   out.push(`- Invoices: ${fresh.invoices.fileName} ${fresh.invoices.dateMin}…${fresh.invoices.dateMax}. ${fresh.invoices.note}`);
   out.push(`- Price Lab package captured ${fresh.rules.priceLab.capturedAt}; online calculator sha256 ${fresh.rules.onlineCalculator.sha256.slice(0, 12)} (formula drift: ${fresh.rules.onlineCalculator.formulaDrift.length ? "YES" : "none"}).`);
-  out.push("", "### Not checked / gaps", "", ...fresh.email.gaps.map((gap) => `- ${gap}`), "");
+  out.push("", "### Not checked / gaps", "", ...(fresh.email.gaps ?? []).map((gap) => `- ${gap}`), "");
   return out.join("\n");
 }
 
