@@ -391,7 +391,7 @@ function caseEvents({ caseId, version, decision, lifecycle, monitor, sent, mailS
   return events;
 }
 
-export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, triagePath = null, refreshSchedule = null, now = new Date() }) {
+export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, triagePath = null, refreshSchedule = null, monitorRetiredAt = null, now = new Date() }) {
   if (org) useOrg(org);
   const mailCache = readMailCache(mailCachePath);
   const ownerOf = (href) => privateOwner(href, mailboxIdPrefixes, sharedMailbox);
@@ -488,7 +488,9 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
   // Where every message Claude's mail check kept lands: on a card, in a list
   // the board already shows, answered by a later quote, or listed by itself.
   const since = new Date(now.getTime() - CHASE_DAYS * 86400000).toISOString();
-  const placements = claudeMail ? placeMailEvents(claudeMail.events, cases, queue, { monitorCovers, since }) : [];
+  // A retired monitor's lists are gone, so none of its entries can stand in
+  // for a message: every one the mail check found is placed on its own.
+  const placements = claudeMail ? placeMailEvents(claudeMail.events, cases, queue, { monitorCovers: monitorRetiredAt ? () => false : monitorCovers, since }) : [];
   for (const placement of placements.filter((item) => item.place === "case")) {
     const kase = cases.find((item) => item.caseId === placement.caseId);
     if (kase && (!kase.mailChase || Date.parse(kase.mailChase.at) < Date.parse(placement.event.at))) kase.mailChase = placement.event;
@@ -506,8 +508,12 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
     return false;
   });
 
+  // Once the monitor is retired (config monitorRetiredAt), its saved file is
+  // history: cases keep the quote-sent marks, due dates and links it recorded,
+  // but its lists, freshness and footer leave the board.
+  if (monitorRetiredAt) for (const row of [...mailFound, ...(chasing?.unmatched || [])]) row.monitorRetired = true;
   let monitor = null;
-  if (state) {
+  if (state && !monitorRetiredAt) {
     const covered = new Set(cases.flatMap((kase) => [kase.monitor?.reference, kase.monitorReference]).filter(Boolean));
     const shownByMail = new Set([...mailFound, ...(chasing?.unmatched || [])].map((row) => row.monitor?.matchedBy !== "customer" && row.monitor?.reference).filter(Boolean));
     const waiting = queue.filter((item) => item.priority_section === 1);
@@ -555,7 +561,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
   const history = [...tracker.history.map((item) => ({ ...item, source: "log" })), ...cases.flatMap((kase) => kase.events)]
     .filter((item) => item.at)
     .sort((a, b) => b.at.localeCompare(a.at));
-  return { generatedAt: now.toISOString(), refreshSchedule, cases, monitor, lastSync, history, mailFound, mailPlacements: placements, triage: readTriage(triagePath), claudeMail: claudeMailView(claudeMail, now), chasing };
+  return { generatedAt: now.toISOString(), refreshSchedule, cases, monitor, monitorRetiredAt, lastSync, history, mailFound, mailPlacements: placements, triage: readTriage(triagePath), claudeMail: claudeMailView(claudeMail, now), chasing };
 }
 
 // What the board says about Claude's own mail check: how far it reached,
@@ -746,7 +752,7 @@ const dueDays = (dueDate, now) => Math.round((Date.parse(`${localDay(dueDate)}T1
 const dueText = (dueDate, now) => { const days = dueDays(dueDate, now); return days < 0 ? `Past due · ${day(dueDate)}` : days === 0 ? "Due today" : days === 1 ? "Due tomorrow" : `Due ${day(dueDate)}`; };
 // A due date shown for a row only when it is the row's own request, not a
 // same-customer guess.
-const ownDue = (item) => (item.monitor && item.monitor.matchedBy !== "customer" ? item.monitor.dueDate : null);
+const ownDue = (item) => item.dueDate || (item.monitor && item.monitor.matchedBy !== "customer" ? item.monitor.dueDate : null);
 
 // A row's Done box: this viewer's own mark, kept in the browser. A newer
 // message in the thread is a new row, so it comes back.
@@ -760,9 +766,10 @@ const byDueThenKind = (now) => (a, b) => {
   return (da ? 0 : 1) - (db ? 0 : 1) || (da && db ? dueDays(da, now) - dueDays(db, now) : 0) || (MAIL_RANK[a.kind] ?? 9) - (MAIL_RANK[b.kind] ?? 9) || Date.parse(b.at) - Date.parse(a.at);
 };
 const whereItStands = (item, now) => {
+  if (!item.monitor && item.monitorRetired) return `<span class="muted">No price page yet</span>${item.dueDate ? `<div><span class="chip ${dueDays(item.dueDate, now) <= 0 ? "alert" : "muted"}">${dueText(item.dueDate, now)}</span></div>` : ""}`;
   if (!item.monitor) return item.candidates ? `<span class="warn-text">Mail monitor has ${item.candidates} open entries for this customer; none picked</span>` : '<span class="warn-text">No match in the mail monitor</span>';
-  const due = item.monitor.matchedBy === "customer" ? null : item.monitor.dueDate;
-  const label = item.monitor.matchedBy === "customer" ? "Codex mail monitor, same customer" : "Codex mail monitor";
+  const due = ownDue(item);
+  const label = `${item.monitor.matchedBy === "customer" ? "Codex mail monitor, same customer" : "Codex mail monitor"}${item.monitorRetired ? " (retired, its last record)" : ""}`;
   return `${esc(item.monitor.status || "no status")}<div class="why-not">${label} · ${esc(item.monitor.reference)}</div>${due ? `<div><span class="chip ${dueDays(due, now) <= 0 ? "alert" : "muted"}">${dueText(due, now)}</span></div>` : ""}`;
 };
 
@@ -1025,7 +1032,7 @@ export function renderBoard(board, { badge = null } = {}) {
   // the monitor's lists without a page.
   const dueItems = [
     ...[...grouped.ready, ...grouped.facts].filter((kase) => kase.dueDate).map((kase) => ({ customer: kase.customer, reference: kase.reference || kase.caseId, dueDate: kase.dueDate, where: caseGroup(kase) === "ready" ? "Ready for your yes" : "Needs facts first", href: `#case-${kase.caseId}` })),
-    ...mailFound.filter(ownDue).map((item) => ({ customer: item.monitor.customer || item.customerDomain, reference: item.monitor.reference, dueDate: ownDue(item), where: `No page yet · ${(MAIL_CHIP[item.kind] || ["", item.kind])[1]} (Claude's mail check)`, href: item.link })),
+    ...mailFound.filter(ownDue).map((item) => ({ customer: item.monitor?.customer || item.customerDomain, reference: item.monitor?.reference || item.subject, dueDate: ownDue(item), where: `No page yet · ${(MAIL_CHIP[item.kind] || ["", item.kind])[1]} (Claude's mail check)`, href: item.link })),
     ...unpriced.filter((item) => item.dueDate && item.pricing).map((item) => ({ customer: item.customer, reference: item.reference, dueDate: item.dueDate, where: "No page yet (Codex mail monitor)", href: item.rfqLink })),
     ...owed.filter((item) => item.dueDate).map((item) => ({ customer: item.customer, reference: item.reference, dueDate: item.dueDate, where: "Quote still owed (Codex mail monitor)", href: item.rfqLink })),
     ...reopenedQuotes.filter((item) => item.dueDate).map((item) => ({ customer: item.customer, reference: item.reference, dueDate: item.dueDate, where: "Price question after a quote (Codex mail monitor)", href: item.rfqLink })),
@@ -1390,7 +1397,7 @@ export function writeBoard({ brandBadgePath = null, ...inputs }) {
 // The one place the private config becomes the board's inputs, for every
 // command that writes it.
 export function boardInputs(config) {
-  return { outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null, claudeMailPath: config.claudeMail || null, evidenceDir: config.evidenceDir || null, sharedMailbox: config.sharedMailbox || null, mailboxIdPrefixes: config.mailboxIdPrefixes || null, org: config.org || null, triagePath: config.triageFile || null, refreshSchedule: config.refreshSchedule || null };
+  return { outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null, claudeMailPath: config.claudeMail || null, evidenceDir: config.evidenceDir || null, sharedMailbox: config.sharedMailbox || null, mailboxIdPrefixes: config.mailboxIdPrefixes || null, org: config.org || null, triagePath: config.triageFile || null, refreshSchedule: config.refreshSchedule || null, monitorRetiredAt: config.monitorRetiredAt || null };
 }
 
 // The commit the board was built from, marked when the working tree has

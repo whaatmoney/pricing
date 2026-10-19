@@ -473,3 +473,18 @@ test("the pages mirror gets the board and current pages, updates only what chang
   assert.ok(fs.existsSync(path.join(mirrorDir, "notes.txt")), "only mirrored page files are ever removed");
   assert.ok(fs.existsSync(path.join(config.outputsDir, kase.page)), "originals stay");
 });
+
+test("a retired monitor keeps the quote-sent marks it recorded but leaves the board's lists, alerts and footer", () => {
+  const { config } = syncedWorld([
+    { customer: "Acme Precision Corp", reference: "77 / ABC-100 Rev B", priority_section: 3, status: "Quote sent; waiting on customer", evidence_ids: ["rfq"] },
+    { customer: "Other Co", reference: "99 / XYZ-9", priority_section: 1, status: "New RFQ", explicit_due_date: "2026-09-28" },
+  ]);
+  const board = buildBoard({ outputsDir: config.outputsDir, monitorStatePath: config.monitorState, monitorRetiredAt: "2026-10-13T00:00:00Z", now: new Date("2026-10-13T18:00:00Z") });
+  const [kase] = board.cases;
+  assert.equal(kase.state, "Quote sent (per monitor status)", "its recorded sent mark stays");
+  assert.equal(board.monitor, null);
+  const html = renderBoard(board);
+  assert.doesNotMatch(html, /data is STALE/);
+  assert.doesNotMatch(html, /\(Codex mail monitor\)/);
+  assert.doesNotMatch(html, /XYZ-9/, "its own lists are gone");
+});
