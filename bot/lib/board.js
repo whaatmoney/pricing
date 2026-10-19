@@ -1377,9 +1377,11 @@ export function readBrandBadge(badgePath) {
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
-export function writeBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath = null, mailCachePath = null, brandBadgePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, triagePath = null, now }) {
-  const file = path.join(outputsDir, BOARD_FILE);
-  const board = buildBoard({ outputsDir, monitorStatePath, storeDir, lastSync, trackerPath, mailCachePath, quotePrepChatPath, claudeMailPath, evidenceDir, sharedMailbox, mailboxIdPrefixes, org, triagePath, now });
+// Every board input passes straight through, so a setting added to boardInputs
+// reaches the written board without being listed here too.
+export function writeBoard({ brandBadgePath = null, ...inputs }) {
+  const file = path.join(inputs.outputsDir, BOARD_FILE);
+  const board = buildBoard(inputs);
   board.codeVersion = codeVersion();
   fs.writeFileSync(file, renderBoard(board, { badge: readBrandBadge(brandBadgePath) }));
   return { file, board };

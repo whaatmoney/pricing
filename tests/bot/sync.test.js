@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { progressHtml } from "../../bot/lib/design.js";
-import { buildBoard, caseGroup, confidenceRank, factsLine, lastDueRefresh, potentialValue, latestMessageLink, mirrorPages, monitorLink, isPricingRequest, isQuoteOwed, progressOf, quoteSentStatus, readBrandBadge, renderBoard, writeBoard } from "../../bot/lib/board.js";
+import { boardInputs, buildBoard, caseGroup, confidenceRank, factsLine, lastDueRefresh, potentialValue, latestMessageLink, mirrorPages, monitorLink, isPricingRequest, isQuoteOwed, progressOf, quoteSentStatus, readBrandBadge, renderBoard, writeBoard } from "../../bot/lib/board.js";
 import { buildDecision } from "../../bot/lib/decision.js";
 import { recordDecision } from "../../bot/lib/lifecycle.js";
 import { readManifest } from "../../bot/lib/router-snapshot.js";
@@ -359,6 +359,19 @@ test("a stopped monitor shows as stale even when its own file says it is fresh, 
   assert.match(timed, /const schedule = \{"days":\[1,2,3,4,5\],"firstUtc":"14:35"/);
   assert.match(timed, /This board missed its scheduled refresh/);
   assert.match(timed, /const lastDueRefresh = function lastDueRefresh\(schedule, nowMs\)/);
+});
+
+test("the refresh timetable in the config reaches the written board", () => {
+  const { config } = syncedWorld([]);
+  const refreshSchedule = { days: [1, 2, 3, 4, 5], firstUtc: "14:35", lastUtc: "23:35", everyMinutes: 60, graceMinutes: 30, label: "cloud run" };
+  const { file, board } = writeBoard({ ...boardInputs({ ...config, refreshSchedule }), now: new Date("2026-10-16T23:37:00Z") });
+  assert.deepEqual(board.refreshSchedule, refreshSchedule);
+  const html = fs.readFileSync(file, "utf8");
+  assert.match(html, /const schedule = \{"days":\[1,2,3,4,5\],"firstUtc":"14:35"/);
+  // Built after Friday's last run: nothing is due again until Monday's first run.
+  const built = Date.parse("2026-10-16T23:37:00Z");
+  assert.ok(lastDueRefresh(refreshSchedule, Date.parse("2026-10-18T22:00:00Z")) <= built, "a weekend is not a missed refresh");
+  assert.ok(lastDueRefresh(refreshSchedule, Date.parse("2026-10-19T15:30:00Z")) > built, "Monday's first run is due by mid-morning");
 });
 
 test("an export OneDrive has not downloaded is reported as waiting, not read and failed", () => {
