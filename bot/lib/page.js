@@ -1,6 +1,6 @@
 import { BOARD_FILE, businessDaysSince } from "./board.js";
 import { lifecycleView } from "./lifecycle.js";
-import { describeDecision, describeReview, displayStatus, escapeHtml, revSuffix, sizeText, STATUS_LABEL, summarizeLine, whyNot } from "./render.js";
+import { describeDecision, describeReview, displayStatus, escapeHtml, revSuffix, sizeText, sizeWithSource, STATUS_LABEL, summarizeLine, whyNot } from "./render.js";
 import { answerLines, approveAllLine, assumptions, methodPath, poTotal, pricedEnvelope, quoteSummary, reviewCard } from "./review-card.js";
 import { caseConfidence, reasonsText } from "./confidence.js";
 import { copyButton, ICON, progressHtml, SCRIPT as PAGE_SCRIPT, STYLE as PAGE_STYLE } from "./design.js";
@@ -290,7 +290,7 @@ function evidenceSection(decision, groups) {
       ${fold("Price history", first.history.timeline.length, historyTable(first))}
       ${jobs ? fold("Job cross-check", first.history.jobs.length, `<div class="scroll"><table><thead><tr><th>Job</th><th>First date</th><th>Sources</th><th>Prices</th></tr></thead><tbody>${jobs}</tbody></table></div>`) : ""}
       ${fold("Calculations and options", group.length, group.map(calcBlock).join(""))}
-      ${fold("Request facts", null, `<ul class="plain"><li>Drawing ${esc(request.drawing.number)} Rev. ${esc(request.drawing.revision)} ${esc(request.drawing.title)}. ${esc(request.drawing.caveat)}</li><li>Size: ${esc(sizeText(request.drawing.dimensions))} (${esc(request.drawing.dimensions.source)})</li><li>Material: ${esc(request.material.value)} — ${esc(request.material.source)}</li><li>Packaging: ${esc(request.packaging.requirement)}</li></ul>`)}
+      ${fold("Request facts", null, `<ul class="plain"><li>Drawing ${esc(request.drawing.number)} Rev. ${esc(request.drawing.revision)} ${esc(request.drawing.title)}. ${esc(request.drawing.caveat)}</li><li>Size: ${esc(sizeWithSource(request.drawing.dimensions))}</li><li>Material: ${esc(request.material.value)} — ${esc(request.material.source)}</li><li>Packaging: ${esc(request.packaging.requirement)}</li></ul>`)}
       ${otherCustomers(first, fold)}
       ${fold("Emails considered", first.history.email.evidence.length, `<ul class="plain">${emails}</ul>`)}`;
   }).join("");
