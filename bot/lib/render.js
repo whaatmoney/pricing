@@ -21,8 +21,9 @@ export const STATUS_LABEL = { comparable: "comparable", unverified: "scope unver
 const CHOICE_LABEL = { approved: "Approved", alternative: "Alternative chosen", correction: "Correction requested" };
 
 // A case can state its part size in its own words; seal cases give the coated
-// OD and thickness instead.
-export const sizeText = (dimensions) => dimensions.summary || `ø${dimensions.maxOdAfterCoating} in max OD after coating × ${dimensions.F_max} in thick`;
+// OD and thickness instead. A request with no drawing may give no size at all.
+export const sizeText = (dimensions) => !dimensions ? "not given" : dimensions.summary || `ø${dimensions.maxOdAfterCoating} in max OD after coating × ${dimensions.F_max} in thick`;
+export const sizeWithSource = (dimensions) => dimensions?.source ? `${sizeText(dimensions)} (${dimensions.source})` : sizeText(dimensions);
 
 // `minimum` is the version's lot minimum, for entries recorded before the
 // lot charge was stored on the entry itself.
@@ -253,7 +254,7 @@ export function renderMarkdown(decision, { lifecycle, quoteTemplate = null } = {
     out.push(`- Process: ${request.process.verbatim} (${request.process.source})`);
     out.push(`- Material: ${request.material.value} — ${request.material.source}`);
     out.push(`- Drawing: ${request.drawing.number} Rev. ${request.drawing.revision} ${request.drawing.title}; ${request.drawing.caveat}`);
-    out.push(`- Size: ${sizeText(request.drawing.dimensions)} (${request.drawing.dimensions.source})`);
+    out.push(`- Size: ${sizeWithSource(request.drawing.dimensions)}`);
     out.push(`- Packaging: ${request.packaging.requirement} Sources: ${request.packaging.sources.join("; ")}.`);
 
     out.push("", "### Email evidence considered", "");

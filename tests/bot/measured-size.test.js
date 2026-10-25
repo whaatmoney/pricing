@@ -3,7 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 import { lineConfidence } from "../../bot/lib/confidence.js";
 import { buildDecision } from "../../bot/lib/decision.js";
-import { renderHtml } from "../../bot/lib/render.js";
+import { renderHtml, renderMarkdown } from "../../bot/lib/render.js";
 import { RULINGS } from "../../bot/lib/rulings.js";
 import { buildWorld } from "./helpers.js";
 
@@ -43,4 +43,14 @@ test("a posted size that disagrees is flagged on the page and lowers confidence,
   const agreed = lineConfidence(buildDecision(measuredWorld().options).lines.find((item) => item.lineId === "L3"));
   const flagged = lineConfidence(l3);
   assert.ok(flagged.score < agreed.score);
+});
+
+test("a request with no drawing size renders its page with the size 'not given'", () => {
+  const world = buildWorld();
+  const kase = JSON.parse(fs.readFileSync(world.casePath, "utf8"));
+  for (const line of kase.lines) delete line.drawing.dimensions;
+  fs.writeFileSync(world.casePath, JSON.stringify(kase));
+  const decision = buildDecision(world.options);
+  assert.match(renderHtml(decision, { lifecycle: decision.lifecycle }), /Size: not given</);
+  assert.match(renderMarkdown(decision, { lifecycle: decision.lifecycle }), /- Size: not given\n/);
 });
