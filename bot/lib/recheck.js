@@ -4,7 +4,7 @@ import { latestDecisions } from "./board.js";
 import { buildDecision } from "./decision.js";
 import { lifecyclePath, readLifecycle } from "./lifecycle.js";
 import { readManifest } from "./router-snapshot.js";
-import { nextVersion } from "./versioning.js";
+import { nextVersion, versionsOf } from "./versioning.js";
 
 // Freshness check (pricing owner, 2026-10-26: "auto re-price undecided cards
 // on new Router History"). When a newer weekly export is in, every open page
@@ -134,6 +134,15 @@ export function recheckCases({ config, openCaseIds, now = new Date(), build = (c
   const { files, unreadable } = caseFiles(config.casesDir);
   const results = [];
   if (!current) return { snapshotId: null, results };
+  // The check log is written after every case, so a run cut short keeps what
+  // it did. Errors and missing case files are not stamped: the next run tries
+  // again.
+  const record = (item) => {
+    results.push(item);
+    if (!config.recheckFile || item.result === "error" || item.result === "no-case-file") return;
+    checks.push(item);
+    fs.writeFileSync(config.recheckFile, JSON.stringify({ schema: 1, checks: checks.slice(-KEEP) }, null, 2) + "\n");
+  };
   for (const { caseId, version, decision } of latestDecisions(config.outputsDir)) {
     if (!openCaseIds.has(caseId)) continue;
     const priced = decision.lines[0]?.history?.database?.snapshot;
@@ -141,19 +150,19 @@ export function recheckCases({ config, openCaseIds, now = new Date(), build = (c
     if (done.has(`${caseId}|${version}|${current}`)) continue;
     const stamp = { caseId, version, snapshotId: current, snapshotFile, pricedOn: priced.fileName || null, checkedAt: now.toISOString() };
     if (hasDecision(config.outputsDir, caseId)) {
-      results.push({ ...stamp, result: "decided" });
+      record({ ...stamp, result: "decided" });
       continue;
     }
     const casePath = files.get(caseId);
     if (!casePath) {
-      results.push({ ...stamp, result: "no-case-file", error: unreadable.length ? `case file not found; unreadable case files: ${unreadable.join(", ")}` : "case file not found" });
+      record({ ...stamp, result: "no-case-file", error: unreadable.length ? `case file not found; unreadable case files: ${unreadable.join(", ")}` : "case file not found" });
       continue;
     }
     try {
       const fresh = build(casePath);
       const changes = compareDecisions(decision, fresh);
       if (!changes.length) {
-        results.push({ ...stamp, result: "unchanged" });
+        record({ ...stamp, result: "unchanged" });
         continue;
       }
       // A decision recorded while this case was being built wins: never save
@@ -161,18 +170,35 @@ export function recheckCases({ config, openCaseIds, now = new Date(), build = (c
       // decision that still lands on the older version (another run, merged
       // later) is shown on the card instead (board.js decidedEarlier).
       if (hasDecision(config.outputsDir, caseId)) {
-        results.push({ ...stamp, result: "decided" });
+        record({ ...stamp, result: "decided" });
         continue;
       }
-      const saved = saveDecision(config.outputsDir, fresh);
-      results.push({ ...stamp, result: "rebuilt", newVersion: saved.version, changes });
+      // Append only: the next number after the version that was checked,
+      // created only if no file has it yet. Another writer that got there
+      // first leaves this case for the next run.
+      const stem = `CLAUDE-DECISION-${caseId}`;
+      const newVersion = version + 1;
+      if (versionsOf(config.outputsDir, stem)[0] !== version) {
+        record({ ...stamp, result: "error", error: `a newer version than v${version} appeared while this case was checked; left for the next run` });
+        continue;
+      }
+      fresh.lifecycle.recommendationVersion = newVersion;
+      fresh.lifecycle.supersedes = version;
+      // Where this version came from, kept with it so the board can say so
+      // whatever happens to the check log.
+      fresh.lifecycle.rebuiltByRecheck = { from: version, snapshotId: current, snapshotFile, checkedAt: stamp.checkedAt, changes };
+      try {
+        fs.writeFileSync(path.join(config.outputsDir, `${stem}-v${newVersion}.json`), JSON.stringify(fresh, null, 2), { flag: "wx" });
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+        record({ ...stamp, result: "error", error: `v${newVersion} already exists; left for the next run` });
+        continue;
+      }
+      record({ ...stamp, result: "rebuilt", newVersion, changes });
     } catch (error) {
-      results.push({ ...stamp, result: "error", error: String(error.message || error).slice(0, 300) });
+      record({ ...stamp, result: "error", error: String(error.message || error).slice(0, 300) });
     }
   }
-  // Errors and missing case files are not stamped, so the next run tries again.
-  const kept = [...checks, ...results.filter((item) => item.result !== "error" && item.result !== "no-case-file")].slice(-KEEP);
-  if (config.recheckFile && results.length) fs.writeFileSync(config.recheckFile, JSON.stringify({ schema: 1, checks: kept }, null, 2) + "\n");
   return { snapshotId: current, snapshotFile, results };
 }
 

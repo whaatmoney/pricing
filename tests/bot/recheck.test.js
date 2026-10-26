@@ -121,7 +121,35 @@ test("a decision on the earlier version that lands after the rebuild (another ru
   const [kase] = boardOf(config).cases;
   assert.equal(kase.version, 2);
   assert.deepEqual(kase.decidedEarlier.map((entry) => [entry.version, entry.lineId, entry.decidedBy]), [[1, "L1", "Pat Reviewer"]]);
-  assert.match(renderBoard(boardOf(config)), /A decision was recorded on an earlier version \(v1 L1, Pat Reviewer Sep 25, 2026\) while this page was rebuilt on new Router History\. Decisions do not carry to a new version: check the earlier page before quoting\./);
+  assert.match(renderBoard(boardOf(config)), /A decision is recorded on an earlier version of this page \(v1 L1, Pat Reviewer Sep 25, 2026\)\. Decisions do not carry to a new version: check the earlier page before quoting\./);
+});
+
+test("a rebuilt version carries where it came from, so the card says so even without the check log", () => {
+  const { decision, config, later, build, open } = pricedWorld();
+  later([routerRow({ wo: "6001WA", received: "09/25/2026", description: "P/N: ABC-100 REV. B\nWO NO: W1-120", price: 7.25 })]);
+  recheckCases({ config, openCaseIds: open, build });
+  const v2 = JSON.parse(fs.readFileSync(path.join(config.outputsDir, `CLAUDE-DECISION-${decision.caseId}-v2.json`), "utf8"));
+  assert.equal(v2.lifecycle.rebuiltByRecheck.from, 1);
+  assert.equal(v2.lifecycle.rebuiltByRecheck.snapshotFile, "092826 - LineItems_with_RouterHistory.xlsx");
+  fs.rmSync(config.recheckFile);
+  assert.match(renderBoard(boardOf(config)), /Rebuilt on 092826 - LineItems_with_RouterHistory\.xlsx \(.*\) from v1:/);
+});
+
+test("recheck only ever creates the next version: an existing or newer version file is never rewritten", () => {
+  const { decision, config, later, build, open } = pricedWorld();
+  later([routerRow({ wo: "6001WA", received: "09/25/2026", description: "P/N: ABC-100 REV. B\nWO NO: W1-120", price: 7.25 })]);
+  const v2 = path.join(config.outputsDir, `CLAUDE-DECISION-${decision.caseId}-v2.json`);
+  // Another writer saves v2 while this case is being built.
+  const racing = (casePath) => {
+    const fresh = build(casePath);
+    fs.writeFileSync(v2, JSON.stringify({ ...decision, lifecycle: { ...decision.lifecycle, recommendationVersion: 2 }, marker: "other writer" }));
+    return fresh;
+  };
+  const result = recheckCases({ config, openCaseIds: open, build: racing }).results[0];
+  assert.equal(result.result, "error");
+  assert.match(result.error, /newer version than v1/);
+  assert.equal(JSON.parse(fs.readFileSync(v2, "utf8")).marker, "other writer");
+  assert.equal(versions(config, decision.caseId).length, 2);
 });
 
 test("a missing or broken case file is reported and tried again next run, not stamped", () => {
