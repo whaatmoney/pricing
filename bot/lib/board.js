@@ -10,6 +10,7 @@ import { ASKING_KINDS, caseMail, foundRows, placeMailEvents, readClaudeMail, sub
 import { isOwnAddress, mailSources, useOrg } from "./org.js";
 import { followupThreads, matchThread, monitorCandidates, readQuotePrepChat } from "./followups.js";
 import { readManifest } from "./router-snapshot.js";
+import { readRecheck, recheckIndex } from "./recheck.js";
 import { poTotal, priceSource } from "./review-card.js";
 
 // The pricing front door: where the price pages live. One page joins the mail
@@ -29,21 +30,38 @@ export const MONITOR_STALE_MINUTES = 120;
 export const BOARD_STALE_MINUTES = 120;
 
 // When the board is rebuilt on a timetable (config.refreshSchedule: days of the
-// week, first and last run of the day and the step between runs, all in UTC, as
-// the scheduler states them), the newest run that should already have landed.
-// A board built before it has missed a refresh; a board opened at night or on a
-// weekend has not. Null when no run was due in the last week. Self-contained:
-// the board page embeds this function's source.
+// week, first and last run of the day and the step between runs), the newest
+// run that should already have landed. Times are wall-clock times in
+// schedule.timeZone ("first"/"last"), so a Pacific schedule stays right across
+// daylight-saving changes; the older form gives them in UTC ("firstUtc"/
+// "lastUtc"). A board built before that run has missed a refresh; a board
+// opened at night or on a weekend has not. Null when no run was due in the last
+// week. Self-contained: the board page embeds this function's source.
 export function lastDueRefresh(schedule, nowMs) {
-  const [firstHour, firstMinute] = schedule.firstUtc.split(":").map(Number);
-  const [lastHour, lastMinute] = schedule.lastUtc.split(":").map(Number);
+  const zone = schedule.timeZone || "UTC";
+  const [firstHour, firstMinute] = (schedule.first || schedule.firstUtc).split(":").map(Number);
+  const [lastHour, lastMinute] = (schedule.last || schedule.lastUtc).split(":").map(Number);
   const step = (schedule.everyMinutes || 60) * 60000;
   const grace = (schedule.graceMinutes == null ? 30 : schedule.graceMinutes) * 60000;
+  const format = new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric" });
+  const parts = (ms) => Object.fromEntries(format.formatToParts(new Date(ms)).map((part) => [part.type, Number(part.value)]));
+  // A wall-clock time in the zone as a UTC instant; the second pass settles
+  // a time on the far side of a daylight-saving change.
+  const instant = (year, month, date, hour, minute) => {
+    const wanted = Date.UTC(year, month, date, hour, minute);
+    let guess = wanted;
+    for (let pass = 0; pass < 2; pass++) {
+      const shown = parts(guess);
+      guess += wanted - Date.UTC(shown.year, shown.month - 1, shown.day, shown.hour, shown.minute);
+    }
+    return guess;
+  };
+  const today = parts(nowMs);
   for (let back = 0; back < 8; back++) {
-    const day = new Date(nowMs - back * 86400000);
+    const day = new Date(Date.UTC(today.year, today.month - 1, today.day - back));
     if (!schedule.days.includes(day.getUTCDay())) continue;
-    const first = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), firstHour, firstMinute);
-    const last = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), lastHour, lastMinute);
+    const first = instant(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), firstHour, firstMinute);
+    const last = instant(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), lastHour, lastMinute);
     for (let slot = last; slot >= first; slot -= step) if (slot + grace <= nowMs) return slot;
   }
   return null;
@@ -391,7 +409,26 @@ function caseEvents({ caseId, version, decision, lifecycle, monitor, sent, mailS
   return events;
 }
 
-export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, triagePath = null, refreshSchedule = null, monitorRetiredAt = null, now = new Date() }) {
+// Work orders for a requested part that came in on or after the day the RFQ
+// was asked: the part may already be ordered. Router History rows are the
+// customer's own, exact part number (see decision.js buildTimeline).
+export function ordersSince(decision) {
+  const asked = String(decision.rfq?.initiatedAt || "").slice(0, 10);
+  if (!asked) return [];
+  const orders = new Map();
+  for (const line of decision.lines) {
+    for (const row of line.history?.timeline || []) {
+      if (row.source !== "Work order (Router History)" || !row.date || row.date < asked) continue;
+      const wo = String(row.evidence || "").match(/^WO\s+([^,]+)/)?.[1] || row.evidence;
+      const entry = orders.get(wo) || { wo, date: row.date, unitPrice: row.unitPrice ?? null, lineIds: [] };
+      if (!entry.lineIds.includes(line.lineId)) entry.lineIds.push(line.lineId);
+      orders.set(wo, entry);
+    }
+  }
+  return [...orders.values()].sort((a, b) => a.date.localeCompare(b.date) || String(a.wo).localeCompare(String(b.wo)));
+}
+
+export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, triagePath = null, refreshSchedule = null, monitorRetiredAt = null, recheckPath = null, now = new Date() }) {
   if (org) useOrg(org);
   const mailCache = readMailCache(mailCachePath);
   const ownerOf = (href) => privateOwner(href, mailboxIdPrefixes, sharedMailbox);
@@ -402,6 +439,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
   const state = monitorStatePath && fs.existsSync(monitorStatePath) ? JSON.parse(fs.readFileSync(monitorStatePath, "utf8")) : null;
   const queue = state?.operational_queue || [];
   const currentSnapshot = storeDir ? readManifest(storeDir).current : null;
+  const rechecked = recheckIndex(readRecheck(recheckPath), currentSnapshot);
 
   const cases = latestDecisions(outputsDir).map(({ caseId, version, file, decision }) => {
     const lifecycle = readLifecycle(lifecyclePath(outputsDir, caseId), caseId);
@@ -447,6 +485,9 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       monitorAmbiguous: link.ambiguous,
       staleSnapshot: Boolean(currentSnapshot && priceSnapshot && priceSnapshot.id !== currentSnapshot),
       priceSnapshot: priceSnapshot?.fileName || null,
+      checked: rechecked.checked(caseId, version),
+      repriced: rechecked.repriced(caseId, version),
+      ordersSince: ordersSince(decision),
       dueDate: monitor?.explicit_due_date || null,
       lines: decision.lines.map((line) => ({
         lineId: line.lineId,
@@ -924,12 +965,29 @@ export function confidenceRank(kase) {
   return { High: 3, Medium: 2, Low: 1 }[kase.confidence?.level] || 0;
 }
 
+function ordersNote(orders) {
+  const list = orders.map((order) => `WO ${esc(order.wo)} on ${day(order.date)}${order.unitPrice != null ? ` at ${usd(order.unitPrice)}` : ""} (${esc(order.lineIds.join(", "))})`).join("; ");
+  return `Work order since the RFQ: ${list}. The part may already be ordered; check before quoting.`;
+}
+
+function repricedNote(check) {
+  const moved = check.changes.filter((change) => change.from !== change.to);
+  const rows = check.changes.reduce((sum, change) => sum + (change.newRows || 0), 0);
+  const what = moved.length ? moved.map((change) => `${esc(change.lineId)} ${usd(change.from)} → ${usd(change.to)}`).join("; ") : "price unchanged";
+  return `Rebuilt on ${esc(check.snapshotFile || "the newest Router History")} (${day(check.checkedAt)}) from v${check.version}: ${what}${rows ? `; ${rows} new history row${rows === 1 ? "" : "s"}` : ""}.`;
+}
+
 function caseCard(kase, now) {
   const group = caseGroup(kase);
   const notes = [
     kase.monitorAmbiguous.length ? `Monitor link unresolved: ${kase.monitorAmbiguous.length} entries match (${esc(kase.monitorAmbiguous.join("; "))})` : "",
-    kase.open && kase.staleSnapshot ? `Priced on ${esc(kase.priceSnapshot)}; newer Router History is in. Ask to rebuild.` : "",
+    kase.open && kase.staleSnapshot && !kase.checked ? `Priced on ${esc(kase.priceSnapshot)}; newer Router History is in. Ask to rebuild.` : "",
     kase.reopened ? `Price question open after the quote went out (per monitor status): “${esc(kase.monitor?.status || "")}”` : "",
+    kase.open && kase.ordersSince?.length ? ordersNote(kase.ordersSince) : "",
+  ].filter(Boolean);
+  const checks = [
+    kase.open && kase.staleSnapshot && kase.checked ? `Checked against ${esc(kase.checked.snapshotFile || "the newest Router History")} on ${day(kase.checked.checkedAt)}: no change to the price or its history.` : "",
+    kase.open && kase.repriced ? repricedNote(kase.repriced) : "",
   ].filter(Boolean);
   const open = group === "ready" || group === "facts";
   return `<article class="card is-${group}" id="case-${esc(kase.caseId)}" data-page="${esc(kase.page)}" data-case="${esc(kase.reopened ? `${kase.caseId}@reopened-${kase.monitor?.lastActivityAt || "undated"}` : kase.caseId)}" data-asked="${esc(kase.askedAt || "")}" data-confidence="${confidenceRank(kase)}" data-value="${kase.value ? kase.value.amount : -1}">
@@ -937,13 +995,14 @@ function caseCard(kase, now) {
       <div class="card-title">
         <a class="card-link" href="${esc(kase.page)}">${esc(kase.customer)}</a>
         <p class="ref">${esc(kase.reference || kase.caseId)}</p>
-        <p class="marks">${open ? progressHtml(kase.progress, { compact: true }) : ""}${kase.askedAt ? `<span class="chip muted">Asked ${day(kase.askedAt)}</span>` : ""}${valueChip(kase.value)}${dueChip(kase, now)}${chaseChip(kase.followup, now)}${mailChip(kase, now)}<span class="chip ok done-mark">${ICON.check}Done</span><span class="chip muted opened-mark">${ICON.check}Opened</span></p>
+        <p class="marks">${open ? progressHtml(kase.progress, { compact: true }) : ""}${kase.askedAt ? `<span class="chip muted">Asked ${day(kase.askedAt)}</span>` : ""}${valueChip(kase.value)}${dueChip(kase, now)}${chaseChip(kase.followup, now)}${mailChip(kase, now)}${kase.open && kase.ordersSince?.length ? '<span class="chip warn" title="A work order for this part came in after the RFQ">Work order since asked</span>' : ""}<span class="chip ok done-mark">${ICON.check}Done</span><span class="chip muted opened-mark">${ICON.check}Opened</span></p>
       </div>
       ${headline(kase, group)}
     </div>
     ${open ? "" : progressHtml(kase.progress)}
     ${group === "facts" ? `<p class="parts">${partsSummary(kase)}</p>${factsTemplates(kase)}${kase.files ? `<p class="files-note">${ICON.attach}<span>The missing facts may be in ${kase.files.names.length === 1 ? "this file" : `these ${kase.files.names.length} files`}: ${kase.files.names.map((name) => `<b>${esc(name)}</b>`).join(", ")}</span></p>` : ""}` : linesTable(kase)}
     ${notes.map((note) => `<p class="hint">${ICON.alert}<span>${note}</span></p>`).join("")}
+    ${checks.map((note) => `<p class="hint">${ICON.check}<span>${note}</span></p>`).join("")}
     ${mailRow(kase.email)}
     <div class="card-foot">
       <label class="done-check above"><input type="checkbox" class="done-box" aria-label="Mark ${esc(kase.customer)} done"><span>Done</span></label>
@@ -1045,12 +1104,16 @@ export function renderBoard(board, { badge = null } = {}) {
   // card once, each front-desk thread once, each emailed chase once.
   const chasingCount = new Set([...chasingOpen.map((kase) => `case:${kase.caseId}`), ...chasingNoPage.map((thread) => `chat:${thread.id}`), ...mailChases.map((item) => `mail:${item.customerDomain}|${subjectKey(item.subject)}`)]).size;
   const chasingNoPageCount = chasingNoPage.length + mailChases.length;
+  const withOrders = [...grouped.ready, ...grouped.facts].filter((kase) => kase.ordersSince?.length);
+  const ordersCount = withOrders.length;
+  const ordersTarget = withOrders[0];
   const chaseTarget = chasingOpen.find((kase) => kase.followup?.urgent) || chasingOpen[0];
   const summary = [
     grouped.ready.length ? `<a class="n-ready" href="#ready"><b>${grouped.ready.length}</b> ready for your yes</a>` : "",
     grouped.facts.length ? `<a class="n-facts" href="#facts"><b>${grouped.facts.length}</b> need facts first</a>` : "",
     pastDue ? `<a class="due-now" href="#due">${pastDue} past due</a>` : "",
     dueToday ? `<a class="due-now" href="#due">${dueToday} due today</a>` : "",
+    ordersCount ? `<a class="orders-now" href="#case-${esc(ordersTarget.caseId)}">${ordersCount} with a work order since asked</a>` : "",
     chasingCount ? `<a class="chasing-now" href="${chasingNoPageCount ? "#chasing" : `#case-${esc(chaseTarget.caseId)}`}">${chasingCount} customer${chasingCount === 1 ? "" : "s"} chasing</a>` : "",
   ].filter(Boolean).join('<span class="sep">·</span>') || "Nothing waiting on you.";
   const tabs = [["due", "Due now", dueItems.length], ["ready", "Ready", grouped.ready.length], ["facts", "Needs facts", grouped.facts.length], ["chasing", "Chasing", chasingNoPageCount], ["closed", "Decided & sent", closed.length], ["unpriced", "No page yet", unpriced.length + mailNew.length], ["owed", "Quote owed", owed.length], ["reopened", "Price question", reopenedQuotes.length], ["log", "Log", null]]
@@ -1245,7 +1308,7 @@ h1.summary { font-size:24px; font-weight:650; letter-spacing:-.02em; line-height
 h1.summary a { color:var(--ink); text-decoration:none; border-bottom:1px solid var(--line-2); transition:border-color .15s; }
 h1.summary a:hover { border-bottom-color:currentColor; }
 h1.summary .n-ready b { color:var(--gold-text); } h1.summary .n-facts b { color:var(--warn); }
-h1.summary .chasing-now { color:var(--warn); border-bottom-color:color-mix(in srgb, var(--warn) 40%, transparent); }
+h1.summary .chasing-now, h1.summary .orders-now { color:var(--warn); border-bottom-color:color-mix(in srgb, var(--warn) 40%, transparent); }
 table.chase tr.urgent td:first-child { box-shadow:inset 3px 0 0 var(--alert); }
 .warn-text { color:var(--warn); font-weight:600; }
 /* A section never grows to its widest table: tables scroll inside their own box. */
@@ -1397,7 +1460,7 @@ export function writeBoard({ brandBadgePath = null, ...inputs }) {
 // The one place the private config becomes the board's inputs, for every
 // command that writes it.
 export function boardInputs(config) {
-  return { outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null, claudeMailPath: config.claudeMail || null, evidenceDir: config.evidenceDir || null, sharedMailbox: config.sharedMailbox || null, mailboxIdPrefixes: config.mailboxIdPrefixes || null, org: config.org || null, triagePath: config.triageFile || null, refreshSchedule: config.refreshSchedule || null, monitorRetiredAt: config.monitorRetiredAt || null };
+  return { outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null, claudeMailPath: config.claudeMail || null, evidenceDir: config.evidenceDir || null, sharedMailbox: config.sharedMailbox || null, mailboxIdPrefixes: config.mailboxIdPrefixes || null, org: config.org || null, triagePath: config.triageFile || null, refreshSchedule: config.refreshSchedule || null, monitorRetiredAt: config.monitorRetiredAt || null, recheckPath: config.recheckFile || null };
 }
 
 // The commit the board was built from, marked when the working tree has

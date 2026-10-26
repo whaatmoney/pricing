@@ -86,14 +86,10 @@ export function purchaseOrderText({ po = "PO1-100", revision = null, date = "5/2
 // another customer on the same P/N, a longer token, changed revision, changed
 // process, returned work, a lot-priced PO, an old quoted estimate, an internal
 // forward, a quantity alternative and a line with no usable inputs.
-export function buildWorld() {
-  const root = tempDir("qpc-world-");
-  const folder = path.join(root, "router");
-  const store = path.join(root, "store");
-  const evidence = path.join(root, "evidence");
-  fs.mkdirSync(folder);
-  fs.mkdirSync(evidence);
-  const router = [
+// The world's Router History rows, so a test can write a later export of the
+// same history.
+export function worldRouterRows() {
+  return [
     routerRow({ wo: "5001WA", description: "P/N: ABC-100 REV. B\nWO NO: W1-100" }),
     routerRow({ wo: "5002WA", customer: "OTHER AEROSPACE INC", price: 5 }),
     routerRow({ wo: "5003WA", description: "P/N: ABC100X REV. B", price: 6 }),
@@ -103,6 +99,16 @@ export function buildWorld() {
     routerRow({ wo: "2001WA", received: "02/01/2026", description: "P/N: ABC-100 REV. B\nWO NO: W1-070", price: 8, process: "CLEAN PER CC1246 LEVEL 100" }),
     routerRow({ wo: "1001WA", received: "12/01/2025", description: "P/N: ABC-100 REV. B\nWO NO: W1-060", price: 6 }),
   ];
+}
+
+export function buildWorld() {
+  const root = tempDir("qpc-world-");
+  const folder = path.join(root, "router");
+  const store = path.join(root, "store");
+  const evidence = path.join(root, "evidence");
+  fs.mkdirSync(folder);
+  fs.mkdirSync(evidence);
+  const router = worldRouterRows();
   const exportFile = writeRouterExport(folder, "092126 - LineItems_with_RouterHistory.xlsx", router);
   assert.equal(importSnapshot(exportFile, { storeDir: store }).outcome, "accepted");
 

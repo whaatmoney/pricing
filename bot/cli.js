@@ -3,15 +3,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { applyAnswer } from "./lib/answer.js";
-import { boardInputs, mirrorPages, writeBoard } from "./lib/board.js";
+import { boardInputs, buildBoard, mirrorPages, writeBoard } from "./lib/board.js";
 import { readLastSync, runSync, startPublish } from "./lib/sync.js";
 import { buildDecision, loadMessages } from "./lib/decision.js";
 import { customerJobs } from "./lib/job-numbers.js";
 import { lifecyclePath, lifecycleView, readLifecycle, recordDecision } from "./lib/lifecycle.js";
 import { readSentQuote, sentQuoteNote } from "./lib/sent-quote.js";
 import { refreshPages, writePage } from "./lib/pages.js";
+import { decisionOptions, recheckCases, saveDecision } from "./lib/recheck.js";
 import { DEFAULT_LIMITS, importSnapshot, listExports, loadSnapshotRecords, snapshotStatus } from "./lib/router-snapshot.js";
-import { nextVersion, versionsOf } from "./lib/versioning.js";
+import { versionsOf } from "./lib/versioning.js";
 
 // QPC first-pass pricing bot. Paths come from a private config file so no
 // company location, export or evidence is committed with the code:
@@ -41,6 +42,9 @@ const USAGE = `Usage:
                                          Redraw a saved version's page (the record is not rebuilt)
   node bot/cli.js sync [--trigger NAME]  Import any new Router History export and rebuild the board
                                          (what the background job runs; safe to repeat)
+  node bot/cli.js recheck                Price every open, undecided page again when a newer Router
+                                         History export is in: unchanged pages are stamped as checked,
+                                         changed ones are rebuilt as the next version (run board after)
   node bot/cli.js board                  Rewrite the open-decisions page
   node bot/cli.js shadow                 TypeSafe shadow check: where its answers disagree with the
                                          board's "quote sent", "price request" and chase-urgency rules
@@ -116,22 +120,8 @@ async function main() {
   }
   if (command === "decide") {
     if (!argument) throw new Error("decide needs a case file path");
-    const decision = buildDecision({
-      casePath: path.resolve(argument),
-      storeDir: config.storeDir,
-      routerFolder: config.routerHistoryFolder,
-      salesExportPath: config.salesExport,
-      priceLabDir: config.priceLabDir,
-      calculatorHtml: config.calculatorHtml,
-      // A retired monitor's frozen file says nothing about how fresh the mail is.
-      monitorStatePath: config.monitorRetiredAt ? null : config.monitorState,
-    });
-    const stem = `CLAUDE-DECISION-${decision.caseId}`;
-    const { version, reused, supersedes } = nextVersion(config.outputsDir, stem, decision.inputsFingerprint);
-    decision.lifecycle.recommendationVersion = version;
-    decision.lifecycle.supersedes = supersedes;
-    const base = path.join(config.outputsDir, `${stem}-v${version}`);
-    fs.writeFileSync(`${base}.json`, JSON.stringify(decision, null, 2));
+    const decision = buildDecision(decisionOptions(config, path.resolve(argument)));
+    const { version, reused, supersedes, base } = saveDecision(config.outputsDir, decision);
     renderVersion(config, decision.caseId, version);
     console.log(`${reused ? "Rewrote" : "Wrote"} recommendation v${version}${supersedes ? ` (supersedes v${supersedes})` : ""}:\n  ${base}.json\n  ${base}.md\n  ${base}.html\nBoard: ${refreshBoard(config)}`);
     for (const line of decision.lines) {
@@ -229,6 +219,21 @@ async function main() {
     const record = runSync({ config, limits, trigger: values.trigger || "manual" });
     console.log(`${record.at} sync (${record.trigger}): ${record.imports.length ? record.imports.map((item) => `${item.fileName} ${item.outcome}${item.failures.length ? ` [${item.failures.join(", ")}]` : ""}`).join("; ") : "no new Router History export"}; board ${record.board ? `${record.board.waiting} waiting, ${record.board.withoutPage ?? "?"} unanswered RFQs without a page, mail checked ${record.board.monitorCutoff} (Codex) / ${record.board.claudeCutoff ?? "none"} (Claude), ${record.board.mailFound} found by Claude's check` : "not written"}${record.errors.length ? `; ERRORS: ${record.errors.join("; ")}` : ""}`);
     if (record.errors.length) process.exitCode = 1;
+    return;
+  }
+  if (command === "recheck") {
+    if (!config.casesDir || !config.recheckFile) throw new Error("recheck needs casesDir and recheckFile in the config");
+    const board = buildBoard(boardInputs(config));
+    const openCaseIds = new Set(board.cases.filter((kase) => kase.open).map((kase) => kase.caseId));
+    const { snapshotFile, results } = recheckCases({ config, openCaseIds });
+    for (const item of results.filter((entry) => entry.result === "rebuilt")) renderVersion(config, item.caseId, item.newVersion);
+    const count = (result) => results.filter((item) => item.result === result).length;
+    console.log(`Recheck against ${snapshotFile || "no current snapshot"}: ${results.length} checked; ${count("unchanged")} unchanged, ${count("rebuilt")} rebuilt, ${count("decided")} skipped (decision recorded), ${count("no-case-file")} without a case file, ${count("error")} errors`);
+    for (const item of results.filter((entry) => entry.result !== "unchanged")) {
+      const detail = item.result === "rebuilt" ? `v${item.version} -> v${item.newVersion}: ${item.changes.map((change) => `${change.lineId} ${change.from ?? "none"} -> ${change.to ?? "none"}${change.newRows ? ` (+${change.newRows} history rows)` : ""}`).join("; ")}` : item.error || "";
+      console.log(`  ${item.result.padEnd(12)} ${item.caseId} ${detail}`);
+    }
+    if (count("error")) process.exitCode = 1;
     return;
   }
   if (command === "board") {
