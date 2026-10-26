@@ -1002,7 +1002,7 @@ function caseCard(kase, now) {
     ${open ? "" : progressHtml(kase.progress)}
     ${group === "facts" ? `<p class="parts">${partsSummary(kase)}</p>${factsTemplates(kase)}${kase.files ? `<p class="files-note">${ICON.attach}<span>The missing facts may be in ${kase.files.names.length === 1 ? "this file" : `these ${kase.files.names.length} files`}: ${kase.files.names.map((name) => `<b>${esc(name)}</b>`).join(", ")}</span></p>` : ""}` : linesTable(kase)}
     ${notes.map((note) => `<p class="hint">${ICON.alert}<span>${note}</span></p>`).join("")}
-    ${checks.map((note) => `<p class="hint">${ICON.check}<span>${note}</span></p>`).join("")}
+    ${checks.map((note) => `<p class="hint quiet">${ICON.check}<span>${note}</span></p>`).join("")}
     ${mailRow(kase.email)}
     <div class="card-foot">
       <label class="done-check above"><input type="checkbox" class="done-box" aria-label="Mark ${esc(kase.customer)} done"><span>Done</span></label>
@@ -1308,6 +1308,7 @@ h1.summary { font-size:24px; font-weight:650; letter-spacing:-.02em; line-height
 h1.summary a { color:var(--ink); text-decoration:none; border-bottom:1px solid var(--line-2); transition:border-color .15s; }
 h1.summary a:hover { border-bottom-color:currentColor; }
 h1.summary .n-ready b { color:var(--gold-text); } h1.summary .n-facts b { color:var(--warn); }
+.hint.quiet { color:var(--ink-3); }
 h1.summary .chasing-now, h1.summary .orders-now { color:var(--warn); border-bottom-color:color-mix(in srgb, var(--warn) 40%, transparent); }
 table.chase tr.urgent td:first-child { box-shadow:inset 3px 0 0 var(--alert); }
 .warn-text { color:var(--warn); font-weight:600; }
