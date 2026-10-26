@@ -20,13 +20,18 @@ assert.deepEqual(header.missing, []);
 
 const result = buildDataset(rows, header.index, sheetName);
 const stats = calculateStats(result.records);
-console.log(JSON.stringify({ version: XLSX.version, quality: result.quality, stats }, null, 2));
-assert.equal(result.quality.sourceRows, 43722);
+const partStats = calculateStats(result.records.filter((record) => !record.isCharge));
+console.log(JSON.stringify({ version: XLSX.version, quality: result.quality, stats, partStats }, null, 2));
+// Pinned to "101926 - LineItems_with_RouterHistory.xlsx" (10/19/26 export); re-pin when a newer export supersedes it.
+assert.equal(result.quality.sourceRows, 48102);
 assert.equal(result.quality.duplicateRows, 20);
-assert.equal(result.quality.loadedRows, 43702);
+assert.equal(result.quality.loadedRows, 48082);
 assert.ok(result.quality.normalizedLineBreakRows > 40000);
 assert.ok(result.quality.partNumberExtractedRows / result.quality.partNumberMarkerRows > 0.98);
-assert.equal(stats.median, 95);
-assert.equal(stats.priced, 32135);
+assert.equal(stats.median, 102);
+assert.equal(stats.priced, 35518);
+assert.equal(result.records.filter((record) => record.isCharge).length, 8441);
+assert.equal(partStats.median, 46);
+assert.equal(partStats.priced, 27447);
 assert.ok(result.records.every((record) => typeof record.router === "string"));
 assert.ok(result.records.some((record) => record.router.includes(":")));
