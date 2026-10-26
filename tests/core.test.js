@@ -6,6 +6,7 @@ import {
   csvCell,
   extractPartNumbers,
   findHeaderRow,
+  isChargeLine,
   normalizeDate,
   normalizeText,
   parsePrice,
@@ -86,6 +87,23 @@ test("workbooks without a router column still load", () => {
   const result = buildDataset(rows);
   assert.equal(result.records.length, 1);
   assert.equal(result.records[0].router, "");
+});
+
+test("fee, charge, and note lines are flagged; part lines that mention a fee word are not", () => {
+  [
+    "LOT MIN", "LOT MINIMUM", "LOT CHRGE FOR LINE 2", "PASSIVATION ONLY LOT MIN", "VACUUM BAKE LOT CHARGE",
+    "EXPEDITE", "EXEPDITE", "EXPEDTIE", "WEEKEND EXPEDITE", "EXPEDITE FEE FOR SOURCE 12/14 ECD 12/15",
+    "SOURCE FEE", "AR SOURCE INSPECTION", "PART EVAL FEE", "PARTS EVALUATION FEE", "CLEANROOM RENTAL",
+    "ENVIRONMENTAL SURCHARGE", "SET-UP FEE", "BANK FEE", "SHIPPING CHARGES", "FREIGHT", "TAX",
+    "NO CHARGE PER JAY", "DUPLICATE WO_x000D_\nCLOSING OUT", "** USE TRAVELER IN FOLDER***",
+  ].forEach((text) => assert.equal(isChargeLine(text), true, text));
+  [
+    "P/N: TES15011-01 REV. -_x000D_\nGAS HANDLING SUBASSEMBLY",
+    "DPM13619-1/UC26TE FOAM PLUG, POLYURETHANE, CRES EXTRACTION WIRE, LEVEL 100A CLEAN",
+    "ACLAR BAG 8\" X 96\" JOB NO: STOCK LOT NO: 1697799",
+    "PLEASE DO NOT MIX LINE ITEMS SG TO ASSEMBLE IN CLEAN ROOM.",
+    "VACUUM BAKE", "ASSEMBLY", "TURCO SAMPLE", "VERIFICATION TEST", "RECLEAN FEE", "",
+  ].forEach((text) => assert.equal(isChargeLine(text), false, text));
 });
 
 test("median and percentiles interpolate correctly", () => {
