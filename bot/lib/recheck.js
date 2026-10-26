@@ -50,17 +50,19 @@ export function readRecheck(file) {
 }
 
 // What a page shows for one line: the suggested price and every history row
-// behind it. A difference in any of these is a reason to rebuild. The wording
-// of why a line has no price is left out: it comes from the case's missing
-// facts and the engine, not from Router History, and a newer engine's wording
-// alone must not make a new version.
+// behind it, whole (a corrected scope or a returned mark on the same work
+// order is a change too). A difference in any of these is a reason to rebuild.
+// The wording of why a line has no price is left out: it comes from the case's
+// missing facts and the engine, not from Router History, and a newer engine's
+// wording alone must not make a new version.
+const rowKey = (row) => [row.source, row.date, row.evidence].join("|");
 function lineSummary(line) {
   const preferred = line.recommendation.preferred;
   return {
     price: preferred?.unitPrice ?? null,
     lotCharge: preferred?.lotCharge ?? null,
     label: preferred?.label ?? null,
-    rows: (line.history?.timeline || []).map((row) => [row.source, row.date, row.evidence, row.unitPrice].join("|")),
+    rows: (line.history?.timeline || []).map((row) => ({ key: rowKey(row), text: JSON.stringify(row) })),
   };
 }
 
@@ -71,25 +73,43 @@ export function compareDecisions(before, after) {
     const a = before.lines[index] ? lineSummary(before.lines[index]) : null;
     const b = after.lines[index] ? lineSummary(after.lines[index]) : null;
     if (JSON.stringify(a) === JSON.stringify(b)) continue;
-    const added = b ? b.rows.filter((row) => !(a?.rows || []).includes(row)).length : 0;
-    changes.push({ lineId: (after.lines[index] || before.lines[index]).lineId, from: a?.price ?? null, to: b?.price ?? null, newRows: added });
+    const oldRows = new Map((a?.rows || []).map((row) => [row.key, row.text]));
+    const newRows = new Map((b?.rows || []).map((row) => [row.key, row.text]));
+    changes.push({
+      lineId: (after.lines[index] || before.lines[index]).lineId,
+      from: a?.price ?? null,
+      to: b?.price ?? null,
+      lotFrom: a?.lotCharge ?? null,
+      lotTo: b?.lotCharge ?? null,
+      labelFrom: a?.label ?? null,
+      labelTo: b?.label ?? null,
+      newRows: [...newRows.keys()].filter((key) => !oldRows.has(key)).length,
+      changedRows: [...newRows].filter(([key, text]) => oldRows.has(key) && oldRows.get(key) !== text).length,
+      removedRows: [...oldRows.keys()].filter((key) => !newRows.has(key)).length,
+    });
   }
   if (JSON.stringify(before.poLotMinimum ?? null) !== JSON.stringify(after.poLotMinimum ?? null)) changes.push({ lineId: "PO", from: before.poLotMinimum?.charge ?? null, to: after.poLotMinimum?.charge ?? null, newRows: 0 });
   return changes;
 }
 
-// Case files by case id. A file that does not parse is skipped, not fatal.
+// Case files by case id. A file that does not parse is listed, not fatal, so
+// a case whose file is broken is retried once it is fixed.
 function caseFiles(casesDir) {
   const files = new Map();
-  if (!casesDir || !fs.existsSync(casesDir)) return files;
+  const unreadable = [];
+  if (!casesDir || !fs.existsSync(casesDir)) return { files, unreadable };
   for (const name of fs.readdirSync(casesDir).filter((item) => item.endsWith(".json")).sort()) {
     try {
       const caseId = JSON.parse(fs.readFileSync(path.join(casesDir, name), "utf8")).caseId;
       if (caseId && !files.has(caseId)) files.set(caseId, path.join(casesDir, name));
-    } catch {}
+    } catch {
+      unreadable.push(name);
+    }
   }
-  return files;
+  return { files, unreadable };
 }
+
+const hasDecision = (outputsDir, caseId) => (readLifecycle(lifecyclePath(outputsDir, caseId), caseId)?.entries || []).some((entry) => entry.type === "decision");
 
 const KEEP = 2000;
 
@@ -101,7 +121,7 @@ export function recheckCases({ config, openCaseIds, now = new Date(), build = (c
   const snapshotFile = manifest.snapshots?.[current]?.fileName || null;
   const checks = readRecheck(config.recheckFile);
   const done = new Set(checks.map((check) => `${check.caseId}|${check.version}|${check.snapshotId}`));
-  const files = caseFiles(config.casesDir);
+  const { files, unreadable } = caseFiles(config.casesDir);
   const results = [];
   if (!current) return { snapshotId: null, results };
   for (const { caseId, version, decision } of latestDecisions(config.outputsDir)) {
@@ -110,14 +130,13 @@ export function recheckCases({ config, openCaseIds, now = new Date(), build = (c
     if (!priced || priced.id === current) continue;
     if (done.has(`${caseId}|${version}|${current}`)) continue;
     const stamp = { caseId, version, snapshotId: current, snapshotFile, pricedOn: priced.fileName || null, checkedAt: now.toISOString() };
-    const lifecycle = readLifecycle(lifecyclePath(config.outputsDir, caseId), caseId);
-    if ((lifecycle?.entries || []).some((entry) => entry.type === "decision")) {
+    if (hasDecision(config.outputsDir, caseId)) {
       results.push({ ...stamp, result: "decided" });
       continue;
     }
     const casePath = files.get(caseId);
     if (!casePath) {
-      results.push({ ...stamp, result: "no-case-file" });
+      results.push({ ...stamp, result: "no-case-file", error: unreadable.length ? `case file not found; unreadable case files: ${unreadable.join(", ")}` : "case file not found" });
       continue;
     }
     try {
@@ -127,14 +146,20 @@ export function recheckCases({ config, openCaseIds, now = new Date(), build = (c
         results.push({ ...stamp, result: "unchanged" });
         continue;
       }
+      // A decision recorded while this case was being built wins: never save
+      // a new version over it.
+      if (hasDecision(config.outputsDir, caseId)) {
+        results.push({ ...stamp, result: "decided" });
+        continue;
+      }
       const saved = saveDecision(config.outputsDir, fresh);
       results.push({ ...stamp, result: "rebuilt", newVersion: saved.version, changes });
     } catch (error) {
       results.push({ ...stamp, result: "error", error: String(error.message || error).slice(0, 300) });
     }
   }
-  // Errors are not stamped, so the next run tries again.
-  const kept = [...checks, ...results.filter((item) => item.result !== "error")].slice(-KEEP);
+  // Errors and missing case files are not stamped, so the next run tries again.
+  const kept = [...checks, ...results.filter((item) => item.result !== "error" && item.result !== "no-case-file")].slice(-KEEP);
   if (config.recheckFile && results.length) fs.writeFileSync(config.recheckFile, JSON.stringify({ schema: 1, checks: kept }, null, 2) + "\n");
   return { snapshotId: current, snapshotFile, results };
 }

@@ -98,6 +98,43 @@ test("a case with any recorded decision is never rebuilt, a stamped check is not
   assert.deepEqual(recheckCases({ config: other.config, openCaseIds: other.open, build: other.build }).results.map((item) => item.result), ["unchanged"]);
 });
 
+test("a decision recorded while the page is being rebuilt wins: no new version is saved over it", () => {
+  const { decision, config, later, build, open } = pricedWorld();
+  later([routerRow({ wo: "6001WA", received: "09/25/2026", description: "P/N: ABC-100 REV. B\nWO NO: W1-120", price: 7.25 })]);
+  const racing = (casePath) => {
+    const fresh = build(casePath);
+    recordDecision({ outputsDir: config.outputsDir, caseId: decision.caseId, version: 1, lineId: "L1", choice: "alternative", unitPrice: 8, note: "test price", decidedBy: "Pat Reviewer", decidedAt: "2026-09-25T14:00:00Z", now: new Date("2026-09-25T14:05:00Z") });
+    return fresh;
+  };
+  assert.deepEqual(recheckCases({ config, openCaseIds: open, build: racing }).results.map((item) => item.result), ["decided"]);
+  assert.equal(versions(config, decision.caseId).length, 1);
+});
+
+test("a missing or broken case file is reported and tried again next run, not stamped", () => {
+  const { world, config, later, build, open } = pricedWorld();
+  later([]);
+  const text = fs.readFileSync(world.casePath, "utf8");
+  fs.writeFileSync(world.casePath, "{ not json");
+  const missing = recheckCases({ config, openCaseIds: open, build });
+  assert.deepEqual(missing.results.map((item) => item.result), ["no-case-file"]);
+  assert.match(missing.results[0].error, /unreadable case files: case\.json/);
+  assert.deepEqual(readRecheck(config.recheckFile), []);
+  fs.writeFileSync(world.casePath, text);
+  assert.deepEqual(recheckCases({ config, openCaseIds: open, build }).results.map((item) => item.result), ["unchanged"]);
+});
+
+test("a rebuilt card says what moved: unit price, lot charge, price source and history rows", () => {
+  const { decision, config, later } = pricedWorld();
+  later([]);
+  const stamp = { caseId: decision.caseId, version: 0, newVersion: 1, snapshotId: "x", snapshotFile: "092826 - LineItems_with_RouterHistory.xlsx", checkedAt: "2026-10-26T15:00:00Z", result: "rebuilt", changes: [
+    { lineId: "L1", from: 8, to: 8, lotFrom: null, lotTo: 350, labelFrom: "repeat", labelTo: "repeat", newRows: 0, changedRows: 1, removedRows: 1 },
+    { lineId: "L2", from: 7, to: 7.5, lotFrom: null, lotTo: null, labelFrom: "repeat", labelTo: "previous quote", newRows: 2, changedRows: 0, removedRows: 0 },
+  ] };
+  fs.writeFileSync(config.recheckFile, JSON.stringify({ schema: 1, checks: [stamp] }));
+  const html = renderBoard(boardOf(config));
+  assert.match(html, /from v0: L1 lot charge — → \$350\.00; L2 \$7\.00 → \$7\.50; L2 price now from previous quote \(was repeat\); 2 new history rows; 1 history row changed; 1 history row gone\./);
+});
+
 test("only open pages priced on an older export are checked", () => {
   const { config, later, build } = pricedWorld();
   let builds = 0;
@@ -108,12 +145,15 @@ test("only open pages priced on an older export are checked", () => {
   assert.equal(builds, 0);
 });
 
-test("compareDecisions: a moved price or a new history row is a change; the same summary or new wording is not", () => {
-  const line = (price, rows) => ({ lineId: "L1", recommendation: { preferred: price == null ? null : { unitPrice: price, label: "repeat" }, uncalculated: price == null ? "size missing" : null }, history: { timeline: rows.map((wo) => ({ source: "Work order (Router History)", date: "2026-09-01", evidence: `WO ${wo}, row 1`, unitPrice: price })) } });
-  const decision = (price, rows) => ({ lines: [line(price, rows)], poLotMinimum: null });
+test("compareDecisions: a moved price, a new, changed or removed history row is a change; the same summary or new wording is not", () => {
+  const line = (price, rows, scope = "300; oxygen not stated") => ({ lineId: "L1", recommendation: { preferred: price == null ? null : { unitPrice: price, label: "repeat" }, uncalculated: price == null ? "size missing" : null }, history: { timeline: rows.map((wo) => ({ source: "Work order (Router History)", date: "2026-09-01", evidence: `WO ${wo}, row 1`, unitPrice: 8, scope })) } });
+  const decision = (price, rows, scope) => ({ lines: [line(price, rows, scope)], poLotMinimum: null });
+  const change = (fields) => ({ lineId: "L1", from: 8, to: 8, lotFrom: null, lotTo: null, labelFrom: "repeat", labelTo: "repeat", newRows: 0, changedRows: 0, removedRows: 0, ...fields });
   assert.deepEqual(compareDecisions(decision(8, ["1"]), decision(8, ["1"])), []);
-  assert.deepEqual(compareDecisions(decision(8, ["1"]), decision(9, ["1"])), [{ lineId: "L1", from: 8, to: 9, newRows: 1 }]);
-  assert.deepEqual(compareDecisions(decision(8, ["1"]), decision(8, ["1", "2"])), [{ lineId: "L1", from: 8, to: 8, newRows: 1 }]);
+  assert.deepEqual(compareDecisions(decision(8, ["1"]), decision(9, ["1"])), [change({ to: 9 })]);
+  assert.deepEqual(compareDecisions(decision(8, ["1"]), decision(8, ["1", "2"])), [change({ newRows: 1 })]);
+  assert.deepEqual(compareDecisions(decision(8, ["1", "2"]), decision(8, ["1"])), [change({ removedRows: 1 })]);
+  assert.deepEqual(compareDecisions(decision(8, ["1"]), decision(8, ["1"], "300; FOR OXYGEN SERVICE")), [change({ changedRows: 1 })], "same work order, corrected scope");
   assert.deepEqual(compareDecisions(decision(null, []), decision(null, [])), []);
   const reworded = decision(null, []);
   reworded.lines[0].recommendation.uncalculated = "size missing, and a newer engine says more";
@@ -131,6 +171,9 @@ test("ordersSince: work orders on or after the day asked, one entry per work ord
   };
   assert.deepEqual(ordersSince(decision), [{ wo: "150", date: "2026-10-08", unitPrice: null, lineIds: ["L2"] }, { wo: "200", date: "2026-10-16", unitPrice: 4, lineIds: ["L1", "L2"] }]);
   assert.deepEqual(ordersSince({ rfq: {}, lines: [] }), []);
+  // Asked at 5:30 PM Pacific on Oct 26 (already Oct 27 in UTC): an Oct 26 work order counts.
+  const evening = { rfq: { initiatedAt: "2026-10-27T00:30:00Z" }, lines: [{ lineId: "L1", history: { timeline: [row("Work order (Router History)", "2026-10-26", "WO 300, row 5")] } }] };
+  assert.deepEqual(ordersSince(evening).map((order) => order.wo), ["300"]);
 });
 
 test("a Pacific timetable keeps its local times across the daylight-saving change", () => {

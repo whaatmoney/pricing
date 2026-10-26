@@ -411,10 +411,13 @@ function caseEvents({ caseId, version, decision, lifecycle, monitor, sent, mailS
 
 // Work orders for a requested part that came in on or after the day the RFQ
 // was asked: the part may already be ordered. Router History rows are the
-// customer's own, exact part number (see decision.js buildTimeline).
+// customer's own, exact part number (see decision.js buildTimeline). Work
+// order dates are the shop's dates, so the asked day is taken in the shop's
+// time zone too, not UTC.
 export function ordersSince(decision) {
-  const asked = String(decision.rfq?.initiatedAt || "").slice(0, 10);
-  if (!asked) return [];
+  const at = decision.rfq?.initiatedAt;
+  if (!at || Number.isNaN(Date.parse(at))) return [];
+  const asked = /^\d{4}-\d{2}-\d{2}$/.test(at) ? at : new Date(at).toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
   const orders = new Map();
   for (const line of decision.lines) {
     for (const row of line.history?.timeline || []) {
@@ -971,10 +974,19 @@ function ordersNote(orders) {
 }
 
 function repricedNote(check) {
-  const moved = check.changes.filter((change) => change.from !== change.to);
-  const rows = check.changes.reduce((sum, change) => sum + (change.newRows || 0), 0);
-  const what = moved.length ? moved.map((change) => `${esc(change.lineId)} ${usd(change.from)} → ${usd(change.to)}`).join("; ") : "price unchanged";
-  return `Rebuilt on ${esc(check.snapshotFile || "the newest Router History")} (${day(check.checkedAt)}) from v${check.version}: ${what}${rows ? `; ${rows} new history row${rows === 1 ? "" : "s"}` : ""}.`;
+  const parts = [];
+  for (const change of check.changes) {
+    if (change.from !== change.to) parts.push(`${esc(change.lineId)} ${usd(change.from)} → ${usd(change.to)}`);
+    if (change.lotFrom !== undefined && change.lotFrom !== change.lotTo) parts.push(`${esc(change.lineId)} lot charge ${usd(change.lotFrom)} → ${usd(change.lotTo)}`);
+    if (change.labelFrom !== undefined && change.labelFrom !== change.labelTo) parts.push(`${esc(change.lineId)} price now from ${esc(change.labelTo || "no source")} (was ${esc(change.labelFrom || "no source")})`);
+  }
+  const count = (field) => check.changes.reduce((sum, change) => sum + (change[field] || 0), 0);
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  if (!parts.length) parts.push("price unchanged");
+  if (count("newRows")) parts.push(`${plural(count("newRows"), "new history row")}`);
+  if (count("changedRows")) parts.push(`${plural(count("changedRows"), "history row")} changed`);
+  if (count("removedRows")) parts.push(`${plural(count("removedRows"), "history row")} gone`);
+  return `Rebuilt on ${esc(check.snapshotFile || "the newest Router History")} (${day(check.checkedAt)}) from v${check.version}: ${parts.join("; ")}.`;
 }
 
 function caseCard(kase, now) {
