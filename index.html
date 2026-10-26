@@ -148,6 +148,11 @@
                 <button type="button" class="toggle-chip check-toggle active" id="showZeroChip" role="switch" aria-checked="true"><span>Include $0 and blank-price lines</span></button>
                 <input id="showZero" type="checkbox" checked hidden>
               </div>
+              <div class="field field-toggle">
+                <label for="hideFeesChip">Fee lines</label>
+                <button type="button" class="toggle-chip check-toggle active" id="hideFeesChip" role="switch" aria-checked="true" title="Lot min, expedite, source, eval, cleanroom, and other fees, plus NO CHARGE and DUPLICATE WO notes"><span>Hide fee and charge lines</span></button>
+                <input id="hideFees" type="checkbox" checked hidden>
+              </div>
             </div>
           </div>
         </section>
@@ -290,6 +295,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="./vendor/xlsx.full.min.js"></script>
-  <script type="module" src="./app.js?v=20260916c"></script>
+  <script type="module" src="./app.js?v=20261025a"></script>
 </body>
 </html>

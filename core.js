@@ -22,6 +22,26 @@ const PN_EXTRACT_RE = new RegExp(
   "gi",
 );
 
+// Fee, charge, and note lines (lot min, expedite, source, eval, cleanroom, NO CHARGE, DUPLICATE WO)
+// carry no part's unit price. A line counts only when its description starts with one of these
+// words and names no part, so "FOAM PLUG ... 100A CLEAN" and "ACLAR BAG ... LOT NO: 1697799" stay.
+const CHARGE_START_RE = new RegExp("^[\\W_]*(?:" + [
+  "(?:\\d+-\\d+ DAY |WEEKEND |24 HOUR |NO )?EX[EP]{1,2}D?[IT]{1,2}T*E\\w*",
+  "(?:PASSIVAT\\w* (?:ONLY )?|PSV |TECMA |CLEANING |VACUUM BAKE )?LOT\\b(?!\\s*(?:NO\\b|#))",
+  "PARTS? EVAL\\w*", "EVA?L\\w* FEE", "EVLAUTION",
+  "(?:AR )?SOURCE\\b", "CLEAN ?ROOM\\b",
+  "ENVIRO\\w*", "SURCHARGE", "SET[\\s-]?UP (?:FEE|CHARGE)", "BANK FEE", "WIRE FEE", "FEE FOR BANK",
+  "SHIPPING (?:CHARGE|COST)", "FREIGHT", "TAX\\b", "HAZARDOUS WASTE", "WEEKEND\\b", "MISC FEE", "FEES?\\b",
+  "NO CHARGE", "\\**DUPLICATE", "CLOSING WO", "(?:PRINT |USE )?TRAVELER IN FOLDER", "PROCESSED ON ANOTHER WO",
+].join("|") + ")", "i");
+const CHARGE_PART_GUARD_RE = /\bDRAWING\b|\bLOT\s*(?:NO\b|#)/i;
+
+export function isChargeLine(description) {
+  const text = normalizeText(description).replace(/\s+/g, " ").trim();
+  if (!text || PN_MARKER_RE.test(text) || CHARGE_PART_GUARD_RE.test(text)) return false;
+  return CHARGE_START_RE.test(text);
+}
+
 export function normalizeText(value) {
   if (value == null) return "";
   return String(value)
@@ -215,6 +235,7 @@ export function buildDataset(rows, headerIndex = 0, sheetName = "Sheet1") {
       special,
       router,
       partNumbers,
+      isCharge: isChargeLine(description),
     };
     record.search = [date, customer, wo, part, description, process, endUser, special, router, ...partNumbers].join(" ").toLowerCase();
     records.push(record);

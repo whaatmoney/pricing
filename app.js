@@ -1,4 +1,4 @@
-import { buildDataset, calculateStats, csvCell, findHeaderRow, parseRouterSteps, percentile } from "./core.js?v=20260916a";
+import { buildDataset, calculateStats, csvCell, findHeaderRow, parseRouterSteps, percentile } from "./core.js?v=20261025a";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 // Mirrors the Operations Center Find tool (whaatmoney.github.io/qpct) — same
@@ -91,6 +91,11 @@ function bindEvents() {
   $("showZeroChip").addEventListener("click", () => {
     $("showZero").checked = !$("showZero").checked;
     $("showZero").dispatchEvent(new Event("change"));
+  });
+  $("hideFees").addEventListener("change", applyFilters);
+  $("hideFeesChip").addEventListener("click", () => {
+    $("hideFees").checked = !$("hideFees").checked;
+    $("hideFees").dispatchEvent(new Event("change"));
   });
   $("filterChips").addEventListener("click", removeFilterChip);
   $("quickSpecs").addEventListener("click", applyQuickSpec);
@@ -324,6 +329,8 @@ function applyFilters() {
   syncCustomerTrigger();
   $("showZeroChip").classList.toggle("active", $("showZero").checked);
   $("showZeroChip").setAttribute("aria-checked", String($("showZero").checked));
+  $("hideFeesChip").classList.toggle("active", $("hideFees").checked);
+  $("hideFeesChip").setAttribute("aria-checked", String($("hideFees").checked));
   ["dateFrom", "dateTo"].forEach((id) => $(`${id}Chip`).classList.toggle("active", Boolean($(id).value)));
   ["q", "pn", "process"].forEach((id) => $(`${id}Chip`).classList.toggle("active", Boolean($(id).value.trim())));
   const tokens = $("q").value.trim().toLowerCase().match(/"[^"]+"|\S+/g)?.map((token) => token.replace(/^"|"$/g, "")) || [];
@@ -333,7 +340,10 @@ function applyFilters() {
   const from = $("dateFrom").value;
   const to = $("dateTo").value;
   const showZero = $("showZero").checked;
+  const hideFees = $("hideFees").checked;
 
+  // Fee lines are checked last so the hidden count covers only lines the other filters would show.
+  state.hiddenFees = 0;
   state.filtered = state.records.filter((record) => {
     if (!showZero && !(record.price > 0)) return false;
     if (customer && record.customer !== customer) return false;
@@ -341,7 +351,9 @@ function applyFilters() {
     if (process && !record.process.toLowerCase().includes(process)) return false;
     if (from && (!record.date || record.date < from)) return false;
     if (to && (!record.date || record.date > to)) return false;
-    return tokens.every((token) => record.search.includes(token));
+    if (!tokens.every((token) => record.search.includes(token))) return false;
+    if (hideFees && record.isCharge) { state.hiddenFees += 1; return false; }
+    return true;
   });
   sortFiltered();
   const stats = renderAnalysis();
@@ -430,7 +442,7 @@ function renderRecommendation(stats) {
 }
 
 function renderFilterFeedback(stats) {
-  const filters = activeFilters();
+  const filters = [...activeFilters(), ...feeFilter()];
   $("filterMatchCount").textContent = `${whole.format(stats.matches)} line${stats.matches === 1 ? "" : "s"} match`;
   $("filterChips").replaceChildren(...filters.map((filter) => {
     const button = document.createElement("button");
@@ -480,11 +492,18 @@ function activeFilters() {
   return filters;
 }
 
+// On by default, so it shows as a chip but does not count toward Clear or the match wording.
+function feeFilter() {
+  if (!$("hideFees").checked) return [];
+  return [{ key: "hideFees", label: "Fee lines", value: `${whole.format(state.hiddenFees || 0)} hidden` }];
+}
+
 function removeFilterChip(event) {
   const chip = event.target.closest("[data-filter-key]");
   if (!chip) return;
   const key = chip.dataset.filterKey;
   if (key === "showZero") $("showZero").checked = true;
+  else if (key === "hideFees") $("hideFees").checked = false;
   else if ($(key)) $(key).value = "";
   applyFilters();
 }
@@ -1297,7 +1316,7 @@ function renderRouterChips(value, compact) {
 
 function clearFilters() {
   ["q", "pn", "process", "dateFrom", "dateTo"].forEach((id) => { $(id).value = ""; });
-  $("customer").value = ""; $("showZero").checked = true; applyFilters();
+  $("customer").value = ""; $("showZero").checked = true; $("hideFees").checked = true; applyFilters();
 }
 
 async function copyStat(event) {
@@ -1333,6 +1352,7 @@ async function copySummary() {
     "QPC Part Memory — pricing reference",
     `Source: ${state.file?.name || "—"}`,
     `Filters: ${activeFilterLabels().join(", ") || "none"}`,
+    `Fee lines: ${$("hideFees").checked ? `${state.hiddenFees} hidden` : "included"}`,
     `Matching lines: ${stats.matches}`,
     `Priced lines: ${stats.priced}`,
     `Median: ${formatMoney(stats.median)}`,
