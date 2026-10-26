@@ -228,9 +228,9 @@ async function main() {
     const { snapshotFile, results } = recheckCases({ config, openCaseIds });
     for (const item of results.filter((entry) => entry.result === "rebuilt")) renderVersion(config, item.caseId, item.newVersion);
     const count = (result) => results.filter((item) => item.result === result).length;
-    console.log(`Recheck against ${snapshotFile || "no current snapshot"}: ${results.length} checked; ${count("unchanged")} unchanged, ${count("rebuilt")} rebuilt, ${count("decided")} skipped (decision recorded), ${count("undone")} rebuilt pages taken back (decided meanwhile), ${count("no-case-file")} without a case file, ${count("error")} errors`);
+    console.log(`Recheck against ${snapshotFile || "no current snapshot"}: ${results.length} checked; ${count("unchanged")} unchanged, ${count("rebuilt")} rebuilt, ${count("decided")} skipped (decision recorded), ${count("no-case-file")} without a case file, ${count("error")} errors`);
     for (const item of results.filter((entry) => entry.result !== "unchanged")) {
-      const detail = item.result === "undone" ? `v${item.version} removed, v${item.restored} is latest again` : item.result === "rebuilt" ? `v${item.version} -> v${item.newVersion}: ${item.changes.map((change) => `${change.lineId} ${change.from ?? "none"} -> ${change.to ?? "none"}${change.newRows ? ` (+${change.newRows} history rows)` : ""}`).join("; ")}` : item.error || "";
+      const detail = item.result === "rebuilt" ? `v${item.version} -> v${item.newVersion}: ${item.changes.map((change) => `${change.lineId} ${change.from ?? "none"} -> ${change.to ?? "none"}${change.newRows ? ` (+${change.newRows} history rows)` : ""}`).join("; ")}` : item.error || "";
       console.log(`  ${item.result.padEnd(12)} ${item.caseId} ${detail}`);
     }
     if (count("error")) process.exitCode = 1;

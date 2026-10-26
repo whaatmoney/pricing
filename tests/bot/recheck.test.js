@@ -110,19 +110,18 @@ test("a decision recorded while the page is being rebuilt wins: no new version i
   assert.equal(versions(config, decision.caseId).length, 1);
 });
 
-test("a decision on the earlier version that lands after the rebuild (another run, merged later) takes the rebuilt version back", () => {
+test("a decision on the earlier version that lands after the rebuild (another run, merged later) deletes nothing and is shown on the card", () => {
   const { decision, config, later, build, open } = pricedWorld();
   later([routerRow({ wo: "6001WA", received: "09/25/2026", description: "P/N: ABC-100 REV. B\nWO NO: W1-120", price: 7.25 })]);
   assert.equal(recheckCases({ config, openCaseIds: open, build }).results[0].result, "rebuilt");
-  fs.writeFileSync(path.join(config.outputsDir, `CLAUDE-DECISION-${decision.caseId}-v2.html`), "<p>page</p>");
   recordDecision({ outputsDir: config.outputsDir, caseId: decision.caseId, version: 1, lineId: "L1", choice: "alternative", unitPrice: 8, note: "test price", decidedBy: "Pat Reviewer", decidedAt: "2026-09-25T14:00:00Z", now: new Date("2026-09-25T14:05:00Z") });
 
-  const healed = recheckCases({ config, openCaseIds: open, build });
-  assert.deepEqual(healed.results.map((item) => [item.result, item.version, item.restored]), [["undone", 2, 1]]);
-  assert.deepEqual(versions(config, decision.caseId), [`CLAUDE-DECISION-${decision.caseId}-v1.json`]);
-  assert.equal(fs.existsSync(path.join(config.outputsDir, `CLAUDE-DECISION-${decision.caseId}-v2.html`)), false);
-  assert.equal(boardOf(config).cases[0].version, 1);
-  assert.deepEqual(recheckCases({ config, openCaseIds: open, build }).results, [], "nothing more to do");
+  assert.deepEqual(recheckCases({ config, openCaseIds: open, build }).results, [], "nothing is rechecked or removed");
+  assert.equal(versions(config, decision.caseId).length, 2);
+  const [kase] = boardOf(config).cases;
+  assert.equal(kase.version, 2);
+  assert.deepEqual(kase.decidedEarlier.map((entry) => [entry.version, entry.lineId, entry.decidedBy]), [[1, "L1", "Pat Reviewer"]]);
+  assert.match(renderBoard(boardOf(config)), /A decision was recorded on an earlier version \(v1 L1, Pat Reviewer Sep 25, 2026\) while this page was rebuilt on new Router History\. Decisions do not carry to a new version: check the earlier page before quoting\./);
 });
 
 test("a missing or broken case file is reported and tried again next run, not stamped", () => {

@@ -119,14 +119,6 @@ function caseFiles(casesDir) {
   return { files, unreadable };
 }
 
-// Removes a version this check wrote (record, Markdown and page); the board
-// redraws the page of the version that is latest again.
-function undoVersion(outputsDir, caseId, version) {
-  for (const ext of ["json", "md", "html"]) fs.rmSync(path.join(outputsDir, `CLAUDE-DECISION-${caseId}-v${version}.${ext}`), { force: true });
-}
-
-const decisionVersions = (outputsDir, caseId) => new Set((readLifecycle(lifecyclePath(outputsDir, caseId), caseId)?.entries || []).filter((entry) => entry.type === "decision").map((entry) => entry.version));
-
 const hasDecision = (outputsDir, caseId) => (readLifecycle(lifecyclePath(outputsDir, caseId), caseId)?.entries || []).some((entry) => entry.type === "decision");
 
 const KEEP = 2000;
@@ -142,17 +134,6 @@ export function recheckCases({ config, openCaseIds, now = new Date(), build = (c
   const { files, unreadable } = caseFiles(config.casesDir);
   const results = [];
   if (!current) return { snapshotId: null, results };
-  // A decision recorded on the earlier version after this check rebuilt the
-  // page (another run, another machine, merged later) wins: the rebuilt
-  // version is taken back so the decided one is latest again.
-  const latest = new Map(latestDecisions(config.outputsDir).map((item) => [item.caseId, item.version]));
-  for (const check of checks.filter((item) => item.result === "rebuilt")) {
-    if (latest.get(check.caseId) !== check.newVersion) continue;
-    const decided = decisionVersions(config.outputsDir, check.caseId);
-    if (decided.has(check.newVersion) || ![...decided].some((version) => version < check.newVersion)) continue;
-    undoVersion(config.outputsDir, check.caseId, check.newVersion);
-    results.push({ caseId: check.caseId, version: check.newVersion, snapshotId: check.snapshotId, snapshotFile: check.snapshotFile, checkedAt: now.toISOString(), result: "undone", restored: check.version });
-  }
   for (const { caseId, version, decision } of latestDecisions(config.outputsDir)) {
     if (!openCaseIds.has(caseId)) continue;
     const priced = decision.lines[0]?.history?.database?.snapshot;
@@ -176,17 +157,14 @@ export function recheckCases({ config, openCaseIds, now = new Date(), build = (c
         continue;
       }
       // A decision recorded while this case was being built wins: never save
-      // a new version over it.
+      // a new version over it. Nothing is ever deleted to undo a rebuild: a
+      // decision that still lands on the older version (another run, merged
+      // later) is shown on the card instead (board.js decidedEarlier).
       if (hasDecision(config.outputsDir, caseId)) {
         results.push({ ...stamp, result: "decided" });
         continue;
       }
       const saved = saveDecision(config.outputsDir, fresh);
-      if (hasDecision(config.outputsDir, caseId)) {
-        undoVersion(config.outputsDir, caseId, saved.version);
-        results.push({ ...stamp, result: "decided" });
-        continue;
-      }
       results.push({ ...stamp, result: "rebuilt", newVersion: saved.version, changes });
     } catch (error) {
       results.push({ ...stamp, result: "error", error: String(error.message || error).slice(0, 300) });

@@ -490,6 +490,8 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       priceSnapshot: priceSnapshot?.fileName || null,
       checked: rechecked.checked(caseId, version),
       repriced: rechecked.repriced(caseId, version),
+      // Decisions on an older version: approvals do not carry to a new one.
+      decidedEarlier: view.earlier.filter((entry) => entry.version < version).map((entry) => ({ version: entry.version, lineId: entry.lineId, decidedBy: entry.decidedBy, decidedAt: entry.decidedAt })),
       ordersSince: ordersSince(decision),
       dueDate: monitor?.explicit_due_date || null,
       lines: decision.lines.map((line) => ({
@@ -996,6 +998,7 @@ function caseCard(kase, now) {
     kase.open && kase.staleSnapshot && !kase.checked ? `Priced on ${esc(kase.priceSnapshot)}; newer Router History is in. Ask to rebuild.` : "",
     kase.reopened ? `Price question open after the quote went out (per monitor status): “${esc(kase.monitor?.status || "")}”` : "",
     kase.open && kase.ordersSince?.length ? ordersNote(kase.ordersSince) : "",
+    kase.open && kase.repriced && kase.decidedEarlier?.length ? `A decision was recorded on an earlier version (${esc([...new Set(kase.decidedEarlier.map((entry) => `v${entry.version} ${entry.lineId}, ${entry.decidedBy || "someone"} ${day(entry.decidedAt)}`))].join("; "))}) while this page was rebuilt on new Router History. Decisions do not carry to a new version: check the earlier page before quoting.` : "",
   ].filter(Boolean);
   const checks = [
     kase.open && kase.staleSnapshot && kase.checked ? `Checked against ${esc(kase.checked.snapshotFile || "the newest Router History")} on ${day(kase.checked.checkedAt)}: no change to the price or its history.` : "",
