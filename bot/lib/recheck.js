@@ -160,6 +160,13 @@ export function recheckCases({ config, openCaseIds, now = new Date(), build = (c
     }
     try {
       const fresh = build(casePath);
+      // An export imported while this run was going would price the case on a
+      // snapshot this check does not name: leave it for the next run.
+      const builtOn = fresh.lines[0]?.history?.database?.snapshot?.id;
+      if (builtOn && builtOn !== current) {
+        record({ ...stamp, result: "error", error: "a newer Router History export was imported during the check; left for the next run" });
+        continue;
+      }
       const changes = compareDecisions(decision, fresh);
       if (!changes.length) {
         record({ ...stamp, result: "unchanged" });

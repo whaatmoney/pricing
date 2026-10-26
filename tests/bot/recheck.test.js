@@ -152,6 +152,20 @@ test("recheck only ever creates the next version: an existing or newer version f
   assert.equal(versions(config, decision.caseId).length, 2);
 });
 
+test("a page built on an export imported during the check is left for the next run, not credited to the wrong export", () => {
+  const { config, later, build, open } = pricedWorld();
+  later([]);
+  const stale = (casePath) => {
+    const fresh = build(casePath);
+    for (const line of fresh.lines) line.history.database.snapshot = { ...line.history.database.snapshot, id: "imported-meanwhile" };
+    return fresh;
+  };
+  const [result] = recheckCases({ config, openCaseIds: open, build: stale }).results;
+  assert.equal(result.result, "error");
+  assert.match(result.error, /imported during the check/);
+  assert.deepEqual(readRecheck(config.recheckFile), []);
+});
+
 test("a missing or broken case file is reported and tried again next run, not stamped", () => {
   const { world, config, later, build, open } = pricedWorld();
   later([]);

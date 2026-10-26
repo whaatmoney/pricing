@@ -46,7 +46,9 @@ export function lastDueRefresh(schedule, nowMs) {
   const format = new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric" });
   const parts = (ms) => Object.fromEntries(format.formatToParts(new Date(ms)).map((part) => [part.type, Number(part.value)]));
   // A wall-clock time in the zone as a UTC instant; the second pass settles
-  // a time on the far side of a daylight-saving change.
+  // a time on the far side of a daylight-saving change. A time inside the
+  // repeated hour when daylight saving ends maps to its first occurrence; the
+  // shop's weekday daytime schedule never falls in that hour.
   const instant = (year, month, date, hour, minute) => {
     const wanted = Date.UTC(year, month, date, hour, minute);
     let guess = wanted;
