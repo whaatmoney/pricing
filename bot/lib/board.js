@@ -1115,8 +1115,9 @@ function section(id, title, count, lede, body) {
 }
 
 // The scripts the board and the Sent quotes page share: the missed-refresh
-// banner, opened marks, done marks and the sort order.
-function pageScript(board) {
+// banner, opened marks, done marks and the sort order. Done cards sink to the
+// bottom of their group on the board only; the Sent quotes page keeps its order.
+function pageScript(board, { sinkDone = true } = {}) {
   return `// Checked when the page is opened, so a board nothing has rebuilt still says so.
 (() => {
   const generated = Date.parse(${JSON.stringify(board.generatedAt)});
@@ -1163,7 +1164,14 @@ ${SCRIPT}
   const read = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key) || "null") ?? fallback; } catch { return fallback; } };
   const write = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
   const DONE = "qpc-board-notes", SORT = "qpc-board-sort";
-  const marks = read(DONE, {});
+  let marks = read(DONE, {});
+  // Both pages keep marks under one key: read it again before each change, so
+  // a page left open does not undo or erase what the other page saved.
+  const mark = (id, done) => {
+    marks = read(DONE, {});
+    if (done) marks[id] = { done: true, at: new Date().toISOString() }; else delete marks[id];
+    write(DONE, marks);
+  };
   let sort = read(SORT, "urgent");
   const cards = [...document.querySelectorAll(".card[data-case]")];
   cards.forEach((card, index) => { card.dataset.order = index; });
@@ -1180,7 +1188,7 @@ ${SCRIPT}
     const before = new Map(cards.map((card) => [card, card.getBoundingClientRect().top]));
     for (const list of document.querySelectorAll(".cards")) {
       const items = [...list.children].filter((el) => el.matches(".card"));
-      items.sort((a, b) => a.classList.contains("done") - b.classList.contains("done") || (order[sort] || order.urgent)(a, b) || a.dataset.order - b.dataset.order);
+      items.sort((a, b) => (${sinkDone} ? a.classList.contains("done") - b.classList.contains("done") : 0) || (order[sort] || order.urgent)(a, b) || a.dataset.order - b.dataset.order);
       items.forEach((el) => list.appendChild(el));
     }
     if (animate && !still) for (const card of cards) {
@@ -1193,8 +1201,7 @@ ${SCRIPT}
     const id = card.dataset.case, box = card.querySelector(".done-box");
     const show = () => { card.classList.toggle("done", Boolean(marks[id]?.done)); box.checked = Boolean(marks[id]?.done); };
     box.addEventListener("change", () => {
-      if (box.checked) marks[id] = { done: true, at: new Date().toISOString() }; else delete marks[id];
-      write(DONE, marks); show(); arrange();
+      mark(id, box.checked); show(); arrange();
       window.qpcToast?.(box.checked ? "Marked " + (card.querySelector(".card-link")?.textContent || "RFQ") + " done" : "Moved back to waiting");
     });
     show();
@@ -1211,8 +1218,7 @@ ${SCRIPT}
       if (box.checked) row.parentElement.appendChild(row);
     };
     box.addEventListener("change", () => {
-      if (box.checked) marks[id] = { done: true, at: new Date().toISOString() }; else delete marks[id];
-      write(DONE, marks); show();
+      mark(id, box.checked); show();
       window.qpcToast?.(box.checked ? "Marked done" : "Moved back");
     });
     show();
@@ -1402,7 +1408,7 @@ ${BOARD_STYLE}
 </main>
 <div class="toast" role="status" aria-live="polite">${ICON.check}<span>Copied to clipboard</span></div>
 <script>
-${pageScript(board)}
+${pageScript(board, { sinkDone: false })}
 </script>
 </body>
 </html>`;

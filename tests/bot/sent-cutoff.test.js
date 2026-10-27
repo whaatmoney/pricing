@@ -207,3 +207,14 @@ test("a monitor event that says the quote went out in any clause counts, and off
   const order = (html) => [...html.matchAll(/id="case-([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(order(renderSentPage({ ...built, cases: [card("UTC-EARLIER", "2026-10-27T16:00:00.000Z"), card("PACIFIC-LATER", "2026-10-27T09:30:00-07:00")] })), ["PACIFIC-LATER", "UTC-EARLIER"]);
 });
+
+test("Done marks: the Sent quotes page keeps its order, and each page re-reads saved marks before changing them", () => {
+  const { inputs } = world([]);
+  const built = buildBoard({ ...inputs, now: new Date("2026-10-28T20:00:00Z") });
+  assert.match(renderBoard(built), /items\.sort\(\(a, b\) => \(true \? a\.classList\.contains\("done"\)/, "the board sinks Done cards");
+  assert.match(renderSentPage(built), /items\.sort\(\(a, b\) => \(false \? a\.classList\.contains\("done"\)/, "the Sent quotes page does not");
+  for (const html of [renderBoard(built), renderSentPage(built)]) {
+    assert.match(html, /const mark = \(id, done\) => \{\n\s+marks = read\(DONE, \{\}\);/);
+    assert.doesNotMatch(html, /write\(DONE, marks\); show\(\)/, "no write from a stale copy");
+  }
+});
