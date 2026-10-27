@@ -21,6 +21,13 @@ import { poTotal, priceSource } from "./review-card.js";
 // and is never written.
 
 export const BOARD_FILE = "CLAUDE-DECISIONS-OPEN.html";
+// Every sent quote, newest first, written next to the board.
+export const SENT_FILE = "CLAUDE-DECISIONS-SENT.html";
+// A sent quote stays on the board this many business days after it went out,
+// then only on the Sent quotes page (pricing owner, 2026-10-26: "2 business
+// days, a Sent quotes page that keeps everything"). config.sentOnBoardDays
+// overrides it.
+export const SENT_ON_BOARD_DAYS = 2;
 // Matches the monitor's own stale threshold. Past this, mail data on the
 // board is marked STALE whatever the monitor's file says, because a stopped
 // monitor never updates its own stale flag.
@@ -433,7 +440,7 @@ export function ordersSince(decision) {
   return [...orders.values()].sort((a, b) => a.date.localeCompare(b.date) || String(a.wo).localeCompare(String(b.wo)));
 }
 
-export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, triagePath = null, refreshSchedule = null, monitorRetiredAt = null, recheckPath = null, now = new Date() }) {
+export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, triagePath = null, refreshSchedule = null, monitorRetiredAt = null, recheckPath = null, sentOnBoardDays = null, now = new Date() }) {
   if (org) useOrg(org);
   const mailCache = readMailCache(mailCachePath);
   const ownerOf = (href) => privateOwner(href, mailboxIdPrefixes, sharedMailbox);
@@ -609,7 +616,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
   const history = [...tracker.history.map((item) => ({ ...item, source: "log" })), ...cases.flatMap((kase) => kase.events)]
     .filter((item) => item.at)
     .sort((a, b) => b.at.localeCompare(a.at));
-  return { generatedAt: now.toISOString(), refreshSchedule, cases, monitor, monitorRetiredAt, lastSync, history, mailFound, mailPlacements: placements, triage: readTriage(triagePath), claudeMail: claudeMailView(claudeMail, now), chasing };
+  return { generatedAt: now.toISOString(), refreshSchedule, sentOnBoardDays: sentOnBoardDays ?? SENT_ON_BOARD_DAYS, cases, monitor, monitorRetiredAt, lastSync, history, mailFound, mailPlacements: placements, triage: readTriage(triagePath), claudeMail: claudeMailView(claudeMail, now), chasing };
 }
 
 // What the board says about Claude's own mail check: how far it reached,
@@ -731,6 +738,18 @@ export function caseGroup(kase) {
   const priced = kase.lines.every((line) => line.suggested != null || (line.decided && line.decided.choice !== "correction"));
   return priced ? "ready" : "facts";
 }
+
+const stepAt = (kase, key) => kase.progress?.find((step) => step.key === key)?.at || null;
+// A sent quote is shown on the board until it is more than `days` business
+// days old (sent Monday: on the board through Wednesday). One with no sent
+// date stays: nothing leaves the board on a guess.
+export function sentOnBoard(kase, now, days = SENT_ON_BOARD_DAYS) {
+  const at = stepAt(kase, "sent");
+  return !at || businessDaysSince(at, now) <= days;
+}
+// Newest sent first; decided-not-sent oldest decision first.
+const bySentNewest = (a, b) => (stepAt(b, "sent") || "9999").localeCompare(stepAt(a, "sent") || "9999");
+const byDecidedOldest = (a, b) => (stepAt(a, "decided") || "").localeCompare(stepAt(b, "decided") || "") || (a.askedAt || "").localeCompare(b.askedAt || "");
 
 const esc = (value) => escapeHtml(value);
 
@@ -1012,7 +1031,7 @@ function caseCard(kase, now) {
       <div class="card-title">
         <a class="card-link" href="${esc(kase.page)}">${esc(kase.customer)}</a>
         <p class="ref">${esc(kase.reference || kase.caseId)}</p>
-        <p class="marks">${open ? progressHtml(kase.progress, { compact: true }) : ""}${kase.askedAt ? `<span class="chip muted">Asked ${day(kase.askedAt)}</span>` : ""}${valueChip(kase.value)}${dueChip(kase, now)}${chaseChip(kase.followup, now)}${mailChip(kase, now)}${kase.open && kase.ordersSince?.length ? '<span class="chip warn" title="A work order for this part came in after the RFQ">Work order since asked</span>' : ""}<span class="chip ok done-mark">${ICON.check}Done</span><span class="chip muted opened-mark">${ICON.check}Opened</span></p>
+        <p class="marks">${open ? progressHtml(kase.progress, { compact: true }) : ""}${kase.askedAt ? `<span class="chip muted">Asked ${day(kase.askedAt)}</span>` : ""}${group === "decided" && stepAt(kase, "decided") ? `<span class="chip muted late">Decided ${day(stepAt(kase, "decided"))} · not seen sent</span>` : ""}${valueChip(kase.value)}${dueChip(kase, now)}${chaseChip(kase.followup, now)}${mailChip(kase, now)}${kase.open && kase.ordersSince?.length ? '<span class="chip warn" title="A work order for this part came in after the RFQ">Work order since asked</span>' : ""}<span class="chip ok done-mark">${ICON.check}Done</span><span class="chip muted opened-mark">${ICON.check}Opened</span></p>
       </div>
       ${headline(kase, group)}
     </div>
@@ -1069,137 +1088,10 @@ function section(id, title, count, lede, body) {
   </section>`;
 }
 
-export function renderBoard(board, { badge = null } = {}) {
-  const now = new Date(board.generatedAt);
-  const grouped = { ready: [], facts: [], decided: [], sent: [] };
-  for (const kase of board.cases) grouped[caseGroup(kase)].push(kase);
-  for (const list of Object.values(grouped)) list.sort(byUrgency);
-  const closed = [...grouped.decided, ...grouped.sent];
-  const feedback = board.cases.flatMap((kase) => kase.feedback);
-  const monitor = board.monitor;
-  const sync = board.lastSync;
-  const rejected = (sync?.imports || []).filter((item) => item.outcome !== "accepted" && item.outcome !== "replay-noop" && item.outcome !== "archived-older");
-  const claude = board.claudeMail;
-  const alerts = [
-    ...(monitor?.stale ? [`Codex mail monitor data is STALE: its last successful check was ${monitor.cutoff ? when(monitor.cutoff) : "never recorded"}. The "No page yet" and "Quote still owed" lists and its quote-sent marks may be out of date.${claude?.fresh ? ` Claude's mail check is current (${when(claude.cutoff)}) and still adds what it finds.` : ""}`] : []),
-    ...(claude?.stale ? [`Claude's mail check last reached ${claude.cutoff ? when(claude.cutoff) : "no time recorded"}: its hourly runs may have stopped. Check the qpc-claude-mail-check task's runs.`] : []),
-    ...(claude?.run && claude.failed.length ? [`Claude's last mail check (${when(claude.run.finishedAt || claude.run.runStart)}) could not search ${claude.failed.join(", ")}; its cutoff was held, so the next run searches that time again.`] : []),
-    ...rejected.map((item) => item.outcome === "not-downloaded"
-      ? `Router History export ${item.fileName} is in OneDrive but not downloaded to this Mac, so the background sync can't read it. Open the ROUTER HISTORY folder in Finder (or set it to "Always Keep on This Device"), or ask Claude to import it. Prices still use the last good snapshot.`
-      : `Router History export ${item.fileName} was ${item.outcome}${item.failures.length ? ` (${item.failures.join(", ")})` : ""}. Prices still use the last good snapshot.`),
-    ...(sync?.errors || []).map((error) => `Sync error: ${error}`),
-  ];
-  const openCount = grouped.ready.length + grouped.facts.length;
-  const pill = alerts.length ? ["alert", "Needs attention"] : openCount ? ["warn", `${openCount} waiting on you`] : ["ok", "Nothing waiting"];
-  const unpricedAll = monitor ? monitor.withoutPage : [];
-  const mailFound = board.mailFound || [];
-  const mailChases = mailFound.filter((item) => item.kind === "followup" || item.kind === "question");
-  const mailAll = mailFound.filter((item) => !mailChases.includes(item));
-  // Items a session checked and set aside stay listed, folded, with the reason;
-  // new activity after the check brings one back.
-  const checked = (key, lastAt) => { const entry = (board.triage || {})[key]; return entry && (!lastAt || String(lastAt) <= String(entry.at)) ? entry : null; };
-  const setAside = [];
-  const keep = (item, key, lastAt, customer, reference) => { const entry = checked(key, lastAt); if (!entry) return true; setAside.push({ customer, reference, lastAt, reason: entry.reason, group: triageGroup(entry.reason) }); return false; };
-  const mailNew = mailAll.filter((item) => keep(item, `mail|${item.customerDomain}|${String(item.subject).replace(/^(re|fw|fwd):\s*/gi, "")}`, item.at, item.customerDomain, item.subject));
-  const unpriced = unpricedAll.filter((item) => keep(item, `monitor|${item.customer}|${item.reference}`, item.lastActivityAt, item.customer, item.reference));
-  const owed = (monitor?.owed || []).filter((item) => keep(item, `monitor|${item.customer}|${item.reference}`, item.lastActivityAt, item.customer, item.reference));
-  const reopenedQuotes = (monitor?.openAfterQuote || []).filter((item) => keep(item, `monitor|${item.customer}|${item.reference}`, item.lastActivityAt, item.customer, item.reference));
-  // Due today or past due, from every source: cards, mail-check rows, and
-  // the monitor's lists without a page.
-  const dueItems = [
-    ...[...grouped.ready, ...grouped.facts].filter((kase) => kase.dueDate).map((kase) => ({ customer: kase.customer, reference: kase.reference || kase.caseId, dueDate: kase.dueDate, where: caseGroup(kase) === "ready" ? "Ready for your yes" : "Needs facts first", href: `#case-${kase.caseId}` })),
-    ...mailFound.filter(ownDue).map((item) => ({ customer: item.monitor?.customer || item.customerDomain, reference: item.monitor?.reference || item.subject, dueDate: ownDue(item), where: `No page yet · ${(MAIL_CHIP[item.kind] || ["", item.kind])[1]} (Claude's mail check)`, href: item.link })),
-    ...unpriced.filter((item) => item.dueDate && item.pricing).map((item) => ({ customer: item.customer, reference: item.reference, dueDate: item.dueDate, where: "No page yet (Codex mail monitor)", href: item.rfqLink })),
-    ...owed.filter((item) => item.dueDate).map((item) => ({ customer: item.customer, reference: item.reference, dueDate: item.dueDate, where: "Quote still owed (Codex mail monitor)", href: item.rfqLink })),
-    ...reopenedQuotes.filter((item) => item.dueDate).map((item) => ({ customer: item.customer, reference: item.reference, dueDate: item.dueDate, where: "Price question after a quote (Codex mail monitor)", href: item.rfqLink })),
-  ].filter((item) => dueDays(item.dueDate, now) <= 0).sort((a, b) => dueDays(a.dueDate, now) - dueDays(b.dueDate, now));
-  const pastDue = dueItems.filter((item) => dueDays(item.dueDate, now) < 0).length;
-  const dueToday = dueItems.length - pastDue;
-  const chasingOpen = [...grouped.ready, ...grouped.facts].filter((kase) => kase.followup || mailChip(kase, now));
-  const chasingNoPage = board.chasing?.unmatched || [];
-  // One count of customers chasing, the same in the header and the tab: each
-  // card once, each front-desk thread once, each emailed chase once.
-  const chasingCount = new Set([...chasingOpen.map((kase) => `case:${kase.caseId}`), ...chasingNoPage.map((thread) => `chat:${thread.id}`), ...mailChases.map((item) => `mail:${item.customerDomain}|${subjectKey(item.subject)}`)]).size;
-  const chasingNoPageCount = chasingNoPage.length + mailChases.length;
-  const withOrders = [...grouped.ready, ...grouped.facts].filter((kase) => kase.ordersSince?.length);
-  const ordersCount = withOrders.length;
-  const ordersTarget = withOrders[0];
-  const chaseTarget = chasingOpen.find((kase) => kase.followup?.urgent) || chasingOpen[0];
-  const summary = [
-    grouped.ready.length ? `<a class="n-ready" href="#ready"><b>${grouped.ready.length}</b> ready for your yes</a>` : "",
-    grouped.facts.length ? `<a class="n-facts" href="#facts"><b>${grouped.facts.length}</b> need facts first</a>` : "",
-    pastDue ? `<a class="due-now" href="#due">${pastDue} past due</a>` : "",
-    dueToday ? `<a class="due-now" href="#due">${dueToday} due today</a>` : "",
-    ordersCount ? `<a class="orders-now" href="#case-${esc(ordersTarget.caseId)}">${ordersCount} with a work order since asked</a>` : "",
-    chasingCount ? `<a class="chasing-now" href="${chasingNoPageCount ? "#chasing" : `#case-${esc(chaseTarget.caseId)}`}">${chasingCount} customer${chasingCount === 1 ? "" : "s"} chasing</a>` : "",
-  ].filter(Boolean).join('<span class="sep">·</span>') || "Nothing waiting on you.";
-  const tabs = [["due", "Due now", dueItems.length], ["ready", "Ready", grouped.ready.length], ["facts", "Needs facts", grouped.facts.length], ["chasing", "Chasing", chasingNoPageCount], ["closed", "Decided & sent", closed.length], ["unpriced", "No page yet", unpriced.length + mailNew.length], ["owed", "Quote owed", owed.length], ["reopened", "Price question", reopenedQuotes.length], ["log", "Log", null]]
-    .filter(([id, , count]) => count !== 0 && (id !== "unpriced" || monitor || mailNew.length) && (id !== "owed" || owed.length) && (id !== "reopened" || reopenedQuotes.length) && (id !== "due" || dueItems.length));
-  const recentPlacements = (board.mailPlacements || []).filter((item) => item.place !== "old");
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RFQ Pricing Board</title>
-${badge ? `<link rel="icon" type="image/svg+xml" href="${badge}">` : ""}
-<style>
-${STYLE}
-${BOARD_STYLE}
-</style>
-</head>
-<body>
-<header class="topbar">
-  <div class="topbar-inner">
-    <div class="who">${badge ? `<img class="badge" src="${badge}" alt="" width="24" height="24">` : ""}<span class="customer">RFQ pricing</span><span class="sep">·</span><span>QPC</span></div>
-    <span class="pill ${pill[0]}">${esc(pill[1])}</span>
-  </div>
-  <nav class="tabs" aria-label="Sections">${tabs.map(([id, label, count]) => `<a href="#${id}">${esc(label)}${count ? ` <small>${count}</small>` : ""}</a>`).join("")}</nav>
-</header>
-<main>
-  <div class="intro">
-    <div id="board-stale" class="status alert" hidden></div>
-    ${alerts.map((alert) => `<div class="status alert">${esc(alert)}</div>`).join("")}
-    <p class="eyebrow">QPC · RFQ pricing</p>
-    <h1 class="summary">${summary}</h1>
-    ${claudeRunLine(claude)}
-    <div class="sortbar" role="group" aria-label="Sort the cards"><span>Sort</span><button type="button" data-sort="urgent" aria-pressed="true">Most urgent</button><button type="button" data-sort="newest" aria-pressed="false">Newest first</button><button type="button" data-sort="oldest" aria-pressed="false">Oldest first</button><button type="button" data-sort="confident" aria-pressed="false">Most confident</button><button type="button" data-sort="unsure" aria-pressed="false">Least confident</button><button type="button" data-sort="value" aria-pressed="false">Highest value</button></div>
-  </div>
-
-  ${dueItems.length ? section("due", "Due now", dueItems.length, "Due today or past due, with a page or without one. Each should have a quote or an answer before the day ends.", dueStrip(dueItems, now)) : ""}
-
-  ${grouped.ready.length ? section("ready", "Ready for your yes", grouped.ready.length, "Each has a suggested price. Click a card to open its price page, then approve it or give yours.", `<div class="cards">${grouped.ready.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
-
-  ${grouped.facts.length ? section("facts", "Needs facts first", grouped.facts.length, "No price until the missing fact is in. Open the attachments or ask the customer, then post the size in the QUOTE PREP TRACKER chat as <b>FACTS customer / RFQ / part number: L x W x H in</b> (copy the line on each card). To get the size, open the print in your browser and ask Gemini: <i>calculate the envelope dimensions (L x W x H, ID in inches)</i>. Claude reprices the page within the hour.", `<div class="cards">${grouped.facts.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
-
-  ${openCount ? "" : `<p class="empty">${ICON.check}<span>Nothing waiting. Every priced RFQ has a decision.</span></p>`}
-
-  ${chasingNoPageCount ? section("chasing", "Customers chasing, no price page", chasingNoPageCount, "Follow-ups from the last two weeks with no price page: logged by the front desk in the quote-prep chat, or found in customer email by Claude's mail check. Ask Claude to price any of them.", `${chasingNoPage.length ? chasingTable(chasingNoPage, now) : ""}${mailRowsTable(mailChases, now, "From customer email (Claude's mail check)")}`) : ""}
-
-  ${closed.length ? section("closed", "Decided & sent", closed.length, "", `<details class="fold"><summary>${ICON.chevron}<h3>Show ${closed.length}</h3></summary><div class="cards">${closed.map((kase) => caseCard(kase, now)).join("")}</div></details>`) : ""}
-
-  ${(monitor && unpriced.length) || mailNew.length || setAside.length ? section("unpriced", "No price page yet", unpriced.length + mailNew.length, unpriced.length + mailNew.length ? "Open in the mail with no page here; ask Claude to price any of them." : `Nothing here needs pricing. ${setAside.length} item${setAside.length === 1 ? " was" : "s were"} checked and ${setAside.length === 1 ? "is" : "are"} not a price request (below).`, `${mailRowsTable(mailNew, now, "Found by Claude's mail check, not listed elsewhere here")}${monitorTable(unpriced.filter((item) => item.pricing), "Status mentions a quote, RFQ or inquiry", now)}${monitorTable(unpriced.filter((item) => !item.pricing), "Status doesn't say (may be a follow-up or an RFQ)", now)}${notPricedTable(setAside, now)}`) : ""}
-
-  ${owed.length ? section("owed", "Acknowledged, quote still owed", owed.length, "The Codex mail monitor saw each of these customers get a reply but no price. Oldest first. Ask Claude to price any of them, or tell it which are not pricing work.", monitorTable(owed, `Show ${owed.length}`, now)) : ""}
-
-  ${reopenedQuotes.length ? section("reopened", "Price question after a quote", reopenedQuotes.length, "A quote went out, then the Codex mail monitor saw the customer raise a quantity or price question. No price page or mail row shows these. Oldest first.", monitorTable(reopenedQuotes, `Show ${reopenedQuotes.length}`, now)) : ""}
-
-  <section id="log" class="group" aria-labelledby="log-title">
-    <div class="group-head"><h2 id="log-title">Log</h2></div>
-    <details class="fold" id="feedback"><summary>${ICON.chevron}<h3>Method feedback <small>${feedback.length}</small></h3></summary>${feedback.length ? feedbackList(feedback) : `<p class="muted">No method reviews recorded yet. Add <code>; method ok</code> or <code>; method wrong why: …</code> to an answer.</p>`}</details>
-    ${recentPlacements.length ? `<details class="fold" id="mail-placement"><summary>${ICON.chevron}<h3>Where each checked email landed <small>${recentPlacements.length}</small></h3></summary>${placementTable(recentPlacements)}</details>` : ""}
-    ${board.history.length ? `<details class="fold" id="history"><summary>${ICON.chevron}<h3 id="history-title">History <small>${board.history.length}</small></h3></summary>${historyTable(board.history)}</details>` : ""}
-  </section>
-
-  <footer class="fresh">${badge ? `<img class="badge" src="${badge}" alt="" width="20" height="20">` : ""}<span>
-    ${monitor ? `<span class="${monitor.stale ? "stale" : ""}">Mail checked ${when(monitor.cutoff)} (Codex mail monitor)</span>${claude?.cutoff ? ` · <span class="${claude.stale ? "stale" : ""}">${when(claude.cutoff)} (Claude mail check)</span>` : ""}${monitor.report ? ` · <a href="${esc(monitor.report)}">latest check</a>` : ""} · ` : ""}${sync ? `synced ${when(sync.at)}${sync.imports.length ? ` (imported ${sync.imports.map((item) => `${esc(item.fileName)} ${esc(item.outcome)}`).join(", ")})` : ""}` : "no sync has run yet"}
-${board.chasing ? ` · front desk chat read ${when(board.chasing.readAt)}` : ""}${board.codeVersion ? ` · board code ${esc(board.codeVersion)}` : ""}
-    <br>Private working file · keep inside QPC</span>
-  </footer>
-</main>
-<div class="toast" role="status" aria-live="polite">${ICON.check}<span>Copied to clipboard</span></div>
-<script>
-// Checked when the page is opened, so a board nothing has rebuilt still says so.
+// The scripts the board and the Sent quotes page share: the missed-refresh
+// banner, opened marks, done marks and the sort order.
+function pageScript(board) {
+  return `// Checked when the page is opened, so a board nothing has rebuilt still says so.
 (() => {
   const generated = Date.parse(${JSON.stringify(board.generatedAt)});
   const schedule = ${JSON.stringify(board.refreshSchedule || null)};
@@ -1300,6 +1192,191 @@ ${SCRIPT}
     show();
   }
 })();
+`;
+}
+
+export function renderBoard(board, { badge = null } = {}) {
+  const now = new Date(board.generatedAt);
+  const grouped = { ready: [], facts: [], decided: [], sent: [] };
+  for (const kase of board.cases) grouped[caseGroup(kase)].push(kase);
+  for (const list of [grouped.ready, grouped.facts]) list.sort(byUrgency);
+  grouped.decided.sort(byDecidedOldest);
+  grouped.sent.sort(bySentNewest);
+  const sentDays = board.sentOnBoardDays ?? SENT_ON_BOARD_DAYS;
+  const justSent = grouped.sent.filter((kase) => sentOnBoard(kase, now, sentDays));
+  const feedback = board.cases.flatMap((kase) => kase.feedback);
+  const monitor = board.monitor;
+  const sync = board.lastSync;
+  const rejected = (sync?.imports || []).filter((item) => item.outcome !== "accepted" && item.outcome !== "replay-noop" && item.outcome !== "archived-older");
+  const claude = board.claudeMail;
+  const alerts = [
+    ...(monitor?.stale ? [`Codex mail monitor data is STALE: its last successful check was ${monitor.cutoff ? when(monitor.cutoff) : "never recorded"}. The "No page yet" and "Quote still owed" lists and its quote-sent marks may be out of date.${claude?.fresh ? ` Claude's mail check is current (${when(claude.cutoff)}) and still adds what it finds.` : ""}`] : []),
+    ...(claude?.stale ? [`Claude's mail check last reached ${claude.cutoff ? when(claude.cutoff) : "no time recorded"}: its hourly runs may have stopped. Check the qpc-claude-mail-check task's runs.`] : []),
+    ...(claude?.run && claude.failed.length ? [`Claude's last mail check (${when(claude.run.finishedAt || claude.run.runStart)}) could not search ${claude.failed.join(", ")}; its cutoff was held, so the next run searches that time again.`] : []),
+    ...rejected.map((item) => item.outcome === "not-downloaded"
+      ? `Router History export ${item.fileName} is in OneDrive but not downloaded to this Mac, so the background sync can't read it. Open the ROUTER HISTORY folder in Finder (or set it to "Always Keep on This Device"), or ask Claude to import it. Prices still use the last good snapshot.`
+      : `Router History export ${item.fileName} was ${item.outcome}${item.failures.length ? ` (${item.failures.join(", ")})` : ""}. Prices still use the last good snapshot.`),
+    ...(sync?.errors || []).map((error) => `Sync error: ${error}`),
+  ];
+  const openCount = grouped.ready.length + grouped.facts.length;
+  const pill = alerts.length ? ["alert", "Needs attention"] : openCount ? ["warn", `${openCount} waiting on you`] : ["ok", "Nothing waiting"];
+  const unpricedAll = monitor ? monitor.withoutPage : [];
+  const mailFound = board.mailFound || [];
+  const mailChases = mailFound.filter((item) => item.kind === "followup" || item.kind === "question");
+  const mailAll = mailFound.filter((item) => !mailChases.includes(item));
+  // Items a session checked and set aside stay listed, folded, with the reason;
+  // new activity after the check brings one back.
+  const checked = (key, lastAt) => { const entry = (board.triage || {})[key]; return entry && (!lastAt || String(lastAt) <= String(entry.at)) ? entry : null; };
+  const setAside = [];
+  const keep = (item, key, lastAt, customer, reference) => { const entry = checked(key, lastAt); if (!entry) return true; setAside.push({ customer, reference, lastAt, reason: entry.reason, group: triageGroup(entry.reason) }); return false; };
+  const mailNew = mailAll.filter((item) => keep(item, `mail|${item.customerDomain}|${String(item.subject).replace(/^(re|fw|fwd):\s*/gi, "")}`, item.at, item.customerDomain, item.subject));
+  const unpriced = unpricedAll.filter((item) => keep(item, `monitor|${item.customer}|${item.reference}`, item.lastActivityAt, item.customer, item.reference));
+  const owed = (monitor?.owed || []).filter((item) => keep(item, `monitor|${item.customer}|${item.reference}`, item.lastActivityAt, item.customer, item.reference));
+  const reopenedQuotes = (monitor?.openAfterQuote || []).filter((item) => keep(item, `monitor|${item.customer}|${item.reference}`, item.lastActivityAt, item.customer, item.reference));
+  // Due today or past due, from every source: cards, mail-check rows, and
+  // the monitor's lists without a page.
+  const dueItems = [
+    ...[...grouped.ready, ...grouped.facts].filter((kase) => kase.dueDate).map((kase) => ({ customer: kase.customer, reference: kase.reference || kase.caseId, dueDate: kase.dueDate, where: caseGroup(kase) === "ready" ? "Ready for your yes" : "Needs facts first", href: `#case-${kase.caseId}` })),
+    ...mailFound.filter(ownDue).map((item) => ({ customer: item.monitor?.customer || item.customerDomain, reference: item.monitor?.reference || item.subject, dueDate: ownDue(item), where: `No page yet · ${(MAIL_CHIP[item.kind] || ["", item.kind])[1]} (Claude's mail check)`, href: item.link })),
+    ...unpriced.filter((item) => item.dueDate && item.pricing).map((item) => ({ customer: item.customer, reference: item.reference, dueDate: item.dueDate, where: "No page yet (Codex mail monitor)", href: item.rfqLink })),
+    ...owed.filter((item) => item.dueDate).map((item) => ({ customer: item.customer, reference: item.reference, dueDate: item.dueDate, where: "Quote still owed (Codex mail monitor)", href: item.rfqLink })),
+    ...reopenedQuotes.filter((item) => item.dueDate).map((item) => ({ customer: item.customer, reference: item.reference, dueDate: item.dueDate, where: "Price question after a quote (Codex mail monitor)", href: item.rfqLink })),
+  ].filter((item) => dueDays(item.dueDate, now) <= 0).sort((a, b) => dueDays(a.dueDate, now) - dueDays(b.dueDate, now));
+  const pastDue = dueItems.filter((item) => dueDays(item.dueDate, now) < 0).length;
+  const dueToday = dueItems.length - pastDue;
+  const chasingOpen = [...grouped.ready, ...grouped.facts].filter((kase) => kase.followup || mailChip(kase, now));
+  const chasingNoPage = board.chasing?.unmatched || [];
+  // One count of customers chasing, the same in the header and the tab: each
+  // card once, each front-desk thread once, each emailed chase once.
+  const chasingCount = new Set([...chasingOpen.map((kase) => `case:${kase.caseId}`), ...chasingNoPage.map((thread) => `chat:${thread.id}`), ...mailChases.map((item) => `mail:${item.customerDomain}|${subjectKey(item.subject)}`)]).size;
+  const chasingNoPageCount = chasingNoPage.length + mailChases.length;
+  const withOrders = [...grouped.ready, ...grouped.facts].filter((kase) => kase.ordersSince?.length);
+  const ordersCount = withOrders.length;
+  const ordersTarget = withOrders[0];
+  const chaseTarget = chasingOpen.find((kase) => kase.followup?.urgent) || chasingOpen[0];
+  const summary = [
+    grouped.ready.length ? `<a class="n-ready" href="#ready"><b>${grouped.ready.length}</b> ready for your yes</a>` : "",
+    grouped.facts.length ? `<a class="n-facts" href="#facts"><b>${grouped.facts.length}</b> need facts first</a>` : "",
+    pastDue ? `<a class="due-now" href="#due">${pastDue} past due</a>` : "",
+    dueToday ? `<a class="due-now" href="#due">${dueToday} due today</a>` : "",
+    grouped.decided.length ? `<a class="orders-now" href="#unsent">${grouped.decided.length} decided, not seen sent</a>` : "",
+    ordersCount ? `<a class="orders-now" href="#case-${esc(ordersTarget.caseId)}">${ordersCount} with a work order since asked</a>` : "",
+    chasingCount ? `<a class="chasing-now" href="${chasingNoPageCount ? "#chasing" : `#case-${esc(chaseTarget.caseId)}`}">${chasingCount} customer${chasingCount === 1 ? "" : "s"} chasing</a>` : "",
+  ].filter(Boolean).join('<span class="sep">·</span>') || "Nothing waiting on you.";
+  const tabs = [["due", "Due now", dueItems.length], ["ready", "Ready", grouped.ready.length], ["facts", "Needs facts", grouped.facts.length], ["chasing", "Chasing", chasingNoPageCount], ["unsent", "Not seen sent", grouped.decided.length], ["sent", "Just sent", justSent.length], ["unpriced", "No page yet", unpriced.length + mailNew.length], ["owed", "Quote owed", owed.length], ["reopened", "Price question", reopenedQuotes.length], ["log", "Log", null]]
+    .filter(([id, , count]) => count !== 0 && (id !== "unpriced" || monitor || mailNew.length) && (id !== "owed" || owed.length) && (id !== "reopened" || reopenedQuotes.length) && (id !== "due" || dueItems.length));
+  const recentPlacements = (board.mailPlacements || []).filter((item) => item.place !== "old");
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RFQ Pricing Board</title>
+${badge ? `<link rel="icon" type="image/svg+xml" href="${badge}">` : ""}
+<style>
+${STYLE}
+${BOARD_STYLE}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="who">${badge ? `<img class="badge" src="${badge}" alt="" width="24" height="24">` : ""}<span class="customer">RFQ pricing</span><span class="sep">·</span><span>QPC</span></div>
+    <span class="pill ${pill[0]}">${esc(pill[1])}</span>
+  </div>
+  <nav class="tabs" aria-label="Sections">${tabs.map(([id, label, count]) => `<a href="#${id}">${esc(label)}${count ? ` <small>${count}</small>` : ""}</a>`).join("")}</nav>
+</header>
+<main>
+  <div class="intro">
+    <div id="board-stale" class="status alert" hidden></div>
+    ${alerts.map((alert) => `<div class="status alert">${esc(alert)}</div>`).join("")}
+    <p class="eyebrow">QPC · RFQ pricing</p>
+    <h1 class="summary">${summary}</h1>
+    ${claudeRunLine(claude)}
+    <div class="sortbar" role="group" aria-label="Sort the cards"><span>Sort</span><button type="button" data-sort="urgent" aria-pressed="true">Most urgent</button><button type="button" data-sort="newest" aria-pressed="false">Newest first</button><button type="button" data-sort="oldest" aria-pressed="false">Oldest first</button><button type="button" data-sort="confident" aria-pressed="false">Most confident</button><button type="button" data-sort="unsure" aria-pressed="false">Least confident</button><button type="button" data-sort="value" aria-pressed="false">Highest value</button></div>
+  </div>
+
+  ${dueItems.length ? section("due", "Due now", dueItems.length, "Due today or past due, with a page or without one. Each should have a quote or an answer before the day ends.", dueStrip(dueItems, now)) : ""}
+
+  ${grouped.ready.length ? section("ready", "Ready for your yes", grouped.ready.length, "Each has a suggested price. Click a card to open its price page, then approve it or give yours.", `<div class="cards">${grouped.ready.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
+
+  ${grouped.facts.length ? section("facts", "Needs facts first", grouped.facts.length, "No price until the missing fact is in. Open the attachments or ask the customer, then post the size in the QUOTE PREP TRACKER chat as <b>FACTS customer / RFQ / part number: L x W x H in</b> (copy the line on each card). To get the size, open the print in your browser and ask Gemini: <i>calculate the envelope dimensions (L x W x H, ID in inches)</i>. Claude reprices the page within the hour.", `<div class="cards">${grouped.facts.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
+
+  ${grouped.decided.length ? section("unsent", "Decided, not seen sent", grouped.decided.length, "Each has a decided price, but no mail check has seen the quote go out. Oldest first. Send it; if it already went out, tell Claude which email it went in so the card moves to sent.", `<div class="cards">${grouped.decided.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
+
+  ${openCount ? "" : `<p class="empty">${ICON.check}<span>Nothing waiting. Every priced RFQ has a decision.</span></p>`}
+
+  ${chasingNoPageCount ? section("chasing", "Customers chasing, no price page", chasingNoPageCount, "Follow-ups from the last two weeks with no price page: logged by the front desk in the quote-prep chat, or found in customer email by Claude's mail check. Ask Claude to price any of them.", `${chasingNoPage.length ? chasingTable(chasingNoPage, now) : ""}${mailRowsTable(mailChases, now, "From customer email (Claude's mail check)")}`) : ""}
+
+  ${grouped.sent.length ? section("sent", "Just sent", justSent.length, `Quotes seen sent in the last ${sentDays} business day${sentDays === 1 ? "" : "s"}. Older ones are on the <a href="${SENT_FILE}">Sent quotes page</a>, which keeps all ${grouped.sent.length}. A customer's price question after a quote puts its card back up top.`, justSent.length ? `<details class="fold"><summary>${ICON.chevron}<h3>Show ${justSent.length}</h3></summary><div class="cards">${justSent.map((kase) => caseCard(kase, now)).join("")}</div></details>` : "") : ""}
+
+  ${(monitor && unpriced.length) || mailNew.length || setAside.length ? section("unpriced", "No price page yet", unpriced.length + mailNew.length, unpriced.length + mailNew.length ? "Open in the mail with no page here; ask Claude to price any of them." : `Nothing here needs pricing. ${setAside.length} item${setAside.length === 1 ? " was" : "s were"} checked and ${setAside.length === 1 ? "is" : "are"} not a price request (below).`, `${mailRowsTable(mailNew, now, "Found by Claude's mail check, not listed elsewhere here")}${monitorTable(unpriced.filter((item) => item.pricing), "Status mentions a quote, RFQ or inquiry", now)}${monitorTable(unpriced.filter((item) => !item.pricing), "Status doesn't say (may be a follow-up or an RFQ)", now)}${notPricedTable(setAside, now)}`) : ""}
+
+  ${owed.length ? section("owed", "Acknowledged, quote still owed", owed.length, "The Codex mail monitor saw each of these customers get a reply but no price. Oldest first. Ask Claude to price any of them, or tell it which are not pricing work.", monitorTable(owed, `Show ${owed.length}`, now)) : ""}
+
+  ${reopenedQuotes.length ? section("reopened", "Price question after a quote", reopenedQuotes.length, "A quote went out, then the Codex mail monitor saw the customer raise a quantity or price question. No price page or mail row shows these. Oldest first.", monitorTable(reopenedQuotes, `Show ${reopenedQuotes.length}`, now)) : ""}
+
+  <section id="log" class="group" aria-labelledby="log-title">
+    <div class="group-head"><h2 id="log-title">Log</h2></div>
+    <details class="fold" id="feedback"><summary>${ICON.chevron}<h3>Method feedback <small>${feedback.length}</small></h3></summary>${feedback.length ? feedbackList(feedback) : `<p class="muted">No method reviews recorded yet. Add <code>; method ok</code> or <code>; method wrong why: …</code> to an answer.</p>`}</details>
+    ${recentPlacements.length ? `<details class="fold" id="mail-placement"><summary>${ICON.chevron}<h3>Where each checked email landed <small>${recentPlacements.length}</small></h3></summary>${placementTable(recentPlacements)}</details>` : ""}
+    ${board.history.length ? `<details class="fold" id="history"><summary>${ICON.chevron}<h3 id="history-title">History <small>${board.history.length}</small></h3></summary>${historyTable(board.history)}</details>` : ""}
+  </section>
+
+  <footer class="fresh">${badge ? `<img class="badge" src="${badge}" alt="" width="20" height="20">` : ""}<span>
+    ${monitor ? `<span class="${monitor.stale ? "stale" : ""}">Mail checked ${when(monitor.cutoff)} (Codex mail monitor)</span>${claude?.cutoff ? ` · <span class="${claude.stale ? "stale" : ""}">${when(claude.cutoff)} (Claude mail check)</span>` : ""}${monitor.report ? ` · <a href="${esc(monitor.report)}">latest check</a>` : ""} · ` : ""}${sync ? `synced ${when(sync.at)}${sync.imports.length ? ` (imported ${sync.imports.map((item) => `${esc(item.fileName)} ${esc(item.outcome)}`).join(", ")})` : ""}` : "no sync has run yet"}
+${board.chasing ? ` · front desk chat read ${when(board.chasing.readAt)}` : ""}${board.codeVersion ? ` · board code ${esc(board.codeVersion)}` : ""}
+    <br>Private working file · keep inside QPC</span>
+  </footer>
+</main>
+<div class="toast" role="status" aria-live="polite">${ICON.check}<span>Copied to clipboard</span></div>
+<script>
+${pageScript(board)}
+</script>
+</body>
+</html>`;
+}
+
+// Every sent quote, newest first: the record the board's "Just sent" list
+// hands over to once a quote is older than the cut-off. Same cards, links and
+// marks as the board.
+export function renderSentPage(board, { badge = null } = {}) {
+  const now = new Date(board.generatedAt);
+  const sent = board.cases.filter((kase) => caseGroup(kase) === "sent").sort(bySentNewest);
+  const sentDays = board.sentOnBoardDays ?? SENT_ON_BOARD_DAYS;
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sent Quotes</title>
+${badge ? `<link rel="icon" type="image/svg+xml" href="${badge}">` : ""}
+<style>
+${STYLE}
+${BOARD_STYLE}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back" href="${BOARD_FILE}" title="Back to the board">${ICON.chevron}<span>All RFQs</span></a>
+    <div class="who">${badge ? `<img class="badge" src="${badge}" alt="" width="24" height="24">` : ""}<span class="customer">Sent quotes</span><span class="sep">·</span><span>QPC</span></div>
+  </div>
+</header>
+<main>
+  <div class="intro">
+    <div id="board-stale" class="status alert" hidden></div>
+    <p class="eyebrow">QPC · RFQ pricing</p>
+    <h1 class="summary">${sent.length} sent quote${sent.length === 1 ? "" : "s"}</h1>
+    <p class="lede">Every quote a mail check has seen go out, newest first. The board shows the last ${sentDays} business day${sentDays === 1 ? "" : "s"} of them; a customer's price question after a quote puts its card back on the board.</p>
+    <div class="sortbar" role="group" aria-label="Sort the cards"><span>Sort</span><button type="button" data-sort="urgent" aria-pressed="true">Newest sent</button><button type="button" data-sort="newest" aria-pressed="false">Newest asked</button><button type="button" data-sort="oldest" aria-pressed="false">Oldest asked</button><button type="button" data-sort="value" aria-pressed="false">Highest value</button></div>
+  </div>
+  ${sent.length ? `<section id="sent" class="group" aria-label="Sent quotes"><div class="cards">${sent.map((kase) => caseCard(kase, now)).join("")}</div></section>` : `<p class="empty">${ICON.check}<span>No quote has been seen sent yet.</span></p>`}
+  <footer class="fresh">${badge ? `<img class="badge" src="${badge}" alt="" width="20" height="20">` : ""}<span>Built ${when(board.generatedAt)} with the board${board.codeVersion ? ` · board code ${esc(board.codeVersion)}` : ""}<br>Private working file · keep inside QPC</span></footer>
+</main>
+<div class="toast" role="status" aria-live="polite">${ICON.check}<span>Copied to clipboard</span></div>
+<script>
+${pageScript(board)}
 </script>
 </body>
 </html>`;
@@ -1436,10 +1513,10 @@ table.queue td.status-cell { min-width:220px; }
 // (config.pagesMirror). Files are copied only when changed, so the sync client
 // sees no churn, and superseded page versions are removed from the copy only;
 // the originals and their records stay in outputsDir.
-const MIRRORED = /^(CLAUDE-DECISIONS-OPEN\.html|CLAUDE-DECISION-.+\.html|RFQ-CHECK-.+\.md)$/;
+const MIRRORED = /^(CLAUDE-DECISIONS-OPEN\.html|CLAUDE-DECISIONS-SENT\.html|CLAUDE-DECISION-.+\.html|RFQ-CHECK-.+\.md)$/;
 export function mirrorPages({ outputsDir, mirrorDir, board }) {
   fs.mkdirSync(mirrorDir, { recursive: true });
-  const keep = new Set([BOARD_FILE, ...board.cases.map((kase) => kase.page), board.monitor?.report].filter(Boolean));
+  const keep = new Set([BOARD_FILE, SENT_FILE, ...board.cases.map((kase) => kase.page), board.monitor?.report].filter(Boolean));
   const copied = [];
   for (const name of keep) {
     const from = path.join(outputsDir, name);
@@ -1471,14 +1548,16 @@ export function writeBoard({ brandBadgePath = null, ...inputs }) {
   const file = path.join(inputs.outputsDir, BOARD_FILE);
   const board = buildBoard(inputs);
   board.codeVersion = codeVersion();
-  fs.writeFileSync(file, renderBoard(board, { badge: readBrandBadge(brandBadgePath) }));
+  const badge = readBrandBadge(brandBadgePath);
+  fs.writeFileSync(file, renderBoard(board, { badge }));
+  fs.writeFileSync(path.join(inputs.outputsDir, SENT_FILE), renderSentPage(board, { badge }));
   return { file, board };
 }
 
 // The one place the private config becomes the board's inputs, for every
 // command that writes it.
 export function boardInputs(config) {
-  return { outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null, claudeMailPath: config.claudeMail || null, evidenceDir: config.evidenceDir || null, sharedMailbox: config.sharedMailbox || null, mailboxIdPrefixes: config.mailboxIdPrefixes || null, org: config.org || null, triagePath: config.triageFile || null, refreshSchedule: config.refreshSchedule || null, monitorRetiredAt: config.monitorRetiredAt || null, recheckPath: config.recheckFile || null };
+  return { outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null, claudeMailPath: config.claudeMail || null, evidenceDir: config.evidenceDir || null, sharedMailbox: config.sharedMailbox || null, mailboxIdPrefixes: config.mailboxIdPrefixes || null, org: config.org || null, triagePath: config.triageFile || null, refreshSchedule: config.refreshSchedule || null, monitorRetiredAt: config.monitorRetiredAt || null, recheckPath: config.recheckFile || null, sentOnBoardDays: config.sentOnBoardDays ?? null };
 }
 
 // The commit the board was built from, marked when the working tree has
