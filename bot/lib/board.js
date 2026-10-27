@@ -383,7 +383,10 @@ function sentAt(monitor) {
 
 // The newest quote seen sent for this request, from either mail source: the
 // board's cut-off and order use it, so a corrected quote counts from the day
-// it went out. The progress step keeps the first quote's date.
+// it went out. The monitor's sent events count whatever its status says now
+// (a PO after a corrected quote). The progress step keeps the first quote's
+// date. A customer's receipt note can read as sent here; that only keeps a
+// card up longer.
 function latestSentAt(monitor, mail) {
   const monitorSent = (monitor?.events || []).filter((event) => !event.is_draft && quoteSentStatus(String(event.meaning || "").split(/[.;]\s/)[0])).map((event) => event.at);
   const times = [...monitorSent, monitor?.quote_sent_verified_at, mail?.sent?.at, mail?.lastSent?.at].filter((at) => at && !Number.isNaN(Date.parse(at)));
@@ -511,7 +514,8 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       // Decisions on an older version: approvals do not carry to a new one.
       decidedEarlier: view.earlier.filter((entry) => entry.version < version).map((entry) => ({ version: entry.version, lineId: entry.lineId, decidedBy: entry.decidedBy, decidedAt: entry.decidedAt })),
       ordersSince: ordersSince(decision),
-      lastSentAt: sent ? latestSentAt(monitorSent ? monitor : null, mail) : null,
+      // Null when no source dates the quote (only the monitor's last activity).
+      lastSentAt: sent ? latestSentAt(monitor, mail) : null,
       dueDate: monitor?.explicit_due_date || null,
       lines: decision.lines.map((line) => ({
         lineId: line.lineId,
@@ -750,20 +754,23 @@ export function caseGroup(kase) {
 }
 
 const stepAt = (kase, key) => kase.progress?.find((step) => step.key === key)?.at || null;
-const lastSent = (kase) => kase.lastSentAt || stepAt(kase, "sent");
+// A built case always carries lastSentAt (null: no source dates the quote).
+const lastSent = (kase) => ("lastSentAt" in kase ? kase.lastSentAt : stepAt(kase, "sent"));
 // A sent quote is shown on the board until its newest quote is more than
 // `days` business days old (sent Monday: on the board through Wednesday). One
 // with no sent date stays: nothing leaves the board on a guess. So does one the
-// front desk logged a chase on after that quote: the chat attaches it to the
-// card, not to a list of its own.
-const chasedAfterQuote = (kase) => Boolean(kase.followup) && (!lastSent(kase) || Date.parse(kase.followup.lastAt) > Date.parse(lastSent(kase)));
+// front desk logged a chase on: the chat attaches a chase from after the first
+// quote to the card, not to a list of its own, and drops it once it is older
+// than the chase window. A later quote is not taken to answer it.
+const chasedAfterQuote = (kase) => Boolean(kase.followup);
 export function sentOnBoard(kase, now, days = SENT_ON_BOARD_DAYS) {
   const at = lastSent(kase);
   return chasedAfterQuote(kase) || !at || businessDaysSince(at, now) <= days;
 }
-// Newest sent first, a chase after the quote ahead of everything; decided-not-sent
-// oldest decision first.
-const bySentNewest = (a, b) => chasedAfterQuote(b) - chasedAfterQuote(a) || (lastSent(b) || "9999").localeCompare(lastSent(a) || "9999");
+// Newest sent first (undated first); on the board a chased card goes ahead of
+// them all. Decided-not-sent: oldest decision first.
+const bySentNewest = (a, b) => (lastSent(b) || "9999").localeCompare(lastSent(a) || "9999");
+const byChasedThenNewest = (a, b) => chasedAfterQuote(b) - chasedAfterQuote(a) || bySentNewest(a, b);
 const byDecidedOldest = (a, b) => (stepAt(a, "decided") || "").localeCompare(stepAt(b, "decided") || "") || (a.askedAt || "").localeCompare(b.askedAt || "");
 
 const esc = (value) => escapeHtml(value);
@@ -1216,7 +1223,7 @@ export function renderBoard(board, { badge = null } = {}) {
   for (const kase of board.cases) grouped[caseGroup(kase)].push(kase);
   for (const list of [grouped.ready, grouped.facts]) list.sort(byUrgency);
   grouped.decided.sort(byDecidedOldest);
-  grouped.sent.sort(bySentNewest);
+  grouped.sent.sort(byChasedThenNewest);
   const sentDays = board.sentOnBoardDays ?? SENT_ON_BOARD_DAYS;
   const justSent = grouped.sent.filter((kase) => sentOnBoard(kase, now, sentDays));
   const feedback = board.cases.flatMap((kase) => kase.feedback);

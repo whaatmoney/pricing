@@ -98,7 +98,7 @@ test("the board writes the Sent quotes page next to itself", () => {
 });
 
 test("sent quotes list newest first, decided-not-sent oldest decision first", () => {
-  const card = (caseId, sent, decided) => ({ caseId, open: false, tone: "ok", state: sent ? "Quote sent (per mail check)" : "Decided — not sent", progress: [{ key: "decided", at: decided }, { key: "sent", at: sent }] });
+  const card = (caseId, sent, decided) => ({ caseId, open: false, tone: "ok", state: sent ? "Quote sent (per mail check)" : "Decided — not sent", lastSentAt: sent, progress: [{ key: "decided", at: decided }, { key: "sent", at: sent }] });
   const { inputs } = world([]);
   const built = buildBoard({ ...inputs, now: new Date("2026-10-28T20:00:00Z") });
   const order = (cases, render) => [...render({ ...built, cases }).matchAll(/id="case-([^"]+)"/g)].map((match) => match[1]);
@@ -137,4 +137,44 @@ test("a front-desk chase after an old quote keeps the card on the board, first a
   assert.ok(cardIn(html, "sent", decision.caseId));
   assert.match(html, /<section id="sent"[\s\S]*?<details class="fold" open>/, "the list opens by itself");
   assert.equal(sentOnBoard(board("2026-10-28T20:00:00Z").cases[0], new Date("2026-10-28T20:00:00Z")), false, "without the chase it is off the board");
+});
+
+test("a front-desk chase keeps the card up even after a later quote or receipt note", () => {
+  const { decision, inputs, board } = world([], [quote("q1", "2026-10-01T15:00:00Z"), quote("q2", "2026-10-27T15:00:00Z")]);
+  decideAll(decision, inputs.outputsDir, "2026-09-30T16:00:00Z");
+  const chat = path.join(inputs.outputsDir, "..", "chat.json");
+  fs.writeFileSync(chat, JSON.stringify({ readAt: "2026-11-03T00:00:00Z", messages: { m1: { id: "m1", at: "2026-10-26T16:00:00Z", from: "Front Desk", replyTo: null, text: "Pat from Acme Precision Corp is F/U on this request: 77 / ABC-100 Rev B revised pricing" } } }));
+  const [kase] = board("2026-11-03T20:00:00Z", { quotePrepChatPath: chat }).cases;
+  assert.equal(kase.lastSentAt, "2026-10-27T15:00:00Z");
+  assert.ok(kase.followup);
+  assert.equal(sentOnBoard(kase, new Date("2026-11-03T20:00:00Z")), true, "five business days after the newest quote, still up: a later quote is not taken to answer the chase");
+});
+
+test("a sent quote dated only by the monitor's last activity counts as undated and stays", () => {
+  const { decision, board } = world([{ customer: "Acme Precision Corp", reference: "77 / ABC-100 Rev B", priority_section: 3, status: "Quote sent; waiting on customer", evidence_ids: ["rfq"], last_observed_activity_at: "2026-09-20T15:00:00Z" }]);
+  const built = board("2026-10-28T20:00:00Z");
+  const [kase] = built.cases;
+  assert.equal(kase.progress.find((step) => step.key === "sent").at, "2026-09-20T15:00:00Z", "the progress step shows the activity date as before");
+  assert.equal(kase.lastSentAt, null);
+  assert.ok(cardIn(renderBoard(built), "sent", decision.caseId));
+});
+
+test("the monitor's sent events count even after its status moved on", () => {
+  const { decision, inputs, board } = world([{ customer: "Acme Precision Corp", reference: "77 / ABC-100 Rev B", priority_section: 3, status: "Customer PO received and acknowledged", evidence_ids: ["rfq"], events: [{ at: "2026-10-27T15:00:00Z", meaning: "Quote sent. Corrected quantity" }] }], [quote("q1", "2026-10-01T15:00:00Z")]);
+  decideAll(decision, inputs.outputsDir, "2026-09-30T16:00:00Z");
+  const [kase] = board("2026-10-28T20:00:00Z").cases;
+  assert.equal(kase.state, "Quote sent (per mail check)");
+  assert.equal(kase.lastSentAt, "2026-10-27T15:00:00Z");
+  assert.equal(sentOnBoard(kase, new Date("2026-10-28T20:00:00Z")), true);
+});
+
+test("the Sent quotes page is strictly newest sent; on the board a chased card goes first", () => {
+  const { inputs } = world([]);
+  const built = buildBoard({ ...inputs, now: new Date("2026-10-28T20:00:00Z") });
+  const card = (caseId, sent, followup = null) => ({ ...built.cases[0], caseId, open: false, tone: "ok", state: "Quote sent (per mail check)", lastSentAt: sent, followup, progress: [{ key: "sent", at: sent }] });
+  const chase = { lastAt: "2026-10-27T16:00:00Z", contact: "Pat", company: "Acme", subject: "RFQ", label: "1st follow-up", urgent: false };
+  const cases = [card("OLD-CHASED", "2026-10-01T15:00:00Z", chase), card("NEW", "2026-10-28T15:00:00Z"), card("MID", "2026-10-27T15:00:00Z")];
+  const order = (html) => [...html.matchAll(/id="case-([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(order(renderSentPage({ ...built, cases })), ["NEW", "MID", "OLD-CHASED"]);
+  assert.deepEqual(order(renderBoard({ ...built, cases })), ["OLD-CHASED", "NEW", "MID"]);
 });
