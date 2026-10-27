@@ -216,5 +216,6 @@ test("Done marks: the Sent quotes page keeps its order, and each page re-reads s
   for (const html of [renderBoard(built), renderSentPage(built)]) {
     assert.match(html, /const mark = \(id, done\) => \{\n\s+marks = read\(DONE, \{\}\);/);
     assert.doesNotMatch(html, /write\(DONE, marks\); show\(\)/, "no write from a stale copy");
+    assert.match(html, /if \(!card\) return;\n\s+opened = load\(\);/, "Opened marks are re-read before a change too");
   }
 });

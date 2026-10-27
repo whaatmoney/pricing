@@ -1145,12 +1145,15 @@ ${SCRIPT}
 // A per-viewer convenience: the board reads the same without it.
 (() => {
   const key = "qpc-board-opened";
-  let opened = [];
-  try { opened = JSON.parse(localStorage.getItem(key) || "[]"); } catch {}
+  // Read again before each change: the Sent quotes page shares this key.
+  const load = () => { try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch { return []; } };
+  let opened = load();
   const mark = () => document.querySelectorAll(".card[data-page]").forEach((card) => card.classList.toggle("opened", opened.includes(card.dataset.page)));
   document.addEventListener("click", (event) => {
     const card = event.target.closest(".card-link")?.closest(".card");
-    if (!card || opened.includes(card.dataset.page)) return;
+    if (!card) return;
+    opened = load();
+    if (opened.includes(card.dataset.page)) return;
     opened = [...opened, card.dataset.page].slice(-200);
     try { localStorage.setItem(key, JSON.stringify(opened)); } catch {}
     mark();
