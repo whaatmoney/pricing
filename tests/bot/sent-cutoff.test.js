@@ -178,3 +178,19 @@ test("the Sent quotes page is strictly newest sent; on the board a chased card g
   assert.deepEqual(order(renderSentPage({ ...built, cases })), ["NEW", "MID", "OLD-CHASED"]);
   assert.deepEqual(order(renderBoard({ ...built, cases })), ["OLD-CHASED", "NEW", "MID"]);
 });
+
+test("a corrected quote naming a short RFQ number still counts from its own day", () => {
+  const { decision, inputs, board } = world([], [{ ...quote("q1", "2026-10-01T15:00:00Z"), rfqNumbers: ["77"] }, { ...quote("q2", "2026-10-27T15:00:00Z"), rfqNumbers: ["77"] }]);
+  decideAll(decision, inputs.outputsDir, "2026-09-30T16:00:00Z");
+  const [kase] = board("2026-10-29T17:00:00Z").cases;
+  assert.equal(caseGroup(kase), "sent");
+  assert.equal(kase.lastSentAt, "2026-10-27T15:00:00Z");
+  assert.equal(sentOnBoard(kase, new Date("2026-10-29T17:00:00Z")), true);
+});
+
+test("the Sent quotes page offers every sort the board saves", () => {
+  const { inputs } = world([]);
+  const sorts = (html) => [...html.match(/<div class="sortbar"[\s\S]*?<\/div>/)[0].matchAll(/data-sort="([^"]+)"/g)].map((match) => match[1]).sort();
+  const built = buildBoard({ ...inputs, now: new Date("2026-10-28T20:00:00Z") });
+  assert.deepEqual(sorts(renderSentPage(built)), sorts(renderBoard(built)));
+});

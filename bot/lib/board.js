@@ -389,7 +389,7 @@ function sentAt(monitor) {
 // card up longer.
 function latestSentAt(monitor, mail) {
   const monitorSent = (monitor?.events || []).filter((event) => !event.is_draft && quoteSentStatus(String(event.meaning || "").split(/[.;]\s/)[0])).map((event) => event.at);
-  const times = [...monitorSent, monitor?.quote_sent_verified_at, mail?.sent?.at, mail?.lastSent?.at].filter((at) => at && !Number.isNaN(Date.parse(at)));
+  const times = [...monitorSent, monitor?.quote_sent_verified_at, mail?.sent?.at, mail?.newestSent?.at, mail?.lastSent?.at].filter((at) => at && !Number.isNaN(Date.parse(at)));
   return times.length ? times.reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a)) : null;
 }
 
@@ -1391,7 +1391,7 @@ ${BOARD_STYLE}
     <p class="eyebrow">QPC · RFQ pricing</p>
     <h1 class="summary">${sent.length} sent quote${sent.length === 1 ? "" : "s"}</h1>
     <p class="lede">Every quote a mail check has seen go out, newest first. The board shows the last ${sentDays} business day${sentDays === 1 ? "" : "s"} of them; a customer's price question after a quote puts its card back on the board.</p>
-    <div class="sortbar" role="group" aria-label="Sort the cards"><span>Sort</span><button type="button" data-sort="urgent" aria-pressed="true">Newest sent</button><button type="button" data-sort="newest" aria-pressed="false">Newest asked</button><button type="button" data-sort="oldest" aria-pressed="false">Oldest asked</button><button type="button" data-sort="value" aria-pressed="false">Highest value</button></div>
+    <div class="sortbar" role="group" aria-label="Sort the cards"><span>Sort</span><button type="button" data-sort="urgent" aria-pressed="true">Newest sent</button><button type="button" data-sort="newest" aria-pressed="false">Newest asked</button><button type="button" data-sort="oldest" aria-pressed="false">Oldest asked</button><button type="button" data-sort="confident" aria-pressed="false">Most confident</button><button type="button" data-sort="unsure" aria-pressed="false">Least confident</button><button type="button" data-sort="value" aria-pressed="false">Highest value</button></div>
   </div>
   ${sent.length ? `<section id="sent" class="group" aria-label="Sent quotes"><div class="cards">${sent.map((kase) => caseCard(kase, now)).join("")}</div></section>` : `<p class="empty">${ICON.check}<span>No quote has been seen sent yet.</span></p>`}
   <footer class="fresh">${badge ? `<img class="badge" src="${badge}" alt="" width="20" height="20">` : ""}<span>Built ${when(board.generatedAt)} with the board${board.codeVersion ? ` · board code ${esc(board.codeVersion)}` : ""}<br>Private working file · keep inside QPC</span></footer>
