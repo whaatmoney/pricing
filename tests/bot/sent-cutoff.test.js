@@ -107,3 +107,34 @@ test("sent quotes list newest first, decided-not-sent oldest decision first", ()
   const unsent = [card("B", null, "2026-10-10T15:00:00Z"), card("A", null, "2026-10-01T15:00:00Z")].map((kase) => ({ ...built.cases[0], ...kase }));
   assert.deepEqual(order(unsent, renderBoard), ["A", "B"]);
 });
+
+test("a corrected quote counts from the day it went out, from Claude's mail check and from the monitor", () => {
+  const mailed = world([], [quote("q1", "2026-10-01T15:00:00Z"), quote("q2", "2026-10-27T15:00:00Z")]);
+  decideAll(mailed.decision, mailed.inputs.outputsDir, "2026-09-30T16:00:00Z");
+  const [kase] = mailed.board("2026-10-29T17:00:00Z").cases;
+  assert.equal(kase.progress.find((step) => step.key === "sent").at, "2026-10-01T15:00:00Z", "the progress step keeps the first quote");
+  assert.equal(kase.lastSentAt, "2026-10-27T15:00:00Z");
+  assert.equal(sentOnBoard(kase, new Date("2026-10-29T17:00:00Z")), true, "sent Tuesday, still up Thursday");
+  assert.equal(sentOnBoard(kase, new Date("2026-10-30T17:00:00Z")), false);
+  const monitored = world([{ customer: "Acme Precision Corp", reference: "77 / ABC-100 Rev B", priority_section: 3, status: "Quote sent; waiting on customer", evidence_ids: ["rfq"], events: [{ at: "2026-10-01T15:00:00Z", meaning: "Quote sent" }, { at: "2026-10-27T15:00:00Z", meaning: "Quote sent. Corrected quantity" }, { at: "2026-10-28T15:00:00Z", meaning: "Quote sent", is_draft: true }] }]);
+  const [viaMonitor] = monitored.board("2026-10-29T17:00:00Z").cases;
+  assert.equal(viaMonitor.state, "Quote sent (per monitor status)");
+  assert.equal(viaMonitor.lastSentAt, "2026-10-27T15:00:00Z", "a draft is not a sent quote");
+  assert.ok(cardIn(renderBoard(monitored.board("2026-10-29T17:00:00Z")), "sent", monitored.decision.caseId));
+});
+
+test("a front-desk chase after an old quote keeps the card on the board, first and unfolded", () => {
+  const { decision, inputs, board } = world([], [quote("q1", "2026-10-01T15:00:00Z")]);
+  decideAll(decision, inputs.outputsDir, "2026-09-30T16:00:00Z");
+  const chat = path.join(inputs.outputsDir, "..", "chat.json");
+  fs.writeFileSync(chat, JSON.stringify({ readAt: "2026-10-28T00:00:00Z", messages: { m1: { id: "m1", at: "2026-10-26T16:00:00Z", from: "Front Desk", replyTo: null, text: "Pat from Acme Precision Corp is F/U on this request: 77 / ABC-100 Rev B revised pricing" } } }));
+  const built = board("2026-10-28T20:00:00Z", { quotePrepChatPath: chat });
+  const [kase] = built.cases;
+  assert.equal(caseGroup(kase), "sent");
+  assert.ok(kase.followup, "the chat attaches the chase to the sent card");
+  assert.equal(sentOnBoard(kase, new Date("2026-10-28T20:00:00Z")), true);
+  const html = renderBoard(built);
+  assert.ok(cardIn(html, "sent", decision.caseId));
+  assert.match(html, /<section id="sent"[\s\S]*?<details class="fold" open>/, "the list opens by itself");
+  assert.equal(sentOnBoard(board("2026-10-28T20:00:00Z").cases[0], new Date("2026-10-28T20:00:00Z")), false, "without the chase it is off the board");
+});

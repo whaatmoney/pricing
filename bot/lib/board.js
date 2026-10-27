@@ -381,6 +381,15 @@ function sentAt(monitor) {
   return hit?.at || monitor?.quote_sent_verified_at || monitor?.last_observed_activity_at || null;
 }
 
+// The newest quote seen sent for this request, from either mail source: the
+// board's cut-off and order use it, so a corrected quote counts from the day
+// it went out. The progress step keeps the first quote's date.
+function latestSentAt(monitor, mail) {
+  const monitorSent = (monitor?.events || []).filter((event) => !event.is_draft && quoteSentStatus(String(event.meaning || "").split(/[.;]\s/)[0])).map((event) => event.at);
+  const times = [...monitorSent, monitor?.quote_sent_verified_at, mail?.sent?.at, mail?.lastSent?.at].filter((at) => at && !Number.isNaN(Date.parse(at)));
+  return times.length ? times.reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a)) : null;
+}
+
 // When the first page for this RFQ was built (a later version keeps that date).
 function firstBuilt(outputsDir, caseId, version, decision) {
   if (version <= 1) return decision.generatedAt;
@@ -502,6 +511,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       // Decisions on an older version: approvals do not carry to a new one.
       decidedEarlier: view.earlier.filter((entry) => entry.version < version).map((entry) => ({ version: entry.version, lineId: entry.lineId, decidedBy: entry.decidedBy, decidedAt: entry.decidedAt })),
       ordersSince: ordersSince(decision),
+      lastSentAt: sent ? latestSentAt(monitorSent ? monitor : null, mail) : null,
       dueDate: monitor?.explicit_due_date || null,
       lines: decision.lines.map((line) => ({
         lineId: line.lineId,
@@ -740,15 +750,20 @@ export function caseGroup(kase) {
 }
 
 const stepAt = (kase, key) => kase.progress?.find((step) => step.key === key)?.at || null;
-// A sent quote is shown on the board until it is more than `days` business
-// days old (sent Monday: on the board through Wednesday). One with no sent
-// date stays: nothing leaves the board on a guess.
+const lastSent = (kase) => kase.lastSentAt || stepAt(kase, "sent");
+// A sent quote is shown on the board until its newest quote is more than
+// `days` business days old (sent Monday: on the board through Wednesday). One
+// with no sent date stays: nothing leaves the board on a guess. So does one the
+// front desk logged a chase on after that quote: the chat attaches it to the
+// card, not to a list of its own.
+const chasedAfterQuote = (kase) => Boolean(kase.followup) && (!lastSent(kase) || Date.parse(kase.followup.lastAt) > Date.parse(lastSent(kase)));
 export function sentOnBoard(kase, now, days = SENT_ON_BOARD_DAYS) {
-  const at = stepAt(kase, "sent");
-  return !at || businessDaysSince(at, now) <= days;
+  const at = lastSent(kase);
+  return chasedAfterQuote(kase) || !at || businessDaysSince(at, now) <= days;
 }
-// Newest sent first; decided-not-sent oldest decision first.
-const bySentNewest = (a, b) => (stepAt(b, "sent") || "9999").localeCompare(stepAt(a, "sent") || "9999");
+// Newest sent first, a chase after the quote ahead of everything; decided-not-sent
+// oldest decision first.
+const bySentNewest = (a, b) => chasedAfterQuote(b) - chasedAfterQuote(a) || (lastSent(b) || "9999").localeCompare(lastSent(a) || "9999");
 const byDecidedOldest = (a, b) => (stepAt(a, "decided") || "").localeCompare(stepAt(b, "decided") || "") || (a.askedAt || "").localeCompare(b.askedAt || "");
 
 const esc = (value) => escapeHtml(value);
@@ -1308,7 +1323,7 @@ ${BOARD_STYLE}
 
   ${chasingNoPageCount ? section("chasing", "Customers chasing, no price page", chasingNoPageCount, "Follow-ups from the last two weeks with no price page: logged by the front desk in the quote-prep chat, or found in customer email by Claude's mail check. Ask Claude to price any of them.", `${chasingNoPage.length ? chasingTable(chasingNoPage, now) : ""}${mailRowsTable(mailChases, now, "From customer email (Claude's mail check)")}`) : ""}
 
-  ${grouped.sent.length ? section("sent", "Just sent", justSent.length, `Quotes seen sent in the last ${sentDays} business day${sentDays === 1 ? "" : "s"}. Older ones are on the <a href="${SENT_FILE}">Sent quotes page</a>, which keeps all ${grouped.sent.length}. A customer's price question after a quote puts its card back up top.`, justSent.length ? `<details class="fold"><summary>${ICON.chevron}<h3>Show ${justSent.length}</h3></summary><div class="cards">${justSent.map((kase) => caseCard(kase, now)).join("")}</div></details>` : "") : ""}
+  ${grouped.sent.length ? section("sent", "Just sent", justSent.length, `Quotes seen sent in the last ${sentDays} business day${sentDays === 1 ? "" : "s"}. Older ones are on the <a href="${SENT_FILE}">Sent quotes page</a>, which keeps all ${grouped.sent.length}. A customer's price question after a quote puts its card back up top; a front-desk chase after one keeps it here.`, justSent.length ? `<details class="fold"${justSent.some(chasedAfterQuote) ? " open" : ""}><summary>${ICON.chevron}<h3>Show ${justSent.length}</h3></summary><div class="cards">${justSent.map((kase) => caseCard(kase, now)).join("")}</div></details>` : "") : ""}
 
   ${(monitor && unpriced.length) || mailNew.length || setAside.length ? section("unpriced", "No price page yet", unpriced.length + mailNew.length, unpriced.length + mailNew.length ? "Open in the mail with no page here; ask Claude to price any of them." : `Nothing here needs pricing. ${setAside.length} item${setAside.length === 1 ? " was" : "s were"} checked and ${setAside.length === 1 ? "is" : "are"} not a price request (below).`, `${mailRowsTable(mailNew, now, "Found by Claude's mail check, not listed elsewhere here")}${monitorTable(unpriced.filter((item) => item.pricing), "Status mentions a quote, RFQ or inquiry", now)}${monitorTable(unpriced.filter((item) => !item.pricing), "Status doesn't say (may be a follow-up or an RFQ)", now)}${notPricedTable(setAside, now)}`) : ""}
 
