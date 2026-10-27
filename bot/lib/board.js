@@ -1052,7 +1052,7 @@ function caseCard(kase, now) {
     kase.open && kase.repriced ? repricedNote(kase.repriced) : "",
   ].filter(Boolean);
   const open = group === "ready" || group === "facts";
-  return `<article class="card is-${group}" id="case-${esc(kase.caseId)}" data-page="${esc(kase.page)}" data-case="${esc(kase.reopened ? `${kase.caseId}@reopened-${kase.monitor?.lastActivityAt || "undated"}` : kase.caseId)}" data-asked="${esc(kase.askedAt || "")}" data-confidence="${confidenceRank(kase)}" data-value="${kase.value ? kase.value.amount : -1}">
+  return `<article class="card is-${group}" id="case-${esc(kase.caseId)}" data-page="${esc(kase.page)}" data-case="${esc(kase.reopened ? `${kase.caseId}@reopened-${kase.monitor?.lastActivityAt || "undated"}` : group === "sent" && kase.followup ? `${kase.caseId}@chased-${kase.followup.lastAt}` : kase.caseId)}" data-asked="${esc(kase.askedAt || "")}" data-confidence="${confidenceRank(kase)}" data-value="${kase.value ? kase.value.amount : -1}">
     <div class="card-head">
       <div class="card-title">
         <a class="card-link" href="${esc(kase.page)}">${esc(kase.customer)}</a>

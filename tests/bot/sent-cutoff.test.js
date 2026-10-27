@@ -136,6 +136,7 @@ test("a front-desk chase after an old quote keeps the card on the board, first a
   const html = renderBoard(built);
   assert.ok(cardIn(html, "sent", decision.caseId));
   assert.match(html, /<section id="sent"[\s\S]*?<details class="fold" open>/, "the list opens by itself");
+  assert.match(html, /data-case="[^"]+@chased-2026-10-26T16:00:00Z"/, "a Done mark made before the chase does not fade or sink the card");
   assert.equal(sentOnBoard(board("2026-10-28T20:00:00Z").cases[0], new Date("2026-10-28T20:00:00Z")), false, "without the chase it is off the board");
 });
 
