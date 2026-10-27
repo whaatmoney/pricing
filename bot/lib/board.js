@@ -388,9 +388,11 @@ function sentAt(monitor) {
 // date. A customer's receipt note can read as sent here; that only keeps a
 // card up longer.
 function latestSentAt(monitor, mail) {
-  const monitorSent = (monitor?.events || []).filter((event) => !event.is_draft && quoteSentStatus(String(event.meaning || "").split(/[.;]\s/)[0])).map((event) => event.at);
-  const times = [...monitorSent, monitor?.quote_sent_verified_at, mail?.sent?.at, mail?.newestSent?.at, mail?.lastSent?.at].filter((at) => at && !Number.isNaN(Date.parse(at)));
-  return times.length ? times.reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a)) : null;
+  // Any clause of an event can say the quote went out ("Quantity confirmed; quote sent").
+  const monitorSent = (monitor?.events || []).filter((event) => !event.is_draft && String(event.meaning || "").split(/[.;]\s/).some((clause) => quoteSentStatus(clause))).map((event) => event.at);
+  const times = [...monitorSent, monitor?.quote_sent_verified_at, mail?.sent?.at, mail?.newestSent?.at, mail?.lastSent?.at].map((at) => (at ? Date.parse(at) : NaN)).filter((ms) => !Number.isNaN(ms));
+  // One format (UTC ISO) whatever offset the source wrote, so dates compare.
+  return times.length ? new Date(Math.max(...times)).toISOString() : null;
 }
 
 // When the first page for this RFQ was built (a later version keeps that date).
@@ -769,9 +771,11 @@ export function sentOnBoard(kase, now, days = SENT_ON_BOARD_DAYS) {
 }
 // Newest sent first (undated first); on the board a chased card goes ahead of
 // them all. Decided-not-sent: oldest decision first.
-const bySentNewest = (a, b) => (lastSent(b) || "9999").localeCompare(lastSent(a) || "9999");
+const sentMs = (kase) => (lastSent(kase) ? Date.parse(lastSent(kase)) : Infinity);
+const bySentNewest = (a, b) => (sentMs(a) === sentMs(b) ? 0 : sentMs(b) > sentMs(a) ? 1 : -1);
 const byChasedThenNewest = (a, b) => chasedAfterQuote(b) - chasedAfterQuote(a) || bySentNewest(a, b);
-const byDecidedOldest = (a, b) => (stepAt(a, "decided") || "").localeCompare(stepAt(b, "decided") || "") || (a.askedAt || "").localeCompare(b.askedAt || "");
+const decidedMs = (kase) => Date.parse(stepAt(kase, "decided") || "") || 0;
+const byDecidedOldest = (a, b) => decidedMs(a) - decidedMs(b) || (a.askedAt || "").localeCompare(b.askedAt || "");
 
 const esc = (value) => escapeHtml(value);
 
