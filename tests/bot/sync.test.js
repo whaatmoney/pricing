@@ -464,7 +464,7 @@ test("the pages mirror gets the board and current pages, updates only what chang
   fs.writeFileSync(path.join(config.outputsDir, kase.page), "<html>page</html>");
   const mirrorDir = path.join(config.outputsDir, "mirror");
   const first = mirrorPages({ outputsDir: config.outputsDir, mirrorDir, board });
-  assert.deepEqual(first.copied.sort(), ["CLAUDE-DECISIONS-OPEN.html", kase.page].sort());
+  assert.deepEqual(first.copied.sort(), ["CLAUDE-DECISIONS-OPEN.html", "CLAUDE-DECISIONS-SENT.html", kase.page].sort());
   assert.deepEqual(mirrorPages({ outputsDir: config.outputsDir, mirrorDir, board }).copied, [], "unchanged files are not rewritten");
   fs.writeFileSync(path.join(mirrorDir, "CLAUDE-DECISION-OLD-CASE-v1.html"), "old");
   fs.writeFileSync(path.join(mirrorDir, "notes.txt"), "someone else's file");

@@ -21,6 +21,13 @@ import { poTotal, priceSource } from "./review-card.js";
 // and is never written.
 
 export const BOARD_FILE = "CLAUDE-DECISIONS-OPEN.html";
+// Every sent quote, newest first, written next to the board.
+export const SENT_FILE = "CLAUDE-DECISIONS-SENT.html";
+// A sent quote stays on the board this many business days after it went out,
+// then only on the Sent quotes page (pricing owner, 2026-10-26: "2 business
+// days, a Sent quotes page that keeps everything"). config.sentOnBoardDays
+// overrides it.
+export const SENT_ON_BOARD_DAYS = 2;
 // Matches the monitor's own stale threshold. Past this, mail data on the
 // board is marked STALE whatever the monitor's file says, because a stopped
 // monitor never updates its own stale flag.
@@ -374,6 +381,20 @@ function sentAt(monitor) {
   return hit?.at || monitor?.quote_sent_verified_at || monitor?.last_observed_activity_at || null;
 }
 
+// The newest quote seen sent for this request, from either mail source: the
+// board's cut-off and order use it, so a corrected quote counts from the day
+// it went out. The monitor's sent events count whatever its status says now
+// (a PO after a corrected quote). The progress step keeps the first quote's
+// date. A customer's receipt note can read as sent here; that only keeps a
+// card up longer.
+function latestSentAt(monitor, mail) {
+  // Any clause of an event can say the quote went out ("Quantity confirmed; quote sent").
+  const monitorSent = (monitor?.events || []).filter((event) => !event.is_draft && String(event.meaning || "").split(/[.;]\s/).some((clause) => quoteSentStatus(clause))).map((event) => event.at);
+  const times = [...monitorSent, monitor?.quote_sent_verified_at, mail?.sent?.at, mail?.newestSent?.at, mail?.lastSent?.at].map((at) => (at ? Date.parse(at) : NaN)).filter((ms) => !Number.isNaN(ms));
+  // One format (UTC ISO) whatever offset the source wrote, so dates compare.
+  return times.length ? new Date(Math.max(...times)).toISOString() : null;
+}
+
 // When the first page for this RFQ was built (a later version keeps that date).
 function firstBuilt(outputsDir, caseId, version, decision) {
   if (version <= 1) return decision.generatedAt;
@@ -433,7 +454,7 @@ export function ordersSince(decision) {
   return [...orders.values()].sort((a, b) => a.date.localeCompare(b.date) || String(a.wo).localeCompare(String(b.wo)));
 }
 
-export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, triagePath = null, refreshSchedule = null, monitorRetiredAt = null, recheckPath = null, now = new Date() }) {
+export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, lastSync = null, trackerPath = null, mailCachePath = null, quotePrepChatPath = null, claudeMailPath = null, evidenceDir = null, sharedMailbox = null, mailboxIdPrefixes = null, org = null, triagePath = null, refreshSchedule = null, monitorRetiredAt = null, recheckPath = null, sentOnBoardDays = null, now = new Date() }) {
   if (org) useOrg(org);
   const mailCache = readMailCache(mailCachePath);
   const ownerOf = (href) => privateOwner(href, mailboxIdPrefixes, sharedMailbox);
@@ -495,6 +516,8 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       // Decisions on an older version: approvals do not carry to a new one.
       decidedEarlier: view.earlier.filter((entry) => entry.version < version).map((entry) => ({ version: entry.version, lineId: entry.lineId, decidedBy: entry.decidedBy, decidedAt: entry.decidedAt })),
       ordersSince: ordersSince(decision),
+      // Null when no source dates the quote (only the monitor's last activity).
+      lastSentAt: sent ? latestSentAt(monitor, mail) : null,
       dueDate: monitor?.explicit_due_date || null,
       lines: decision.lines.map((line) => ({
         lineId: line.lineId,
@@ -609,7 +632,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
   const history = [...tracker.history.map((item) => ({ ...item, source: "log" })), ...cases.flatMap((kase) => kase.events)]
     .filter((item) => item.at)
     .sort((a, b) => b.at.localeCompare(a.at));
-  return { generatedAt: now.toISOString(), refreshSchedule, cases, monitor, monitorRetiredAt, lastSync, history, mailFound, mailPlacements: placements, triage: readTriage(triagePath), claudeMail: claudeMailView(claudeMail, now), chasing };
+  return { generatedAt: now.toISOString(), refreshSchedule, sentOnBoardDays: sentOnBoardDays ?? SENT_ON_BOARD_DAYS, cases, monitor, monitorRetiredAt, lastSync, history, mailFound, mailPlacements: placements, triage: readTriage(triagePath), claudeMail: claudeMailView(claudeMail, now), chasing };
 }
 
 // What the board says about Claude's own mail check: how far it reached,
@@ -731,6 +754,28 @@ export function caseGroup(kase) {
   const priced = kase.lines.every((line) => line.suggested != null || (line.decided && line.decided.choice !== "correction"));
   return priced ? "ready" : "facts";
 }
+
+const stepAt = (kase, key) => kase.progress?.find((step) => step.key === key)?.at || null;
+// A built case always carries lastSentAt (null: no source dates the quote).
+const lastSent = (kase) => ("lastSentAt" in kase ? kase.lastSentAt : stepAt(kase, "sent"));
+// A sent quote is shown on the board until its newest quote is more than
+// `days` business days old (sent Monday: on the board through Wednesday). One
+// with no sent date stays: nothing leaves the board on a guess. So does one the
+// front desk logged a chase on: the chat attaches a chase from after the first
+// quote to the card, not to a list of its own, and drops it once it is older
+// than the chase window. A later quote is not taken to answer it.
+const chasedAfterQuote = (kase) => Boolean(kase.followup);
+export function sentOnBoard(kase, now, days = SENT_ON_BOARD_DAYS) {
+  const at = lastSent(kase);
+  return chasedAfterQuote(kase) || !at || businessDaysSince(at, now) <= days;
+}
+// Newest sent first (undated first); on the board a chased card goes ahead of
+// them all. Decided-not-sent: oldest decision first.
+const sentMs = (kase) => (lastSent(kase) ? Date.parse(lastSent(kase)) : Infinity);
+const bySentNewest = (a, b) => (sentMs(a) === sentMs(b) ? 0 : sentMs(b) > sentMs(a) ? 1 : -1);
+const byChasedThenNewest = (a, b) => chasedAfterQuote(b) - chasedAfterQuote(a) || bySentNewest(a, b);
+const decidedMs = (kase) => Date.parse(stepAt(kase, "decided") || "") || 0;
+const byDecidedOldest = (a, b) => decidedMs(a) - decidedMs(b) || (a.askedAt || "").localeCompare(b.askedAt || "");
 
 const esc = (value) => escapeHtml(value);
 
@@ -1007,12 +1052,12 @@ function caseCard(kase, now) {
     kase.open && kase.repriced ? repricedNote(kase.repriced) : "",
   ].filter(Boolean);
   const open = group === "ready" || group === "facts";
-  return `<article class="card is-${group}" id="case-${esc(kase.caseId)}" data-page="${esc(kase.page)}" data-case="${esc(kase.reopened ? `${kase.caseId}@reopened-${kase.monitor?.lastActivityAt || "undated"}` : kase.caseId)}" data-asked="${esc(kase.askedAt || "")}" data-confidence="${confidenceRank(kase)}" data-value="${kase.value ? kase.value.amount : -1}">
+  return `<article class="card is-${group}" id="case-${esc(kase.caseId)}" data-page="${esc(kase.page)}" data-case="${esc(kase.reopened ? `${kase.caseId}@reopened-${kase.monitor?.lastActivityAt || "undated"}` : group === "sent" && kase.followup ? `${kase.caseId}@chased-${kase.followup.lastAt}` : kase.caseId)}" data-asked="${esc(kase.askedAt || "")}" data-confidence="${confidenceRank(kase)}" data-value="${kase.value ? kase.value.amount : -1}">
     <div class="card-head">
       <div class="card-title">
         <a class="card-link" href="${esc(kase.page)}">${esc(kase.customer)}</a>
         <p class="ref">${esc(kase.reference || kase.caseId)}</p>
-        <p class="marks">${open ? progressHtml(kase.progress, { compact: true }) : ""}${kase.askedAt ? `<span class="chip muted">Asked ${day(kase.askedAt)}</span>` : ""}${valueChip(kase.value)}${dueChip(kase, now)}${chaseChip(kase.followup, now)}${mailChip(kase, now)}${kase.open && kase.ordersSince?.length ? '<span class="chip warn" title="A work order for this part came in after the RFQ">Work order since asked</span>' : ""}<span class="chip ok done-mark">${ICON.check}Done</span><span class="chip muted opened-mark">${ICON.check}Opened</span></p>
+        <p class="marks">${open ? progressHtml(kase.progress, { compact: true }) : ""}${kase.askedAt ? `<span class="chip muted">Asked ${day(kase.askedAt)}</span>` : ""}${group === "decided" && stepAt(kase, "decided") ? `<span class="chip muted late">Decided ${day(stepAt(kase, "decided"))} · not seen sent</span>` : ""}${valueChip(kase.value)}${dueChip(kase, now)}${chaseChip(kase.followup, now)}${mailChip(kase, now)}${kase.open && kase.ordersSince?.length ? '<span class="chip warn" title="A work order for this part came in after the RFQ">Work order since asked</span>' : ""}<span class="chip ok done-mark">${ICON.check}Done</span><span class="chip muted opened-mark">${ICON.check}Opened</span></p>
       </div>
       ${headline(kase, group)}
     </div>
@@ -1069,12 +1114,131 @@ function section(id, title, count, lede, body) {
   </section>`;
 }
 
+// The scripts the board and the Sent quotes page share: the missed-refresh
+// banner, opened marks, done marks and the sort order. Done cards sink to the
+// bottom of their group on the board only; the Sent quotes page keeps its order.
+function pageScript(board, { sinkDone = true } = {}) {
+  return `// Checked when the page is opened, so a board nothing has rebuilt still says so.
+(() => {
+  const generated = Date.parse(${JSON.stringify(board.generatedAt)});
+  const schedule = ${JSON.stringify(board.refreshSchedule || null)};
+  const banner = document.getElementById("board-stale");
+  const built = new Date(generated).toLocaleString();
+  if (schedule) {
+    // Rebuilt on a timetable: stale only when a scheduled refresh did not arrive.
+    const lastDueRefresh = ${lastDueRefresh.toString()};
+    const due = lastDueRefresh(schedule, Date.now());
+    if (due != null && generated < due) {
+      banner.textContent = "This board missed its scheduled refresh (due " + new Date(due).toLocaleString() + "; built " + built + "). The " + (schedule.label || "scheduled run") + " may have failed; do not rely on it until it refreshes.";
+      banner.hidden = false;
+    }
+    return;
+  }
+  const minutes = (Date.now() - generated) / 60000;
+  if (minutes > ${BOARD_STALE_MINUTES}) {
+    banner.textContent = "This board has not refreshed for " + Math.round(minutes / 60) + " hours (built " + built + "). The pricing sync may have stopped; do not rely on it until it refreshes.";
+    banner.hidden = false;
+  }
+})();
+${SCRIPT}
+// Marks the price pages this viewer has opened, so progress down the list shows.
+// A per-viewer convenience: the board reads the same without it.
+(() => {
+  const key = "qpc-board-opened";
+  // Read again before each change: the Sent quotes page shares this key.
+  const load = () => { try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch { return []; } };
+  let opened = load();
+  const mark = () => document.querySelectorAll(".card[data-page]").forEach((card) => card.classList.toggle("opened", opened.includes(card.dataset.page)));
+  document.addEventListener("click", (event) => {
+    const card = event.target.closest(".card-link")?.closest(".card");
+    if (!card) return;
+    opened = load();
+    if (opened.includes(card.dataset.page)) return;
+    opened = [...opened, card.dataset.page].slice(-200);
+    try { localStorage.setItem(key, JSON.stringify(opened)); } catch {}
+    mark();
+  });
+  mark();
+})();
+// Done marks and the sort order are this viewer's own, kept in this browser
+// by RFQ (so a rebuilt page keeps them). Done cards sink to the bottom of their
+// group. The board reads the same without them.
+(() => {
+  const read = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key) || "null") ?? fallback; } catch { return fallback; } };
+  const write = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
+  const DONE = "qpc-board-notes", SORT = "qpc-board-sort";
+  let marks = read(DONE, {});
+  // Both pages keep marks under one key: read it again before each change, so
+  // a page left open does not undo or erase what the other page saved.
+  const mark = (id, done) => {
+    marks = read(DONE, {});
+    if (done) marks[id] = { done: true, at: new Date().toISOString() }; else delete marks[id];
+    write(DONE, marks);
+  };
+  let sort = read(SORT, "urgent");
+  const cards = [...document.querySelectorAll(".card[data-case]")];
+  cards.forEach((card, index) => { card.dataset.order = index; });
+  const byAsked = (a, b) => (a.dataset.asked || "").localeCompare(b.dataset.asked || "");
+  // Confidence: High 3, Medium 2, Low 1; 0 = a line still has no price, always last.
+  const rank = (card) => Number(card.dataset.confidence || 0);
+  const byConfidence = (direction) => (a, b) => (rank(a) === 0) - (rank(b) === 0) || direction * (rank(b) - rank(a)) || a.dataset.order - b.dataset.order;
+  const order = { urgent: (a, b) => a.dataset.order - b.dataset.order, newest: (a, b) => byAsked(b, a), oldest: byAsked, confident: byConfidence(1), unsure: byConfidence(-1),
+    // Highest value first; cards with nothing priced (-1) last.
+    value: (a, b) => Number(b.dataset.value) - Number(a.dataset.value) || a.dataset.order - b.dataset.order };
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Cards glide to their new place (first/last/invert/play) so the eye can follow.
+  const arrange = (animate = true) => {
+    const before = new Map(cards.map((card) => [card, card.getBoundingClientRect().top]));
+    for (const list of document.querySelectorAll(".cards")) {
+      const items = [...list.children].filter((el) => el.matches(".card"));
+      items.sort((a, b) => (${sinkDone} ? a.classList.contains("done") - b.classList.contains("done") : 0) || (order[sort] || order.urgent)(a, b) || a.dataset.order - b.dataset.order);
+      items.forEach((el) => list.appendChild(el));
+    }
+    if (animate && !still) for (const card of cards) {
+      const moved = before.get(card) - card.getBoundingClientRect().top;
+      if (Math.abs(moved) > 1 && card.offsetParent) card.animate([{ transform: "translateY(" + moved + "px)" }, { transform: "none" }], { duration: 260, easing: "cubic-bezier(.2,.7,.2,1)" });
+    }
+    document.querySelectorAll(".sortbar button").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.sort === sort)));
+  };
+  for (const card of cards) {
+    const id = card.dataset.case, box = card.querySelector(".done-box");
+    const show = () => { card.classList.toggle("done", Boolean(marks[id]?.done)); box.checked = Boolean(marks[id]?.done); };
+    box.addEventListener("change", () => {
+      mark(id, box.checked); show(); arrange();
+      window.qpcToast?.(box.checked ? "Marked " + (card.querySelector(".card-link")?.textContent || "RFQ") + " done" : "Moved back to waiting");
+    });
+    show();
+  }
+  document.querySelectorAll(".sortbar button").forEach((button) => button.addEventListener("click", () => { sort = button.dataset.sort; write(SORT, sort); arrange(); }));
+  arrange(false);
+  // Rows in the mail and chasing tables take a Done mark too; a done row greys
+  // out and moves to the bottom of its table until a newer message replaces it.
+  for (const box of document.querySelectorAll("input[data-row]")) {
+    const row = box.closest("tr"), id = box.dataset.row;
+    const show = () => {
+      box.checked = Boolean(marks[id]?.done);
+      row.classList.toggle("done", box.checked);
+      if (box.checked) row.parentElement.appendChild(row);
+    };
+    box.addEventListener("change", () => {
+      mark(id, box.checked); show();
+      window.qpcToast?.(box.checked ? "Marked done" : "Moved back");
+    });
+    show();
+  }
+})();
+`;
+}
+
 export function renderBoard(board, { badge = null } = {}) {
   const now = new Date(board.generatedAt);
   const grouped = { ready: [], facts: [], decided: [], sent: [] };
   for (const kase of board.cases) grouped[caseGroup(kase)].push(kase);
-  for (const list of Object.values(grouped)) list.sort(byUrgency);
-  const closed = [...grouped.decided, ...grouped.sent];
+  for (const list of [grouped.ready, grouped.facts]) list.sort(byUrgency);
+  grouped.decided.sort(byDecidedOldest);
+  grouped.sent.sort(byChasedThenNewest);
+  const sentDays = board.sentOnBoardDays ?? SENT_ON_BOARD_DAYS;
+  const justSent = grouped.sent.filter((kase) => sentOnBoard(kase, now, sentDays));
   const feedback = board.cases.flatMap((kase) => kase.feedback);
   const monitor = board.monitor;
   const sync = board.lastSync;
@@ -1130,10 +1294,11 @@ export function renderBoard(board, { badge = null } = {}) {
     grouped.facts.length ? `<a class="n-facts" href="#facts"><b>${grouped.facts.length}</b> need facts first</a>` : "",
     pastDue ? `<a class="due-now" href="#due">${pastDue} past due</a>` : "",
     dueToday ? `<a class="due-now" href="#due">${dueToday} due today</a>` : "",
+    grouped.decided.length ? `<a class="orders-now" href="#unsent">${grouped.decided.length} decided, not seen sent</a>` : "",
     ordersCount ? `<a class="orders-now" href="#case-${esc(ordersTarget.caseId)}">${ordersCount} with a work order since asked</a>` : "",
     chasingCount ? `<a class="chasing-now" href="${chasingNoPageCount ? "#chasing" : `#case-${esc(chaseTarget.caseId)}`}">${chasingCount} customer${chasingCount === 1 ? "" : "s"} chasing</a>` : "",
   ].filter(Boolean).join('<span class="sep">·</span>') || "Nothing waiting on you.";
-  const tabs = [["due", "Due now", dueItems.length], ["ready", "Ready", grouped.ready.length], ["facts", "Needs facts", grouped.facts.length], ["chasing", "Chasing", chasingNoPageCount], ["closed", "Decided & sent", closed.length], ["unpriced", "No page yet", unpriced.length + mailNew.length], ["owed", "Quote owed", owed.length], ["reopened", "Price question", reopenedQuotes.length], ["log", "Log", null]]
+  const tabs = [["due", "Due now", dueItems.length], ["ready", "Ready", grouped.ready.length], ["facts", "Needs facts", grouped.facts.length], ["chasing", "Chasing", chasingNoPageCount], ["unsent", "Not seen sent", grouped.decided.length], ["sent", "Just sent", justSent.length], ["unpriced", "No page yet", unpriced.length + mailNew.length], ["owed", "Quote owed", owed.length], ["reopened", "Price question", reopenedQuotes.length], ["log", "Log", null]]
     .filter(([id, , count]) => count !== 0 && (id !== "unpriced" || monitor || mailNew.length) && (id !== "owed" || owed.length) && (id !== "reopened" || reopenedQuotes.length) && (id !== "due" || dueItems.length));
   const recentPlacements = (board.mailPlacements || []).filter((item) => item.place !== "old");
   return `<!doctype html>
@@ -1172,11 +1337,13 @@ ${BOARD_STYLE}
 
   ${grouped.facts.length ? section("facts", "Needs facts first", grouped.facts.length, "No price until the missing fact is in. Open the attachments or ask the customer, then post the size in the QUOTE PREP TRACKER chat as <b>FACTS customer / RFQ / part number: L x W x H in</b> (copy the line on each card). To get the size, open the print in your browser and ask Gemini: <i>calculate the envelope dimensions (L x W x H, ID in inches)</i>. Claude reprices the page within the hour.", `<div class="cards">${grouped.facts.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
 
+  ${grouped.decided.length ? section("unsent", "Decided, not seen sent", grouped.decided.length, "Each has a decided price, but no mail check has seen the quote go out. Oldest first. Send it; if it already went out, tell Claude which email it went in so the card moves to sent.", `<div class="cards">${grouped.decided.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
+
   ${openCount ? "" : `<p class="empty">${ICON.check}<span>Nothing waiting. Every priced RFQ has a decision.</span></p>`}
 
   ${chasingNoPageCount ? section("chasing", "Customers chasing, no price page", chasingNoPageCount, "Follow-ups from the last two weeks with no price page: logged by the front desk in the quote-prep chat, or found in customer email by Claude's mail check. Ask Claude to price any of them.", `${chasingNoPage.length ? chasingTable(chasingNoPage, now) : ""}${mailRowsTable(mailChases, now, "From customer email (Claude's mail check)")}`) : ""}
 
-  ${closed.length ? section("closed", "Decided & sent", closed.length, "", `<details class="fold"><summary>${ICON.chevron}<h3>Show ${closed.length}</h3></summary><div class="cards">${closed.map((kase) => caseCard(kase, now)).join("")}</div></details>`) : ""}
+  ${grouped.sent.length ? section("sent", "Just sent", justSent.length, `Quotes seen sent in the last ${sentDays} business day${sentDays === 1 ? "" : "s"}. Older ones are on the <a href="${SENT_FILE}">Sent quotes page</a>, which keeps all ${grouped.sent.length}. A customer's price question after a quote puts its card back up top; a front-desk chase after one keeps it here.`, justSent.length ? `<details class="fold"${justSent.some(chasedAfterQuote) ? " open" : ""}><summary>${ICON.chevron}<h3>Show ${justSent.length}</h3></summary><div class="cards">${justSent.map((kase) => caseCard(kase, now)).join("")}</div></details>` : "") : ""}
 
   ${(monitor && unpriced.length) || mailNew.length || setAside.length ? section("unpriced", "No price page yet", unpriced.length + mailNew.length, unpriced.length + mailNew.length ? "Open in the mail with no page here; ask Claude to price any of them." : `Nothing here needs pricing. ${setAside.length} item${setAside.length === 1 ? " was" : "s were"} checked and ${setAside.length === 1 ? "is" : "are"} not a price request (below).`, `${mailRowsTable(mailNew, now, "Found by Claude's mail check, not listed elsewhere here")}${monitorTable(unpriced.filter((item) => item.pricing), "Status mentions a quote, RFQ or inquiry", now)}${monitorTable(unpriced.filter((item) => !item.pricing), "Status doesn't say (may be a follow-up or an RFQ)", now)}${notPricedTable(setAside, now)}`) : ""}
 
@@ -1199,107 +1366,52 @@ ${board.chasing ? ` · front desk chat read ${when(board.chasing.readAt)}` : ""}
 </main>
 <div class="toast" role="status" aria-live="polite">${ICON.check}<span>Copied to clipboard</span></div>
 <script>
-// Checked when the page is opened, so a board nothing has rebuilt still says so.
-(() => {
-  const generated = Date.parse(${JSON.stringify(board.generatedAt)});
-  const schedule = ${JSON.stringify(board.refreshSchedule || null)};
-  const banner = document.getElementById("board-stale");
-  const built = new Date(generated).toLocaleString();
-  if (schedule) {
-    // Rebuilt on a timetable: stale only when a scheduled refresh did not arrive.
-    const lastDueRefresh = ${lastDueRefresh.toString()};
-    const due = lastDueRefresh(schedule, Date.now());
-    if (due != null && generated < due) {
-      banner.textContent = "This board missed its scheduled refresh (due " + new Date(due).toLocaleString() + "; built " + built + "). The " + (schedule.label || "scheduled run") + " may have failed; do not rely on it until it refreshes.";
-      banner.hidden = false;
-    }
-    return;
-  }
-  const minutes = (Date.now() - generated) / 60000;
-  if (minutes > ${BOARD_STALE_MINUTES}) {
-    banner.textContent = "This board has not refreshed for " + Math.round(minutes / 60) + " hours (built " + built + "). The pricing sync may have stopped; do not rely on it until it refreshes.";
-    banner.hidden = false;
-  }
-})();
-${SCRIPT}
-// Marks the price pages this viewer has opened, so progress down the list shows.
-// A per-viewer convenience: the board reads the same without it.
-(() => {
-  const key = "qpc-board-opened";
-  let opened = [];
-  try { opened = JSON.parse(localStorage.getItem(key) || "[]"); } catch {}
-  const mark = () => document.querySelectorAll(".card[data-page]").forEach((card) => card.classList.toggle("opened", opened.includes(card.dataset.page)));
-  document.addEventListener("click", (event) => {
-    const card = event.target.closest(".card-link")?.closest(".card");
-    if (!card || opened.includes(card.dataset.page)) return;
-    opened = [...opened, card.dataset.page].slice(-200);
-    try { localStorage.setItem(key, JSON.stringify(opened)); } catch {}
-    mark();
-  });
-  mark();
-})();
-// Done marks and the sort order are this viewer's own, kept in this browser
-// by RFQ (so a rebuilt page keeps them). Done cards sink to the bottom of their
-// group. The board reads the same without them.
-(() => {
-  const read = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key) || "null") ?? fallback; } catch { return fallback; } };
-  const write = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
-  const DONE = "qpc-board-notes", SORT = "qpc-board-sort";
-  const marks = read(DONE, {});
-  let sort = read(SORT, "urgent");
-  const cards = [...document.querySelectorAll(".card[data-case]")];
-  cards.forEach((card, index) => { card.dataset.order = index; });
-  const byAsked = (a, b) => (a.dataset.asked || "").localeCompare(b.dataset.asked || "");
-  // Confidence: High 3, Medium 2, Low 1; 0 = a line still has no price, always last.
-  const rank = (card) => Number(card.dataset.confidence || 0);
-  const byConfidence = (direction) => (a, b) => (rank(a) === 0) - (rank(b) === 0) || direction * (rank(b) - rank(a)) || a.dataset.order - b.dataset.order;
-  const order = { urgent: (a, b) => a.dataset.order - b.dataset.order, newest: (a, b) => byAsked(b, a), oldest: byAsked, confident: byConfidence(1), unsure: byConfidence(-1),
-    // Highest value first; cards with nothing priced (-1) last.
-    value: (a, b) => Number(b.dataset.value) - Number(a.dataset.value) || a.dataset.order - b.dataset.order };
-  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  // Cards glide to their new place (first/last/invert/play) so the eye can follow.
-  const arrange = (animate = true) => {
-    const before = new Map(cards.map((card) => [card, card.getBoundingClientRect().top]));
-    for (const list of document.querySelectorAll(".cards")) {
-      const items = [...list.children].filter((el) => el.matches(".card"));
-      items.sort((a, b) => a.classList.contains("done") - b.classList.contains("done") || (order[sort] || order.urgent)(a, b) || a.dataset.order - b.dataset.order);
-      items.forEach((el) => list.appendChild(el));
-    }
-    if (animate && !still) for (const card of cards) {
-      const moved = before.get(card) - card.getBoundingClientRect().top;
-      if (Math.abs(moved) > 1 && card.offsetParent) card.animate([{ transform: "translateY(" + moved + "px)" }, { transform: "none" }], { duration: 260, easing: "cubic-bezier(.2,.7,.2,1)" });
-    }
-    document.querySelectorAll(".sortbar button").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.sort === sort)));
-  };
-  for (const card of cards) {
-    const id = card.dataset.case, box = card.querySelector(".done-box");
-    const show = () => { card.classList.toggle("done", Boolean(marks[id]?.done)); box.checked = Boolean(marks[id]?.done); };
-    box.addEventListener("change", () => {
-      if (box.checked) marks[id] = { done: true, at: new Date().toISOString() }; else delete marks[id];
-      write(DONE, marks); show(); arrange();
-      window.qpcToast?.(box.checked ? "Marked " + (card.querySelector(".card-link")?.textContent || "RFQ") + " done" : "Moved back to waiting");
-    });
-    show();
-  }
-  document.querySelectorAll(".sortbar button").forEach((button) => button.addEventListener("click", () => { sort = button.dataset.sort; write(SORT, sort); arrange(); }));
-  arrange(false);
-  // Rows in the mail and chasing tables take a Done mark too; a done row greys
-  // out and moves to the bottom of its table until a newer message replaces it.
-  for (const box of document.querySelectorAll("input[data-row]")) {
-    const row = box.closest("tr"), id = box.dataset.row;
-    const show = () => {
-      box.checked = Boolean(marks[id]?.done);
-      row.classList.toggle("done", box.checked);
-      if (box.checked) row.parentElement.appendChild(row);
-    };
-    box.addEventListener("change", () => {
-      if (box.checked) marks[id] = { done: true, at: new Date().toISOString() }; else delete marks[id];
-      write(DONE, marks); show();
-      window.qpcToast?.(box.checked ? "Marked done" : "Moved back");
-    });
-    show();
-  }
-})();
+${pageScript(board)}
+</script>
+</body>
+</html>`;
+}
+
+// Every sent quote, newest first: the record the board's "Just sent" list
+// hands over to once a quote is older than the cut-off. Same cards, links and
+// marks as the board.
+export function renderSentPage(board, { badge = null } = {}) {
+  const now = new Date(board.generatedAt);
+  const sent = board.cases.filter((kase) => caseGroup(kase) === "sent").sort(bySentNewest);
+  const sentDays = board.sentOnBoardDays ?? SENT_ON_BOARD_DAYS;
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sent Quotes</title>
+${badge ? `<link rel="icon" type="image/svg+xml" href="${badge}">` : ""}
+<style>
+${STYLE}
+${BOARD_STYLE}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="back" href="${BOARD_FILE}" title="Back to the board">${ICON.chevron}<span>All RFQs</span></a>
+    <div class="who">${badge ? `<img class="badge" src="${badge}" alt="" width="24" height="24">` : ""}<span class="customer">Sent quotes</span><span class="sep">·</span><span>QPC</span></div>
+  </div>
+</header>
+<main>
+  <div class="intro">
+    <div id="board-stale" class="status alert" hidden></div>
+    <p class="eyebrow">QPC · RFQ pricing</p>
+    <h1 class="summary">${sent.length} sent quote${sent.length === 1 ? "" : "s"}</h1>
+    <p class="lede">Every quote a mail check has seen go out, newest first. The board shows the last ${sentDays} business day${sentDays === 1 ? "" : "s"} of them; a customer's price question after a quote puts its card back on the board.</p>
+    <div class="sortbar" role="group" aria-label="Sort the cards"><span>Sort</span><button type="button" data-sort="urgent" aria-pressed="true">Newest sent</button><button type="button" data-sort="newest" aria-pressed="false">Newest asked</button><button type="button" data-sort="oldest" aria-pressed="false">Oldest asked</button><button type="button" data-sort="confident" aria-pressed="false">Most confident</button><button type="button" data-sort="unsure" aria-pressed="false">Least confident</button><button type="button" data-sort="value" aria-pressed="false">Highest value</button></div>
+  </div>
+  ${sent.length ? `<section id="sent" class="group" aria-label="Sent quotes"><div class="cards">${sent.map((kase) => caseCard(kase, now)).join("")}</div></section>` : `<p class="empty">${ICON.check}<span>No quote has been seen sent yet.</span></p>`}
+  <footer class="fresh">${badge ? `<img class="badge" src="${badge}" alt="" width="20" height="20">` : ""}<span>Built ${when(board.generatedAt)} with the board${board.codeVersion ? ` · board code ${esc(board.codeVersion)}` : ""}<br>Private working file · keep inside QPC</span></footer>
+</main>
+<div class="toast" role="status" aria-live="polite">${ICON.check}<span>Copied to clipboard</span></div>
+<script>
+${pageScript(board, { sinkDone: false })}
 </script>
 </body>
 </html>`;
@@ -1436,10 +1548,10 @@ table.queue td.status-cell { min-width:220px; }
 // (config.pagesMirror). Files are copied only when changed, so the sync client
 // sees no churn, and superseded page versions are removed from the copy only;
 // the originals and their records stay in outputsDir.
-const MIRRORED = /^(CLAUDE-DECISIONS-OPEN\.html|CLAUDE-DECISION-.+\.html|RFQ-CHECK-.+\.md)$/;
+const MIRRORED = /^(CLAUDE-DECISIONS-OPEN\.html|CLAUDE-DECISIONS-SENT\.html|CLAUDE-DECISION-.+\.html|RFQ-CHECK-.+\.md)$/;
 export function mirrorPages({ outputsDir, mirrorDir, board }) {
   fs.mkdirSync(mirrorDir, { recursive: true });
-  const keep = new Set([BOARD_FILE, ...board.cases.map((kase) => kase.page), board.monitor?.report].filter(Boolean));
+  const keep = new Set([BOARD_FILE, SENT_FILE, ...board.cases.map((kase) => kase.page), board.monitor?.report].filter(Boolean));
   const copied = [];
   for (const name of keep) {
     const from = path.join(outputsDir, name);
@@ -1471,14 +1583,16 @@ export function writeBoard({ brandBadgePath = null, ...inputs }) {
   const file = path.join(inputs.outputsDir, BOARD_FILE);
   const board = buildBoard(inputs);
   board.codeVersion = codeVersion();
-  fs.writeFileSync(file, renderBoard(board, { badge: readBrandBadge(brandBadgePath) }));
+  const badge = readBrandBadge(brandBadgePath);
+  fs.writeFileSync(file, renderBoard(board, { badge }));
+  fs.writeFileSync(path.join(inputs.outputsDir, SENT_FILE), renderSentPage(board, { badge }));
   return { file, board };
 }
 
 // The one place the private config becomes the board's inputs, for every
 // command that writes it.
 export function boardInputs(config) {
-  return { outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null, claudeMailPath: config.claudeMail || null, evidenceDir: config.evidenceDir || null, sharedMailbox: config.sharedMailbox || null, mailboxIdPrefixes: config.mailboxIdPrefixes || null, org: config.org || null, triagePath: config.triageFile || null, refreshSchedule: config.refreshSchedule || null, monitorRetiredAt: config.monitorRetiredAt || null, recheckPath: config.recheckFile || null };
+  return { outputsDir: config.outputsDir, monitorStatePath: config.monitorState, storeDir: config.storeDir, trackerPath: config.trackerFile || null, mailCachePath: config.rfqMailCache || null, brandBadgePath: config.brandBadge || null, quotePrepChatPath: config.quotePrepChat || null, claudeMailPath: config.claudeMail || null, evidenceDir: config.evidenceDir || null, sharedMailbox: config.sharedMailbox || null, mailboxIdPrefixes: config.mailboxIdPrefixes || null, org: config.org || null, triagePath: config.triageFile || null, refreshSchedule: config.refreshSchedule || null, monitorRetiredAt: config.monitorRetiredAt || null, recheckPath: config.recheckFile || null, sentOnBoardDays: config.sentOnBoardDays ?? null };
 }
 
 // The commit the board was built from, marked when the working tree has
