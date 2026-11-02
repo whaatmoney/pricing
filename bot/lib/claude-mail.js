@@ -147,7 +147,10 @@ export function caseMail(kase, events) {
   // A quote naming only other RFQ numbers than this case's own is another
   // request's quote.
   const notOther = (event) => !(event.rfqNumbers || []).length || !ownRfqs.length || event.rfqNumbers.map(rfqDigits).some((number) => ownRfqs.includes(number));
-  return { sent: quotes.filter(notOther)[0] || null, lastSent: quotes.filter(sameRequest).at(-1) || null, latest: byTime.at(-1) || null };
+  // newestSent: the latest quote that counts as this request's (the board's
+  // sent cut-off); lastSent stays the stricter same-request match that can
+  // answer a price question.
+  return { sent: quotes.filter(notOther)[0] || null, newestSent: quotes.filter(notOther).at(-1) || null, lastSent: quotes.filter(sameRequest).at(-1) || null, latest: byTime.at(-1) || null };
 }
 
 // Monitor entries a message belongs to: the entry that holds this very email
