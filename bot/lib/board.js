@@ -12,6 +12,7 @@ import { followupThreads, matchThread, monitorCandidates, readQuotePrepChat } fr
 import { readManifest } from "./router-snapshot.js";
 import { readRecheck, recheckIndex } from "./recheck.js";
 import { poTotal, priceSource } from "./review-card.js";
+import { quoteEmailAt } from "./sent-quote.js";
 
 // The pricing front door: where the price pages live. One page joins the mail
 // monitor's view of every RFQ with the pricing side's work on it: which RFQs
@@ -493,6 +494,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       label = monitorSent ? "Quote sent (per monitor status)" : "Quote sent (per mail check)";
       tone = "ok";
     }
+    const open = !sent && (status.tone !== "ok" || reopened);
     return {
       caseId,
       version,
@@ -505,7 +507,7 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       waitingBusinessDays: businessDaysSince(decision.rfq.initiatedAt, now),
       tone,
       state: label,
-      open: !sent && (status.tone !== "ok" || reopened),
+      open,
       reopened,
       monitor: monitor ? { reference: monitor.reference, section: monitor.priority_section, status: monitor.status, lastActivityAt: monitor.last_observed_activity_at || null } : null,
       monitorAmbiguous: link.ambiguous,
@@ -518,7 +520,14 @@ export function buildBoard({ outputsDir, monitorStatePath, storeDir = null, last
       ordersSince: ordersSince(decision),
       // Null when no source dates the quote (only the monitor's last activity).
       lastSentAt: sent ? latestSentAt(monitor, mail) : null,
-      dueDate: monitor?.explicit_due_date || null,
+      // For a chip on the card, nothing more: every line's price as decided
+      // now was read from a quote email that went out (from-sent), though no
+      // mail check has matched that email to this request.
+      quoteEmailAt: quoteEmailAt(decision, view),
+      // The date a card already has stays; an open card without one takes
+      // the customer's own date from the mail check. A decided or sent card
+      // gains no due date here.
+      dueDate: monitor?.explicit_due_date || (open && mail?.due) || null,
       lines: decision.lines.map((line) => ({
         lineId: line.lineId,
         partNumber: line.request.partNumber,
@@ -960,9 +969,11 @@ function headline(kase, group) {
     return `<div class="headline needs"><span class="big">Needs ${esc(facts.join(", ") || "facts")}</span><span class="sub">${blocked.length} of ${lines} unpriced</span></div>`;
   }
   const prices = kase.lines.map(linePrice).filter((price) => price != null);
+  const status = group === "sent" ? "quote sent" : group === "decided" ? "decided" : "per piece";
+  // A quote seen sent whose prices were never read back has none to show.
+  if (!prices.length) return `<div class="headline needs"><span class="big">No price recorded</span><span class="sub">${status} · ${lines}</span></div>`;
   const low = Math.min(...prices);
   const high = Math.max(...prices);
-  const status = group === "sent" ? "quote sent" : group === "decided" ? "decided" : "per piece";
   return `<div class="headline"><span class="big">${low === high ? usd(low) : `${usd(low)}–${usd(high)}`}</span><span class="sub">${status} · ${lines}</span></div>`;
 }
 
@@ -1057,7 +1068,7 @@ function caseCard(kase, now) {
       <div class="card-title">
         <a class="card-link" href="${esc(kase.page)}">${esc(kase.customer)}</a>
         <p class="ref">${esc(kase.reference || kase.caseId)}</p>
-        <p class="marks">${open ? progressHtml(kase.progress, { compact: true }) : ""}${kase.askedAt ? `<span class="chip muted">Asked ${day(kase.askedAt)}</span>` : ""}${group === "decided" && stepAt(kase, "decided") ? `<span class="chip muted late">Decided ${day(stepAt(kase, "decided"))} · not seen sent</span>` : ""}${valueChip(kase.value)}${dueChip(kase, now)}${chaseChip(kase.followup, now)}${mailChip(kase, now)}${kase.open && kase.ordersSince?.length ? '<span class="chip warn" title="A work order for this part came in after the RFQ">Work order since asked</span>' : ""}<span class="chip ok done-mark">${ICON.check}Done</span><span class="chip muted opened-mark">${ICON.check}Opened</span></p>
+        <p class="marks">${open ? progressHtml(kase.progress, { compact: true }) : ""}${kase.askedAt ? `<span class="chip muted">Asked ${day(kase.askedAt)}</span>` : ""}${group === "decided" && kase.quoteEmailAt ? `<span class="chip muted">Price from the quote sent ${day(kase.quoteEmailAt)} · confirm it went out</span>` : group === "decided" && stepAt(kase, "decided") ? `<span class="chip muted late">Decided ${day(stepAt(kase, "decided"))} · not seen sent</span>` : ""}${valueChip(kase.value)}${dueChip(kase, now)}${chaseChip(kase.followup, now)}${mailChip(kase, now)}${kase.open && kase.ordersSince?.length ? '<span class="chip warn" title="A work order for this part came in after the RFQ">Work order since asked</span>' : ""}<span class="chip ok done-mark">${ICON.check}Done</span><span class="chip muted opened-mark">${ICON.check}Opened</span></p>
       </div>
       ${headline(kase, group)}
     </div>
@@ -1337,7 +1348,7 @@ ${BOARD_STYLE}
 
   ${grouped.facts.length ? section("facts", "Needs facts first", grouped.facts.length, "No price until the missing fact is in. Open the attachments or ask the customer, then post the size in the QUOTE PREP TRACKER chat as <b>FACTS customer / RFQ / part number: L x W x H in</b> (copy the line on each card). To get the size, open the print in your browser and ask Gemini: <i>calculate the envelope dimensions (L x W x H, ID in inches)</i>. Claude reprices the page within the hour.", `<div class="cards">${grouped.facts.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
 
-  ${grouped.decided.length ? section("unsent", "Decided, not seen sent", grouped.decided.length, "Each has a decided price, but no mail check has seen the quote go out. Oldest first. Send it; if it already went out, tell Claude which email it went in so the card moves to sent.", `<div class="cards">${grouped.decided.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
+  ${grouped.decided.length ? section("unsent", "Decided, not seen sent", grouped.decided.length, "Each has a decided price, but no mail check has seen the quote go out. Oldest first. Send it; if it already went out, tell Claude which email it went in so the card moves to sent. A card that says its price came from a sent quote has likely gone out already: check, and mark it Done.", `<div class="cards">${grouped.decided.map((kase) => caseCard(kase, now)).join("")}</div>`) : ""}
 
   ${openCount ? "" : `<p class="empty">${ICON.check}<span>Nothing waiting. Every priced RFQ has a decision.</span></p>`}
 
@@ -1599,9 +1610,13 @@ export function boardInputs(config) {
 // uncommitted changes, so a board built from half-finished code says so.
 function codeVersion() {
   const repo = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
+  // This repository's own commit, even when the caller points git at another
+  // one (the Mac sync sets GIT_DIR to the data repository).
+  const { GIT_DIR, GIT_WORK_TREE, ...env } = process.env;
+  const git = (...args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env }).trim();
   try {
-    const head = execFileSync("git", ["-C", repo, "rev-parse", "--short", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    const dirty = execFileSync("git", ["-C", repo, "status", "--porcelain", "--untracked-files=no"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const head = git("rev-parse", "--short", "HEAD");
+    const dirty = git("status", "--porcelain", "--untracked-files=no");
     return dirty ? `${head} + uncommitted changes` : head;
   } catch {
     return null;

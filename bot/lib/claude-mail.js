@@ -124,6 +124,39 @@ export function subjectKey(subject) {
 // RFQ numbers compare by their digits ("RFQ-CA-4100" and "4100" are one
 // request; 4100 and 14100 are not).
 const rfqDigits = (value) => String(value || "").replace(/\D/g, "");
+// The RFQ numbers a text spells out, by their digits, short ones too: "RFQ 77",
+// "RFQ-CA-4100", "RFQ 2026-US-4100" (the whole identifier's digits), "RFQ /
+// 4200", "RFQ No. 4200", "RFQ XYZ 6100" (one short word between), plain
+// numbers listed after one "RFQ" ("RFQ 4100 & 4200"; "RFQ 4100 /
+// ABC-100" is one number and a part) and every number of a short range
+// ("RFQ 77-79", "RFQ 5120-5125"). For matching one named number against
+// another exactly. `unread` is true when any "RFQ" is followed by a number
+// this could not make out, so a caller can treat the text as unknown.
+const RFQ_LIST = /RFQ\s*(?:(?:no\.?|number|nbr\.?|num\.?)\s*|[A-Z]{2,6}\s+)?[#:/-]?\s*([A-Z0-9-]*\d[A-Z0-9-]*)((?:\s*(?:,|&|and|\/)\s*\d+(?:-\d+)?(?![A-Z0-9-]))*)/iy;
+export function spelledRfqNumbers(text) {
+  const source = String(text || "");
+  const items = [];
+  let unread = false;
+  // Each "RFQ" on its own: read where it stands, or noted when a number follows that cannot be.
+  for (const { index } of source.matchAll(/\bRFQ/gi)) {
+    RFQ_LIST.lastIndex = index;
+    const match = RFQ_LIST.exec(source);
+    if (match) items.push(match[1], ...match[2].split(/\s*(?:,|&|and|\/)\s*/i).filter(Boolean));
+    // A number right after it, or after one short word ("RFQ ref. 4200").
+    else if (/^RFQ(?:\s*[A-Za-z.]{1,6})?[^A-Za-z0-9\n]{0,6}\d/i.test(source.slice(index))) unread = true;
+  }
+  const numbers = items.flatMap((item) => {
+    const [, from, to] = item.match(/^(\d+)-(\d+)$/) || [];
+    const span = Number(to) - Number(from);
+    // A range counts each of its numbers; any other identifier is one number, by all its digits.
+    return from && span > 0 && span <= 100 ? Array.from({ length: span + 1 }, (_, index) => String(Number(from) + index)) : [rfqDigits(item)];
+  }).filter(Boolean);
+  return Object.assign(numbers, { unread });
+}
+const namedRfqNumbers = (kase) => spelledRfqNumbers([kase.reference, kase.monitorReference].join(" "));
+// The numbers used where one is also looked for inside other text, and for
+// telling a quote for another request: as before, four digits or more, a
+// reference's "RFQ …" token taken whole.
 const caseRfqNumbers = (kase) => [...String([kase.reference, kase.monitorReference].join(" ")).matchAll(/\bRFQ\s*#?\s*-?\s*([A-Z0-9-]*\d[A-Z0-9-]*)/gi)].map((match) => rfqDigits(match[1])).filter((token) => token.length >= 4);
 function caseTokens(kase) {
   const numbers = [...String([kase.reference, kase.monitorReference].join(" ")).matchAll(/\bRFQ\s*#?\s*-?\s*([A-Z0-9-]*\d[A-Z0-9-]*)/gi)].map((match) => match[1]);
@@ -135,7 +168,7 @@ const caseDomains = (kase) => (kase.customerRecord?.emailDomains || []).map(lowe
 // Messages about this case: the customer's domain and a shared part or RFQ number.
 export function caseMail(kase, events) {
   const domains = caseDomains(kase);
-  if (!domains.length) return { sent: null, latest: null };
+  if (!domains.length) return { sent: null, latest: null, due: null };
   const mine = caseTokens(kase);
   const related = events.filter((event) => domains.includes(lower(event.customerDomain)) && sharesToken(eventTokens(event), mine));
   const byTime = related.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
@@ -147,10 +180,23 @@ export function caseMail(kase, events) {
   // A quote naming only other RFQ numbers than this case's own is another
   // request's quote.
   const notOther = (event) => !(event.rfqNumbers || []).length || !ownRfqs.length || event.rfqNumbers.map(rfqDigits).some((number) => ownRfqs.includes(number));
+  // The newest date the customer wrote for this request ("need by 10/14"), so
+  // a card keeps the due date its emails carry. Taken straight from the
+  // customer's asking emails, not through the looser match above: one that
+  // names RFQ numbers counts only when every one is this request's (a date
+  // in a message about two requests may be the other's); one
+  // that names none must name one of this case's parts exactly ("ABC-1000" is
+  // not "ABC-100"). The request's own email can be stamped a little before
+  // the case's asked time, hence the day's allowance.
+  const ownParts = (kase.lines || []).map((line) => squash(line.partNumber));
+  const named = namedRfqNumbers(kase);
+  const thisRequest = (event) => ((event.rfqNumbers || []).length ? event.rfqNumbers.map(rfqDigits).every((number) => number && named.includes(number)) : (event.partNumbers || []).some((part) => ownParts.includes(squash(part))));
+  const due = events.filter((event) => domains.includes(lower(event.customerDomain)) && ASKING_KINDS.has(event.kind) && event.dueDate && thisRequest(event) && (!kase.askedAt || Date.parse(event.at) >= Date.parse(kase.askedAt) - 86400000))
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1)?.dueDate || null;
   // newestSent: the latest quote that counts as this request's (the board's
   // sent cut-off); lastSent stays the stricter same-request match that can
   // answer a price question.
-  return { sent: quotes.filter(notOther)[0] || null, newestSent: quotes.filter(notOther).at(-1) || null, lastSent: quotes.filter(sameRequest).at(-1) || null, latest: byTime.at(-1) || null };
+  return { sent: quotes.filter(notOther)[0] || null, newestSent: quotes.filter(notOther).at(-1) || null, lastSent: quotes.filter(sameRequest).at(-1) || null, latest: byTime.at(-1) || null, due };
 }
 
 // Monitor entries a message belongs to: the entry that holds this very email
@@ -206,7 +252,9 @@ export function placeMailEvents(events, cases, queue, { monitorCovers = () => fa
     if (sent) sentBy.set(sent.id, kase);
   }
   // Both name RFQ numbers and none agree by digits: another request's quote.
-  const rfqConflict = (a, b) => (a.rfqNumbers || []).length > 0 && (b.rfqNumbers || []).length > 0 && !a.rfqNumbers.map(rfqDigits).some((number) => b.rfqNumbers.map(rfqDigits).includes(number));
+  // Or the message names a number the quote does not: one quote for RFQ 4100
+  // leaves "RFQ 4100 and 4200" still asking.
+  const rfqConflict = (quote, asked) => (quote.rfqNumbers || []).length > 0 && (asked.rfqNumbers || []).length > 0 && !asked.rfqNumbers.map(rfqDigits).every((number) => quote.rfqNumbers.map(rfqDigits).includes(number));
   const answeredBy = (event) => events.find((other) => other.kind === "quote-sent" && lower(other.customerDomain) === lower(event.customerDomain) && Date.parse(other.at) > Date.parse(event.at) && !rfqConflict(other, event) && (sharesToken(eventTokens(other), eventTokens(event)) || subjectKey(other.subject) === subjectKey(event.subject)));
   const casesFor = (event, entries) => {
     const domain = lower(event.customerDomain);
@@ -232,7 +280,11 @@ export function placeMailEvents(events, cases, queue, { monitorCovers = () => fa
     const afterClose = closed && !(caseSentAt(closed) && Date.parse(event.at) <= Date.parse(caseSentAt(closed)));
     const listed = !closed && entries.find(({ entry }) => monitorCovers(entry, event));
     if (listed) return { event, place: "listed", reference: listed.entry.reference, detail: `the board lists monitor entry ${listed.entry.reference}` };
-    if (closed && !afterClose) return { event, place: "answered", caseId: closed.caseId, detail: `before ${closed.customer || closed.caseId}'s quote went out` };
+    // Not when the message names an RFQ number that is not the closed case's
+    // own: that is another request (alone, or beside this one), and it stays
+    // listed.
+    const otherRequest = closed && (event.rfqNumbers || []).length > 0 && !event.rfqNumbers.map(rfqDigits).every((number) => number && namedRfqNumbers(closed).includes(number));
+    if (closed && !afterClose && !otherRequest) return { event, place: "answered", caseId: closed.caseId, detail: `before ${closed.customer || closed.caseId}'s quote went out` };
     const first = entries[0];
     const entry = first?.entry || (eventTokens(event).length ? null : sameCustomerEntry(event, queue));
     return { event, place: "found", closedCase: closed ? { caseId: closed.caseId, customer: closed.customer || null, state: closed.state || null } : null, monitor: entry ? monitorView(entry, first ? first.by : "customer") : null, detail: "listed under what the mail check found" };
