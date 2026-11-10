@@ -257,3 +257,80 @@ test("the trial scorecard counts runs per shop weekday, gaps, held cutoffs and w
   assert.deepEqual(card.claudeOnly.map((item) => item.id), ["1"]);
   assert.deepEqual(card.skippedBy, { newsletter: 1 });
 });
+
+test("a quote for one number of a range or list the request spells out counts, with the request's own part", () => {
+  const ranged = { ...acme, reference: "Acme RFQ 5120-5125" };
+  const quoted = (kase, extra) => caseMail(kase, [event("q", "2026-09-12T15:00:00Z", "quote-sent", { subject: "RE: RFQ 5120-5125", ...extra })]);
+  // The mail check logged the quote under the first number of the range.
+  assert.equal(quoted(ranged, { rfqNumbers: ["5120"] }).sent.id, "q");
+  assert.equal(quoted(ranged, { rfqNumbers: ["5120"] }).newestSent.id, "q", "and it dates the cut-off");
+  assert.equal(quoted(ranged, { rfqNumbers: ["5123"] }).sent.id, "q", "any number inside the range");
+  assert.equal(quoted({ ...acme, reference: "Acme RFQ 4100 & 4200" }, { rfqNumbers: ["4200"] }).sent.id, "q", "one of a list");
+  // Not without the request's own part: under one reference, another part's quote is another request's.
+  assert.equal(quoted(ranged, { rfqNumbers: ["5120"], partNumbers: ["XYZ-2"] }).sent, null, "another part");
+  assert.equal(quoted(ranged, { rfqNumbers: ["5120"], partNumbers: ["ABC-10000"] }).sent, null, "a longer part number is another part");
+  assert.equal(quoted(ranged, { rfqNumbers: ["5120"], partNumbers: [] }).sent, null, "no part named");
+  // Not a number outside the range, nor a short one.
+  assert.equal(quoted(ranged, { rfqNumbers: ["5126"] }).sent, null, "just outside the range");
+  assert.equal(quoted({ ...acme, reference: "Acme RFQ 77-79" }, { rfqNumbers: ["78"] }).sent, null, "numbers under four digits are left out, as before");
+  // It does not answer a price question raised since: that still needs the request's number as written.
+  assert.equal(quoted(ranged, { rfqNumbers: ["5120"] }).lastSent, null);
+  // Nor does it reach back before the request.
+  assert.equal(caseMail(ranged, [event("old", "2026-09-01T15:00:00Z", "quote-sent", { rfqNumbers: ["5120"] })]).sent, null);
+});
+
+test("a quote that writes the request's number and line suffix another way counts, with the request's own part", () => {
+  const suffixed = { ...acme, reference: "XYZ RFQ 6100/1" };
+  const quoted = (extra) => caseMail(suffixed, [event("q", "2026-09-12T15:00:00Z", "quote-sent", { subject: "RE: RFQ XYZ 6100/1", ...extra })]);
+  assert.equal(quoted({ rfqNumbers: ["XYZ 6100/1"] }).sent.id, "q");
+  assert.equal(quoted({ rfqNumbers: ["6100 / 01"] }).sent.id, "q", "spacing and a leading zero");
+  assert.equal(quoted({ rfqNumbers: ["XYZ 6100/2"] }).sent, null, "another line suffix is another request");
+  assert.equal(quoted({ rfqNumbers: ["XYZ 16100/1"] }).sent, null, "a longer number");
+  assert.equal(quoted({ rfqNumbers: ["XYZ 6100/1"], partNumbers: ["XYZ-2"] }).sent, null, "another part");
+  assert.equal(quoted({ rfqNumbers: ["XYZ 6100/1"], partNumbers: [] }).sent, null, "no part named");
+  // The tail of a longer identifier is not a number with a suffix: another year's request stays another request.
+  const dated = { ...acme, reference: "RFQ 2026-6100/1" };
+  assert.equal(caseMail(dated, [event("q", "2026-09-12T15:00:00Z", "quote-sent", { subject: "RE: RFQ 2025-6100/1", rfqNumbers: ["2025-6100/1"] })]).sent, null);
+  for (const mark of ["_", "."]) assert.equal(caseMail({ ...acme, reference: `RFQ 2026${mark}6100/1` }, [event("q", "2026-09-12T15:00:00Z", "quote-sent", { subject: "RE: RFQ", rfqNumbers: [`2025${mark}6100/1`] })]).sent, null, mark);
+  // A drawing number written the same way in the reference is not the request's RFQ number.
+  assert.equal(caseMail({ ...acme, reference: "RFQ 4100 / Drawing 6100/1" }, [event("q", "2026-09-12T15:00:00Z", "quote-sent", { subject: "RE: RFQ 6100/1", rfqNumbers: ["6100/1"] })]).sent, null);
+  // A number with a suffix is never looked for among a range's numbers by its digits run together.
+  assert.equal(caseMail({ ...acme, reference: "Acme RFQ 61000-61005" }, [event("q", "2026-09-12T15:00:00Z", "quote-sent", { subject: "RE: RFQ 6100/1", rfqNumbers: ["6100/1"] })]).sent, null);
+});
+
+test("a quote for some of a request's parts under a range does not mark the whole page sent", () => {
+  const two = { ...acme, reference: "Acme RFQ 5120-5125", lines: [{ partNumber: "ABC-1000" }, { partNumber: "DEF-2000" }] };
+  const quote = (parts) => [event("q", "2026-09-12T15:00:00Z", "quote-sent", { subject: "RE: RFQ 5120-5125", rfqNumbers: ["5120"], partNumbers: parts })];
+  assert.equal(caseMail(two, quote(["ABC-1000"])).sent, null, "the other part is still owed its quote");
+  assert.equal(caseMail(two, quote(["DEF-2000", "ABC-1000"])).sent.id, "q", "a quote naming every part");
+});
+
+test("a closed page's quote does not hide a message about another part under the same range", () => {
+  const closed = { ...acme, caseId: "acme-a", customer: "Acme Precision", reference: "Acme RFQ 5120-5125", lines: [{ partNumber: "ABC-1000" }], open: false, state: "Quote sent (per mail check)", progress: [{ key: "sent", done: true, at: "2026-09-20T15:00:00Z" }] };
+  const events = [
+    event("other-part", "2026-09-15T15:00:00Z", "rfq", { from: "buyer@acme.example", subject: "RFQ 5125", rfqNumbers: ["5125"], partNumbers: ["DEF-2000"] }),
+    event("same-part", "2026-09-15T16:00:00Z", "followup", { from: "buyer@acme.example", subject: "RE: RFQ 5120-5125", rfqNumbers: ["5120"], partNumbers: ["ABC-1000"] }),
+    event("no-part", "2026-09-15T17:00:00Z", "followup", { from: "buyer@acme.example", subject: "RE: RFQ 5120-5125", rfqNumbers: ["5120"], partNumbers: [] }),
+  ];
+  const placed = Object.fromEntries(placeMailEvents(events, [closed], []).map((item) => [item.event.id, item.place]));
+  assert.equal(placed["other-part"], "found", "another part's request stays listed");
+  assert.equal(placed["same-part"], "answered", "this part's own earlier chase is answered by its quote");
+  assert.equal(placed["no-part"], "answered", "as before for a message that names no part");
+  // A message about this part and another, under two of the range's numbers, stays listed: the other part is unquoted.
+  const mixed = [event("mixed", "2026-09-15T18:00:00Z", "rfq", { from: "buyer@acme.example", subject: "RFQ 5120 and 5121", rfqNumbers: ["5120", "5121"], partNumbers: ["ABC-1000", "DEF-2000"] }), event("q", "2026-09-20T15:00:00Z", "quote-sent", { subject: "RE: RFQ 5120-5125", rfqNumbers: ["5120"], partNumbers: ["ABC-1000"] })];
+  assert.equal(Object.fromEntries(placeMailEvents(mixed, [closed], []).map((item) => [item.event.id, item.place])).mixed, "found");
+});
+
+test("under one range, each request's quote marks only its own page sent", () => {
+  const first = { ...acme, caseId: "acme-a", customer: "Acme Precision", reference: "Acme RFQ 5120-5125", lines: [{ partNumber: "ABC-1000" }], open: false, progress: [] };
+  // (One part each: the six-parts-under-one-range shape.)
+  const second = { ...first, caseId: "acme-b", lines: [{ partNumber: "DEF-2000" }] };
+  const quoteFor = (id, part, at) => event(id, at, "quote-sent", { subject: "RE: RFQ 5120-5125", rfqNumbers: ["5120"], partNumbers: [part] });
+  const one = [quoteFor("q-a", "ABC-1000", "2026-09-12T15:00:00Z")];
+  assert.equal(caseMail(first, one).sent.id, "q-a");
+  assert.equal(caseMail(second, one).sent, null, "the other request is still owed its quote");
+  const both = [...one, quoteFor("q-b", "DEF-2000", "2026-09-15T15:00:00Z")];
+  assert.equal(caseMail(second, both).sent.id, "q-b");
+  const placed = Object.fromEntries(placeMailEvents(both, [first, second], []).map((item) => [item.event.id, item]));
+  assert.deepEqual([placed["q-a"].place, placed["q-a"].caseId, placed["q-b"].place, placed["q-b"].caseId], ["sent-mark", "acme-a", "sent-mark", "acme-b"]);
+});
