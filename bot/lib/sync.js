@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { boardInputs, mirrorPages, writeBoard } from "./board.js";
+import { writeBoardExport } from "./board-export.js";
 import { refreshPages } from "./pages.js";
 import { importSnapshot, listExports, snapshotStatus } from "./router-snapshot.js";
 
@@ -75,6 +76,15 @@ export function runSync({ config, limits, trigger = "manual", now = new Date(), 
         record.publish = startPublish(config);
       } catch (error) {
         record.errors.push(`mirror: ${error.message}`);
+      }
+    }
+    // The read-only CSV copy (lib/board-export.js), where the config names a folder.
+    if (config.boardExportDir) {
+      try {
+        const copy = writeBoardExport({ outputsDir: config.outputsDir, exportDir: config.boardExportDir, board });
+        record.export = { open: copy.rows.open, history: copy.rows.history, noPage: copy.noPage, written: copy.written };
+      } catch (error) {
+        record.errors.push(`export: ${error.message}`);
       }
     }
   } catch (error) {
