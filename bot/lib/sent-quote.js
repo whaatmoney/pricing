@@ -143,14 +143,17 @@ function wordsGivePrice(words, line, unitPrice) {
 // an email whose subject is this request's, and whose kept words plainly give
 // that very price for that very quantity.
 export function quoteEmailAt(decision, view) {
-  const asked = Date.parse(decision.rfq?.initiatedAt || "");
-  const dates = decision.lines.map((line) => {
-    const current = view.current.get(line.lineId);
-    if (!current || current.choice === "correction") return null;
-    const note = readSentQuoteNote(current.note);
-    if (!note || Date.parse(note.at) !== Date.parse(current.decidedAt) || Date.parse(note.at) < asked) return null;
-    if (!subjectIsThisRequest(note.subject, decision)) return null;
-    return wordsGivePrice(note.words, line, current.unitPrice) ? note.at : null;
-  });
+  const dates = decision.lines.map((line) => lineQuoteEmailAt(decision, line, view.current.get(line.lineId)));
   return dates.length > 0 && dates.every(Boolean) ? [...dates].sort().at(-1) : null;
+}
+
+// The same for one line: when the sent quote its current decision was read
+// from went out, else null. `current` is the line's decision as it stands now.
+export function lineQuoteEmailAt(decision, line, current) {
+  const asked = Date.parse(decision.rfq?.initiatedAt || "");
+  if (!current || current.choice === "correction") return null;
+  const note = readSentQuoteNote(current.note);
+  if (!note || Date.parse(note.at) !== Date.parse(current.decidedAt) || Date.parse(note.at) < asked) return null;
+  if (!subjectIsThisRequest(note.subject, decision)) return null;
+  return wordsGivePrice(note.words, line, current.unitPrice) ? note.at : null;
 }

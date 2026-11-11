@@ -4,6 +4,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { applyAnswer } from "./lib/answer.js";
 import { boardInputs, buildBoard, mirrorPages, writeBoard } from "./lib/board.js";
+import { writeBoardExport } from "./lib/board-export.js";
 import { readLastSync, runSync, startPublish } from "./lib/sync.js";
 import { buildDecision, loadMessages } from "./lib/decision.js";
 import { customerJobs } from "./lib/job-numbers.js";
@@ -46,6 +47,9 @@ const USAGE = `Usage:
                                          History export is in: unchanged pages are stamped as checked,
                                          changed ones are rebuilt as the next version (run board after)
   node bot/cli.js board                  Rewrite the open-decisions page
+  node bot/cli.js export [--dir PATH]    Write the board's read-only CSV copy (rfq-open.csv and
+                                         rfq-history.csv) to PATH, or to boardExportDir in the
+                                         config; reads the board's data and changes nothing in it
   node bot/cli.js shadow                 TypeSafe shadow check: where its answers disagree with the
                                          board's "quote sent", "price request" and chase-urgency rules
                                          (needs TYPESAFE_API_KEY; changes nothing on the board; use
@@ -89,7 +93,20 @@ function refreshBoard(config) {
       mirrored = `; COPY FAILED (${error.message}), the board itself is fine`;
     }
   }
-  return `${file} (${board.cases.filter((kase) => kase.open).length} waiting)${mirrored}`;
+  return `${file} (${board.cases.filter((kase) => kase.open).length} waiting)${mirrored}${exportBoard(config, board)}`;
+}
+
+// The read-only CSV copy for a reader that cannot open the board (see
+// lib/board-export.js). Written only where the private config names a folder,
+// and a failure here never stops the board.
+const exportLine = (dir, result) => `${dir}: ${result.rows.open} open and ${result.rows.history} sent rows from ${result.cases} requests with a price page and ${result.noPage} listed without one${result.written.length ? "" : ", unchanged"}`;
+function exportBoard(config, board) {
+  if (!config.boardExportDir) return "";
+  try {
+    return `; export in ${exportLine(config.boardExportDir, writeBoardExport({ outputsDir: config.outputsDir, exportDir: config.boardExportDir, board }))}`;
+  } catch (error) {
+    return `; EXPORT FAILED (${error.message}), the board itself is fine`;
+  }
 }
 
 const cents = (value) => Math.round(Number(value) * 100);
@@ -240,6 +257,15 @@ async function main() {
     console.log(`Board: ${refreshBoard(config)}`);
     return;
   }
+  if (command === "export") {
+    // Read-only: builds the board in memory and writes only the two CSV files.
+    const { values } = parseArgs({ args: process.argv.slice(3), options: { dir: { type: "string" } } });
+    const dir = values.dir ? path.resolve(values.dir) : config.boardExportDir;
+    if (!dir) throw new Error("export needs --dir PATH, or boardExportDir in the config");
+    const board = buildBoard({ ...boardInputs(config), lastSync: readLastSync(config) });
+    console.log(`Export in ${exportLine(dir, writeBoardExport({ outputsDir: config.outputsDir, exportDir: dir, board }))}`);
+    return;
+  }
   if (command === "shadow") {
     // Shadow trial (pricing owner, 2026-10-06). Read-only
     // for the board; writes only its own cache and report in the private store.
@@ -306,6 +332,9 @@ async function main() {
     }
     const missing = rows.filter(({ place }) => !shown.has(place) && place !== "unattached").length;
     console.log(`${rows.length} message(s); ${missing ? `${missing} NOT SHOWN` : "every request and chase is on the board"}.`);
+    // This command rewrites the board too, so the CSV copy follows it.
+    const exported = exportBoard(config, board);
+    if (exported) console.log(exported.replace(/^; e/, "E"));
     if (missing) process.exitCode = 1;
     return;
   }
