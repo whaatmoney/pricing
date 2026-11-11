@@ -158,6 +158,17 @@ const namedRfqNumbers = (kase) => spelledRfqNumbers([kase.reference, kase.monito
 // telling a quote for another request: as before, four digits or more, a
 // reference's "RFQ …" token taken whole.
 const caseRfqNumbers = (kase) => [...String([kase.reference, kase.monitorReference].join(" ")).matchAll(/\bRFQ\s*#?\s*-?\s*([A-Z0-9-]*\d[A-Z0-9-]*)/gi)].map((match) => rfqDigits(match[1])).filter((token) => token.length >= 4);
+// An RFQ number written with a line suffix, as "6100/1": the number and its
+// suffix, kept apart from "6100/2". Read in two places only, so a drawing or
+// part number written the same way is never taken for it: right after "RFQ"
+// in a reference ("XYZ RFQ 6100/1", one short word allowed between), and as
+// the whole of a number the mail check logged ("XYZ 6100/1"). A long second
+// number ("4100 / 4200") is a list, not a suffix, and the tail of a longer
+// identifier ("2026-6100/1") is not read at all.
+const SLASH_FORM = "(\\d{3,})\\s*\\/\\s*(\\d{1,2})(?![A-Za-z0-9_/-]|\\.\\d)";
+const slashKey = (match) => `${match[1]}/${Number(match[2])}`;
+const referenceSlashForms = (text) => [...String(text || "").matchAll(new RegExp(`\\bRFQ\\s*(?:(?:no\\.?|number|nbr\\.?|num\\.?)\\s*|[A-Z]{2,6}\\s+)?[#:]?\\s*${SLASH_FORM}`, "gi"))].map(slashKey);
+const loggedSlashForm = (raw) => { const match = String(raw || "").trim().match(new RegExp(`^(?:RFQ\\s*[#:]?\\s*)?(?:[A-Z]{2,6}\\s+)?${SLASH_FORM}$`, "i")); return match ? slashKey(match) : null; };
 function caseTokens(kase) {
   const numbers = [...String([kase.reference, kase.monitorReference].join(" ")).matchAll(/\bRFQ\s*#?\s*-?\s*([A-Z0-9-]*\d[A-Z0-9-]*)/gi)].map((match) => match[1]);
   return [...(kase.lines || []).map((line) => line.partNumber), ...numbers].map(squash).filter((token) => token.length >= 4);
@@ -179,7 +190,23 @@ export function caseMail(kase, events) {
   const sameRequest = (event) => !(event.rfqNumbers || []).length || (ownRfqs.length > 0 && event.rfqNumbers.map(rfqDigits).some((number) => ownRfqs.includes(number)));
   // A quote naming only other RFQ numbers than this case's own is another
   // request's quote.
-  const notOther = (event) => !(event.rfqNumbers || []).length || !ownRfqs.length || event.rfqNumbers.map(rfqDigits).some((number) => ownRfqs.includes(number));
+  // Its own too is a quote that names every one of this case's parts exactly
+  // and an RFQ number the case's reference covers without spelling it the
+  // same way: one number of a range or list ("RFQ 5120-5125" and a quote for
+  // 5120), or the same number and line suffix written otherwise ("XYZ
+  // 6100/1"). The exact parts keep one request's quote from standing for
+  // another under the same reference, and a quote for some of a case's parts
+  // from closing the rest; numbers of fewer than four digits are left out,
+  // as above.
+  const ownParts = (kase.lines || []).map((line) => squash(line.partNumber));
+  const named = namedRfqNumbers(kase);
+  const ownSlashForms = referenceSlashForms([kase.reference, kase.monitorReference].join(" "));
+  // A number written with a slash is compared whole, suffix and all; only a
+  // plain one is looked for among a range's or list's numbers ("6100/1" is
+  // not 61001 of "RFQ 61000-61005").
+  const coveredNumber = (raw) => (String(raw).includes("/") ? ownSlashForms.includes(loggedSlashForm(raw)) : rfqDigits(raw).length >= 4 && named.includes(rfqDigits(raw)));
+  const ownPartQuote = (event) => ownParts.length > 0 && ownParts.every((part) => (event.partNumbers || []).map(squash).includes(part)) && event.rfqNumbers.some(coveredNumber);
+  const notOther = (event) => !(event.rfqNumbers || []).length || !ownRfqs.length || event.rfqNumbers.map(rfqDigits).some((number) => ownRfqs.includes(number)) || ownPartQuote(event);
   // The newest date the customer wrote for this request ("need by 10/14"), so
   // a card keeps the due date its emails carry. Taken straight from the
   // customer's asking emails, not through the looser match above: one that
@@ -188,8 +215,6 @@ export function caseMail(kase, events) {
   // that names none must name one of this case's parts exactly ("ABC-1000" is
   // not "ABC-100"). The request's own email can be stamped a little before
   // the case's asked time, hence the day's allowance.
-  const ownParts = (kase.lines || []).map((line) => squash(line.partNumber));
-  const named = namedRfqNumbers(kase);
   const thisRequest = (event) => ((event.rfqNumbers || []).length ? event.rfqNumbers.map(rfqDigits).every((number) => number && named.includes(number)) : (event.partNumbers || []).some((part) => ownParts.includes(squash(part))));
   const due = events.filter((event) => domains.includes(lower(event.customerDomain)) && ASKING_KINDS.has(event.kind) && event.dueDate && thisRequest(event) && (!kase.askedAt || Date.parse(event.at) >= Date.parse(kase.askedAt) - 86400000))
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1)?.dueDate || null;
@@ -284,7 +309,12 @@ export function placeMailEvents(events, cases, queue, { monitorCovers = () => fa
     // own: that is another request (alone, or beside this one), and it stays
     // listed.
     const otherRequest = closed && (event.rfqNumbers || []).length > 0 && !event.rfqNumbers.map(rfqDigits).every((number) => number && namedRfqNumbers(closed).includes(number));
-    if (closed && !afterClose && !otherRequest) return { event, place: "answered", caseId: closed.caseId, detail: `before ${closed.customer || closed.caseId}'s quote went out` };
+    // Nor when it names any part that is not the closed case's: under a
+    // shared reference ("RFQ 5120-5125") that is, or includes, another part's
+    // request.
+    const closedParts = closed ? (closed.lines || []).map((line) => squash(line.partNumber)) : [];
+    const otherPart = closed && (event.partNumbers || []).length > 0 && !event.partNumbers.every((part) => closedParts.includes(squash(part)));
+    if (closed && !afterClose && !otherRequest && !otherPart) return { event, place: "answered", caseId: closed.caseId, detail: `before ${closed.customer || closed.caseId}'s quote went out` };
     const first = entries[0];
     const entry = first?.entry || (eventTokens(event).length ? null : sameCustomerEntry(event, queue));
     return { event, place: "found", closedCase: closed ? { caseId: closed.caseId, customer: closed.customer || null, state: closed.state || null } : null, monitor: entry ? monitorView(entry, first ? first.by : "customer") : null, detail: "listed under what the mail check found" };

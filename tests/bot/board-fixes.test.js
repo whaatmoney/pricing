@@ -301,3 +301,29 @@ test("the board names its own code's commit even when git is pointed at another 
     if (saved === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = saved;
   }
 });
+
+test("a quote logged under one number of the request's range marks the card sent, and a price question since keeps it open", () => {
+  const ranged = (decision) => ({ ...decision, rfq: { ...decision.rfq, reference: "RFQ 5120-5125" } });
+  // The case has two parts (ABC-100 at two quantities, and DEF-200); the quote names both.
+  const quote = mailEvent("q1", "2026-10-20T16:00:00Z", { kind: "quote-sent", from: "pat@shop.example", to: ["buyer@acme.example"], subject: "RE: RFQ 5120-5125", rfqNumbers: ["5120"], partNumbers: ["ABC-100", "DEF-200"] });
+  const seen = world([], [quote], ranged);
+  decide(seen.decision, seen.inputs.outputsDir, lineIds(seen.decision), "approved in review", "2026-10-19T16:00:00Z");
+  const [kase] = seen.board(NOW).cases;
+  assert.equal(caseGroup(kase), "sent");
+  assert.equal(kase.state, "Quote sent (per mail check)");
+  assert.equal(kase.lastSentAt, "2026-10-20T16:00:00.000Z");
+  // A quote for another part under that reference, or for only one of this card's parts, leaves the card with the quotes still to send.
+  for (const parts of [["XYZ-999"], ["ABC-100"]]) {
+    const other = world([], [{ ...quote, partNumbers: parts }], ranged);
+    decide(other.decision, other.inputs.outputsDir, lineIds(other.decision), "approved in review", "2026-10-19T16:00:00Z");
+    assert.equal(caseGroup(other.board(NOW).cases[0]), "decided", parts.join());
+  }
+  // A price question the monitor recorded after the quote keeps the card open.
+  const question = { customer: "Acme Precision Corp", reference: "RFQ 5120-5125 / ABC-100 Rev B", priority_section: 3, status: "Customer acknowledged quote; quantity discrepancy remains", evidence_ids: ["rfq"], last_observed_activity_at: "2026-10-27T15:00:00Z" };
+  const asked = world([question], [quote], ranged);
+  decide(asked.decision, asked.inputs.outputsDir, lineIds(asked.decision), "approved in review", "2026-10-19T16:00:00Z");
+  const [reopened] = asked.board(NOW).cases;
+  assert.ok(reopened.monitor, "the monitor entry is this request's");
+  assert.equal(reopened.reopened, true);
+  assert.equal(reopened.open, true);
+});
