@@ -164,8 +164,8 @@
             <span class="scope-inline-count" id="contextCount">— lines</span>
           </div>
           <div class="pricing-strip-stats" aria-live="polite">
-            <div class="stat-tile stat-tile-lead"><span>Median</span><strong id="contextMedian">—</strong></div>
-            <div class="stat-tile"><span>P25–P75</span><strong id="pRange">—</strong></div>
+            <div class="stat-tile stat-tile-lead"><span id="contextLeadLabel">Median</span><strong id="contextLead">—</strong></div>
+            <div class="stat-tile"><span id="pRangeLabel">P25–P75</span><strong id="pRange">—</strong></div>
             <div class="stat-tile" id="pLatestWrap"><span id="pLatestLabel">Latest</span><strong id="pLatest">—</strong></div>
             <div class="stat-tile"><span>Latest record</span><strong id="pRecency">—</strong></div>
             <div class="stat-tile"><span>Priced lines</span><strong id="pPriced">—</strong></div>
@@ -241,7 +241,7 @@
                   <span class="confidence" id="confidenceBadge" title="Unfiltered — all customers and parts.">No sample</span>
                 </div>
                 <div class="recommendation-price" id="recommendationRange">—</div>
-                <p class="recommendation-copy" id="recommendationCopy">Define a customer, part number, or process to build a comparable set.</p>
+                <p class="recommendation-copy" id="recommendationCopy">Search, or pick a customer, part number, or process, to build a comparable set.</p>
                 <dl class="stat-rows" aria-label="Filtered price statistics">
                   <div class="stat-row"><dt>Median</dt><dd id="sMedian">—</dd><button class="stat-copy" type="button" data-copy-stat="sMedian" data-icon="copy" aria-label="Copy median" title="Copy median"></button></div>
                   <div class="stat-row"><dt>P25–P75</dt><dd id="sRange">—</dd><button class="stat-copy" type="button" data-copy-stat="sRange" data-icon="copy" aria-label="Copy percentile range" title="Copy percentile range"></button></div>
@@ -295,6 +295,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="./vendor/xlsx.full.min.js"></script>
-  <script type="module" src="./app.js?v=20261025a"></script>
+  <script type="module" src="./app.js?v=20261111a"></script>
 </body>
 </html>

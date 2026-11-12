@@ -1,4 +1,4 @@
-import { buildDataset, calculateStats, csvCell, findHeaderRow, parseRouterSteps, percentile } from "./core.js?v=20261025a";
+import { buildDataset, calculateStats, csvCell, findHeaderRow, parseRouterSteps, percentile, priceRuns, singlePartLabel } from "./core.js?v=20261111a";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 // Mirrors the Operations Center Find tool (whaatmoney.github.io/qpct) — same
@@ -35,6 +35,7 @@ const state = {
   vivaExact: true,
   vivaDept: null,
   chart: null,
+  current: null,
   layout: { paneWidth: null, workspaceHeight: null, chartHeight: null },
   columns: { widths: { ...COLUMN_DEFAULTS }, hidden: [] },
   density: "comfortable",
@@ -347,7 +348,7 @@ function applyFilters() {
   state.filtered = state.records.filter((record) => {
     if (!showZero && !(record.price > 0)) return false;
     if (customer && record.customer !== customer) return false;
-    if (pn && !record.partNumbers.some((value) => value.toLowerCase().includes(pn))) return false;
+    if (pn && !record.pnSearch.includes(pn)) return false;
     if (process && !record.process.toLowerCase().includes(process)) return false;
     if (from && (!record.date || record.date < from)) return false;
     if (to && (!record.date || record.date > to)) return false;
@@ -384,39 +385,86 @@ function sortFiltered() {
   });
 }
 
+function hasComparableScope() {
+  return Boolean($("q").value.trim() || $("customer").value || $("pn").value.trim() || $("process").value.trim());
+}
+
+// A current price exists only when the scope is one part; a mix of parts has no single price.
+function currentPriceOf(records) {
+  const partNumber = singlePartLabel(records);
+  const runs = partNumber ? priceRuns(records) : [];
+  if (!runs.length) return null;
+  // Priced lines with no date can't be placed in a run, so they count toward the total only.
+  const pricedLines = records.filter((record) => record.price > 0);
+  const customers = new Set(pricedLines.map((record) => record.customer)).size;
+  return { partNumber, runs, priced: pricedLines.length, customers, ...runs[0] };
+}
+
+function heldLabel(current) {
+  if (current.priced === 1) return "Only priced line";
+  if (current.count === current.priced) return `Same on all ${whole.format(current.priced)} lines since`;
+  if (current.count === 1) return "Changed on latest line";
+  return `Held for ${whole.format(current.count)} lines since`;
+}
+
+function currentPriceCopy(current) {
+  const lines = (count) => `${whole.format(count)} line${count === 1 ? "" : "s"}`;
+  const earlier = current.runs.slice(1);
+  const more = earlier.length - 3;
+  const before = earlier.length
+    ? ` Before that: ${earlier.slice(0, 3).map((run) => `${formatMoney(run.price)} on ${lines(run.count)}`).join(", then ")}${more > 0 ? `, and ${more} earlier change${more === 1 ? "" : "s"}` : ""}.`
+    : "";
+  let lead = `The last ${whole.format(current.count)} priced lines for ${current.partNumber} were ${formatMoney(current.price)}, back to ${formatDate(current.from)}.`;
+  if (current.priced === 1) lead = `${current.partNumber} has one priced line, from ${formatDate(current.from)}.`;
+  else if (current.count === current.priced) lead = `All ${whole.format(current.priced)} priced lines for ${current.partNumber} were ${formatMoney(current.price)}, back to ${formatDate(current.from)}.`;
+  else if (current.count === 1) lead = `Only the latest priced line for ${current.partNumber} (${formatDate(current.to)}) is at this price, so check whether it was a one-off.`;
+  const customers = current.customers > 1 ? ` These lines span ${current.customers} customers; pick one to compare like with like.` : "";
+  return `${lead}${before}${customers} Review the source work before quoting.`;
+}
+
 function renderAnalysis() {
   const stats = calculateStats(state.filtered);
+  const current = state.current = currentPriceOf(state.filtered);
+  const range = stats.p25 == null ? "—" : `${formatMoney(stats.p25)}–${formatMoney(stats.p75)}`;
   $("sMatches").textContent = whole.format(stats.matches);
   $("sPriced").textContent = whole.format(stats.priced);
   $("sMedian").textContent = formatMoney(stats.median);
   $("sLatest").textContent = formatMoney(stats.latest);
   $("sRecency").textContent = formatDate(stats.latestDate);
-  $("sRange").textContent = stats.p25 == null ? "—" : `${formatMoney(stats.p25)}–${formatMoney(stats.p75)}`;
-  $("pRange").textContent = stats.p25 == null ? "—" : `${formatMoney(stats.p25)}–${formatMoney(stats.p75)}`;
-  $("pLatest").textContent = formatMoney(stats.latest);
-  const hasComparableScope = Boolean($("customer").value || $("pn").value.trim() || $("process").value.trim());
-  $("pLatestWrap").classList.toggle("stat-muted", !hasComparableScope);
-  $("pLatestLabel").textContent = hasComparableScope ? "Latest" : "Latest line";
-  $("pLatestWrap").title = hasComparableScope
-    ? "Most recent priced line in the current scope."
-    : "Most recent single priced line across the whole file — define a customer, P/N, or process to make this comparable.";
+  $("sRange").textContent = range;
+  const scoped = hasComparableScope();
+  // One part leads with its current price and how long it has held; a mixed scope leads with the median.
+  $("contextLeadLabel").textContent = current ? "Current price" : "Median";
+  $("contextLead").textContent = formatMoney(current ? current.price : stats.median);
+  $("pRangeLabel").textContent = current ? "All-time median" : "P25–P75";
+  $("pRange").textContent = current ? formatMoney(stats.median) : range;
+  $("pLatest").textContent = current ? formatDate(current.from) : formatMoney(stats.latest);
+  $("pLatestWrap").classList.toggle("stat-muted", !current && !scoped);
+  $("pLatestLabel").textContent = current ? heldLabel(current) : scoped ? "Latest" : "Latest line";
+  $("pLatestWrap").title = current
+    ? "The most recent priced lines in a row at the current price."
+    : scoped
+      ? "Most recent priced line in the current scope."
+      : "Most recent single priced line across the whole file — search, or pick a customer, P/N, or process to make this comparable.";
   $("pRecency").textContent = formatDate(stats.latestDate);
   $("pPriced").textContent = whole.format(stats.priced);
-  $("pricingSummary").textContent = stats.priced
-    ? `Median ${formatMoney(stats.median)} · ${whole.format(stats.priced)} priced lines`
-    : "No priced lines in this scope";
-  renderRecommendation(stats);
+  $("pricingSummary").textContent = !stats.priced
+    ? "No priced lines in this scope"
+    : current
+      ? `Current ${formatMoney(current.price)} · ${current.count === 1 ? "latest line only" : `last ${whole.format(current.count)} priced lines`}`
+      : `Median ${formatMoney(stats.median)} · ${whole.format(stats.priced)} priced lines`;
+  renderRecommendation(stats, current);
   renderChart();
   return stats;
 }
 
-function renderRecommendation(stats) {
+function renderRecommendation(stats, current) {
   const active = activeFilterLabels();
-  const hasComparableScope = Boolean($("customer").value || $("pn").value.trim() || $("process").value.trim());
+  const scoped = hasComparableScope();
   const ageDays = stats.latestDate ? Math.floor((Date.now() - new Date(`${stats.latestDate}T12:00:00`).getTime()) / 86400000) : Infinity;
   let confidence = "Limited match";
   let confidenceLevel = "low";
-  if (!hasComparableScope && stats.priced) {
+  if (!scoped && stats.priced) {
     confidence = "Broad baseline";
     confidenceLevel = "baseline";
   } else if (stats.priced >= 20 && ageDays <= 730) {
@@ -428,16 +476,21 @@ function renderRecommendation(stats) {
   }
   $("confidenceBadge").textContent = stats.priced ? confidence : "No sample";
   $("confidenceBadge").dataset.level = stats.priced ? confidenceLevel : "low";
-  $("confidenceBadge").title = hasComparableScope
+  $("confidenceBadge").title = scoped
     ? "Confidence reflects sample size and how recently matching work was received."
     : "Unfiltered — all customers and parts.";
-  $("recommendationRange").textContent = stats.p25 == null ? "—" : `${formatMoney(stats.p25)} – ${formatMoney(stats.p75)}`;
+  $("recommendationTitle").textContent = current ? "Current price" : "Pricing reference range";
+  $("recommendationRange").textContent = current
+    ? formatMoney(current.price)
+    : stats.p25 == null ? "—" : `${formatMoney(stats.p25)} – ${formatMoney(stats.p75)}`;
   if (!stats.priced) {
     $("recommendationCopy").textContent = "No positive-priced lines match the current filters.";
-  } else if (!hasComparableScope) {
-    $("recommendationCopy").textContent = `Portfolio-wide baseline from ${whole.format(stats.priced)} priced lines. Define a customer, P/N, or process above before using the range to support a quote.`;
+  } else if (current) {
+    $("recommendationCopy").textContent = currentPriceCopy(current);
+  } else if (!scoped) {
+    $("recommendationCopy").textContent = `Portfolio-wide baseline from ${whole.format(stats.priced)} priced lines. Search, or pick a customer, P/N, or process above, before using the range to support a quote.`;
   } else {
-    $("recommendationCopy").textContent = `Observed range from ${whole.format(stats.priced)} priced line${stats.priced === 1 ? "" : "s"}${active.length ? ` matching ${active.join(", ")}` : ""}. Use the median as the center and review the source work before quoting.`;
+    $("recommendationCopy").textContent = `Observed range from ${whole.format(stats.priced)} priced line${stats.priced === 1 ? "" : "s"}${active.length ? ` matching ${active.join(", ")}` : ""}. The range blends every line in this scope, so narrow to one part number to see its current price.`;
   }
 }
 
@@ -473,7 +526,6 @@ function renderFilterFeedback(stats) {
   if ($("pn").value.trim()) contextParts.push($("pn").value.trim());
   if ($("process").value.trim()) contextParts.push($("process").value.trim());
   $("contextScope").textContent = contextParts.join(" · ") || "All line items";
-  $("contextMedian").textContent = formatMoney(stats.median);
   $("contextCount").textContent = `${whole.format(stats.matches)} line${stats.matches === 1 ? "" : "s"}`;
   $("quickSpecs").querySelectorAll("[data-quick-spec]").forEach((button) => {
     button.classList.toggle("active", button.dataset.quickSpec.toLowerCase() === $("process").value.trim().toLowerCase());
@@ -1355,6 +1407,7 @@ async function copySummary() {
     `Fee lines: ${$("hideFees").checked ? `${state.hiddenFees} hidden` : "included"}`,
     `Matching lines: ${stats.matches}`,
     `Priced lines: ${stats.priced}`,
+    ...(state.current ? [`Current price: ${formatMoney(state.current.price)} (last ${state.current.count} priced line${state.current.count === 1 ? "" : "s"}, since ${state.current.from})`] : []),
     `Median: ${formatMoney(stats.median)}`,
     `Trimmed average: ${formatMoney(stats.trimmedAverage)}`,
     `P25–P75: ${formatMoney(stats.p25)}–${formatMoney(stats.p75)}`,
