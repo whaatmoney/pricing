@@ -21,6 +21,10 @@ A local-only browser tool for searching prior line-item formatting, inspecting e
 
 The workbook is read in the browser. The app makes no request containing workbook contents and does not save workbook data to browser storage.
 
+## Hosted copy
+
+When the app is served with a `data/latest.json` file beside it, it loads the export that file names by itself and says in the header which export it is and how old. QPC's signed-in site is published that way by a private script; this public page has no such file and waits for a workbook as before.
+
 ## Calculation policy
 
 - Price statistics use positive numeric prices only.

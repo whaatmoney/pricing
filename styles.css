@@ -184,6 +184,7 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -.012em; }
 .source-summary span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--header-muted); }
 .status-dot[data-tone="success"] { background: #5fc294; box-shadow: 0 0 0 3px rgba(95, 194, 148, .18); }
+.status-dot[data-tone="warning"] { background: #e0a43a; box-shadow: 0 0 0 3px rgba(224, 164, 58, .2); }
 
 .theme-control { display: inline-flex; padding: 3px; background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .12); border-radius: var(--radius-sm); }
 .theme-chip { min-height: 26px; padding: 0 var(--s3); color: var(--header-muted); background: transparent; border: 0; border-radius: var(--radius-xs); cursor: pointer; font-size: 12px; font-weight: 500; white-space: nowrap; }

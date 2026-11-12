@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
-import { buildDataset, calculateStats, findHeaderRow } from "../core.js";
+import zlib from "node:zlib";
+import { buildDataset, calculateStats, findHeaderRow, parseSnapshotText, rowsFromSnapshot } from "../core.js";
 
 const workbookPath = process.argv[2];
 if (!workbookPath) throw new Error("Pass the production workbook path as the first argument.");
@@ -35,3 +36,16 @@ assert.equal(partStats.median, 35);
 assert.equal(partStats.priced, 25605);
 assert.ok(result.records.every((record) => typeof record.router === "string"));
 assert.ok(result.records.some((record) => record.router.includes(":")));
+
+// Optional second argument: the hosted copy of the same export (the pricing bot's .jsonl.gz snapshot).
+// The signed-in site loads that copy, so it must give exactly the records the spreadsheet gives.
+const copyPath = process.argv[3];
+if (copyPath) {
+  const copy = buildDataset(rowsFromSnapshot(parseSnapshotText(zlib.gunzipSync(fs.readFileSync(copyPath)).toString("utf8"))));
+  assert.equal(copy.records.length, result.records.length);
+  const fields = ["sourceRow", "date", "customer", "wo", "part", "price", "description", "process", "endUser", "special", "router", "isCharge", "pnSearch"];
+  const differing = result.records.filter((record, index) => fields.some((field) => record[field] !== copy.records[index][field]));
+  assert.equal(differing.length, 0, `${differing.length} records differ, first at source row ${differing[0]?.sourceRow}`);
+  assert.deepEqual(calculateStats(copy.records), stats);
+  console.log(`Hosted copy matches the spreadsheet: ${copy.records.length} records.`);
+}

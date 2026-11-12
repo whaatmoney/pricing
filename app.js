@@ -1,6 +1,9 @@
-import { buildDataset, calculateStats, csvCell, findHeaderRow, parseRouterSteps, percentile, priceRuns, singlePartLabel } from "./core.js?v=20261111a";
+import { buildDataset, calculateStats, csvCell, exportAgeDays, findHeaderRow, parseRouterSteps, parseSnapshotText, percentile, priceRuns, rowsFromSnapshot, singlePartLabel } from "./core.js?v=20261111b";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
+// The signed-in site carries the latest export beside the app; the public page has no such file.
+const HOSTED_INFO_URL = "./data/latest.json";
+const STALE_EXPORT_DAYS = 8;
 // Mirrors the Operations Center Find tool (whaatmoney.github.io/qpct) — same
 // URL scheme and localStorage keys, so lookups and group choice are shared.
 const VIVA_GROUPS = [
@@ -59,6 +62,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindChartHover();
   initResizers();
   updateActionStates();
+  loadHosted();
 });
 
 function bindEvents() {
@@ -193,15 +197,8 @@ async function loadFile(file) {
     const dataset = buildDataset(parsed.rows, parsed.header.index, parsed.sheetName);
     dataset.quality.workbookSheets = parsed.sheetCount;
     dataset.quality.selectedSheet = parsed.sheetName;
-    state.records = dataset.records;
-    state.quality = dataset.quality;
-    state.file = file;
-    state.sheetName = parsed.sheetName;
-    populateCustomers();
-    renderQuality();
-    document.body.classList.remove("no-data");
+    showDataset(dataset, { name: file.name, sheetName: parsed.sheetName });
     setSourceSummary(`${file.name} · ${whole.format(state.records.length)} accepted lines · ${parsed.sheetName}`, "success");
-    applyFilters();
     showToast(`Loaded ${whole.format(state.records.length)} usable line items.`, "success");
   } catch (error) {
     console.error(error);
@@ -209,6 +206,64 @@ async function loadFile(file) {
   } finally {
     setLoading(false);
   }
+}
+
+function showDataset(dataset, source) {
+  state.records = dataset.records;
+  state.quality = dataset.quality;
+  state.file = { name: source.name };
+  state.sheetName = source.sheetName;
+  populateCustomers();
+  renderQuality();
+  document.body.classList.remove("no-data");
+  applyFilters();
+}
+
+// On the signed-in site the latest export loads by itself. Anywhere else the info file is
+// missing and the page waits for a file, as before.
+async function loadHosted() {
+  let info;
+  try {
+    const response = await fetch(HOSTED_INFO_URL, { cache: "no-store" });
+    if (!response.ok) return;
+    info = await response.json();
+  } catch { return; }
+  if (!/^[\w.-]+$/.test(info?.file || "")) return;
+
+  setLoading(true, `Loading the ${formatDate(info.exportDate)} export…`);
+  await nextPaint();
+  try {
+    const response = await fetch(`./data/${info.file}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("The hosted export could not be downloaded. Choose the file instead.");
+    const text = await readMaybeGzip(await response.arrayBuffer());
+    const dataset = buildDataset(rowsFromSnapshot(parseSnapshotText(text)), 0, "Hosted export");
+    dataset.quality.workbookSheets = 1;
+    dataset.quality.selectedSheet = "Hosted export";
+    // A file the person picked while this was downloading wins.
+    if (state.records.length) return;
+    showDataset(dataset, { name: info.fileName || info.file, sheetName: "Hosted export" });
+    const age = exportAgeDays(info.exportDate);
+    const stale = age != null && age > STALE_EXPORT_DAYS;
+    setSourceSummary([
+      `Export of ${formatDate(info.exportDate)}`,
+      stale ? `${age} days old, a newer export is missing` : "loaded automatically",
+      `${whole.format(state.records.length)} accepted lines`,
+    ].join(" · "), stale ? "warning" : "success");
+    showToast(`Loaded the ${formatDate(info.exportDate)} export: ${whole.format(state.records.length)} line items.`, stale ? "" : "success");
+  } catch (error) {
+    console.error(error);
+    showToast(error?.message || "The hosted export could not be read. Choose the file instead.", "error");
+  } finally {
+    setLoading(false);
+  }
+}
+
+// The hosted copy is gzip-compressed; a server may also have unpacked it already.
+async function readMaybeGzip(buffer) {
+  const bytes = new Uint8Array(buffer);
+  if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) return new TextDecoder().decode(bytes);
+  if (!window.DecompressionStream) throw new Error("This browser cannot open the hosted export. Choose the file instead.");
+  return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
 }
 
 async function readCsv(file) {
@@ -1466,6 +1521,7 @@ function formatDate(value) { return value ? new Intl.DateTimeFormat("en-US", { m
 function formatCompactMoney(value) { return value >= 1000 ? `$${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}k` : `$${Math.round(value)}`; }
 function sampleEvenly(values, max) { if (values.length <= max) return values; const step = values.length / max; return Array.from({ length: max }, (_, index) => values[Math.floor(index * step)]); }
 function debounce(fn, delay) { let timer; return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), delay); }; }
-function nextPaint() { return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0))); }
+// A background tab gets no animation frames, so a timer is the fallback and loading still starts.
+function nextPaint() { return new Promise((resolve) => { const done = () => setTimeout(resolve, 0); requestAnimationFrame(done); setTimeout(done, 250); }); }
 function setLoading(active, text = "Reading spreadsheet…") { $("loading").hidden = !active; $("loadingText").textContent = text; }
 function showToast(message, type = "") { const toast = $("toast"); toast.textContent = message; toast.className = `toast show ${type}`; clearTimeout(showToast.timer); showToast.timer = setTimeout(() => { toast.className = "toast"; }, 4500); }
