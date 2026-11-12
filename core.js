@@ -35,10 +35,15 @@ const CHARGE_START_RE = new RegExp("^[\\W_]*(?:" + [
   "NO CHARGE", "\\**DUPLICATE", "CLOSING WO", "(?:PRINT |USE )?TRAVELER IN FOLDER", "PROCESSED ON ANOTHER WO",
 ].join("|") + ")", "i");
 const CHARGE_PART_GUARD_RE = /\bDRAWING\b|\bLOT\s*(?:NO\b|#)/i;
+// The export leaves the description blank on many fee lines. These Part IDs are the fee items
+// themselves (7330 lot minimum, 3 expedite, 8410 source and cleanroom), so a blank line under
+// one of them is a fee. A line with a description is still judged by its description.
+const FEE_PART_IDS = new Set(["7330", "3", "8410"]);
 
-export function isChargeLine(description) {
+export function isChargeLine(description, partId = "") {
   const text = normalizeText(description).replace(/\s+/g, " ").trim();
-  if (!text || PN_MARKER_RE.test(text) || CHARGE_PART_GUARD_RE.test(text)) return false;
+  if (!text) return FEE_PART_IDS.has(normalizeText(partId));
+  if (PN_MARKER_RE.test(text) || CHARGE_PART_GUARD_RE.test(text)) return false;
   return CHARGE_START_RE.test(text);
 }
 
@@ -235,7 +240,9 @@ export function buildDataset(rows, headerIndex = 0, sheetName = "Sheet1") {
       special,
       router,
       partNumbers,
-      isCharge: isChargeLine(description),
+      isCharge: isChargeLine(description, part),
+      // What the P/N filter reads: labeled part numbers, or the whole description when none is labeled.
+      pnSearch: (partNumbers.length ? partNumbers.join("\n") : description).toLowerCase(),
     };
     record.search = [date, customer, wo, part, description, process, endUser, special, router, ...partNumbers].join(" ").toLowerCase();
     records.push(record);
@@ -284,6 +291,39 @@ export function calculateStats(records) {
     latest: dated[0]?.price ?? null,
     latestDate: dated[0]?.date ?? "",
   };
+}
+
+// The one part a scope is about, or "" when its priced lines mix parts. A part is its labeled
+// part number, or its exact description when no part number is labeled.
+export function singlePartLabel(records) {
+  let key = "";
+  let label = "";
+  for (const record of records) {
+    if (!(record.price > 0)) continue;
+    const partNumber = record.partNumbers?.[0] || "";
+    const description = (record.description || "").replace(/\s+/g, " ").trim().toUpperCase();
+    const recordKey = partNumber ? `pn:${partNumber}` : description ? `text:${description}` : "";
+    if (!recordKey || (key && recordKey !== key)) return "";
+    key = recordKey;
+    label = partNumber || (record.description || "").trim().split("\n")[0].slice(0, 60);
+  }
+  return label;
+}
+
+// Runs of consecutive equal prices across priced, dated lines, newest first. The first run is the
+// current price and how long it has held; a median hides these steps.
+export function priceRuns(records) {
+  const priced = records
+    .filter((record) => Number.isFinite(record.price) && record.price > 0 && record.date)
+    .slice()
+    .sort((a, b) => b.date.localeCompare(a.date) || (b.sourceRow || 0) - (a.sourceRow || 0));
+  const runs = [];
+  for (const record of priced) {
+    const last = runs[runs.length - 1];
+    if (last && last.price === record.price) { last.count += 1; last.from = record.date; }
+    else runs.push({ price: record.price, count: 1, from: record.date, to: record.date });
+  }
+  return runs;
 }
 
 export function csvCell(value, allowNumeric = false) {
