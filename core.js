@@ -326,6 +326,28 @@ export function priceRuns(records) {
   return runs;
 }
 
+// A hosted export copy holds one JSON object per line item, as the pricing bot stores each weekly
+// export. These turn it into the header and rows a spreadsheet gives, so both paths share buildDataset.
+const SNAPSHOT_HEADERS = ["WO", "CUSTOMER", "RECEIVED", "PART ID", "LINE DESCRIPTION", "UNIT PRICE", "PROCESS", "END USER", "SPECIAL INSTRUCTIONS", "ROUTER FORMS"];
+
+export function parseSnapshotText(text) {
+  return String(text).split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line));
+}
+
+export function rowsFromSnapshot(lines) {
+  return [SNAPSHOT_HEADERS, ...lines.map((line) => [
+    line.wo, line.customer, line.received || line.receivedRaw, line.partId, line.descriptionRaw ?? line.description,
+    line.unitPriceRaw ?? line.unitPrice, line.process, line.endUser, line.specialRaw ?? line.special, line.routerForms,
+  ])];
+}
+
+// Whole days from an export's date (yyyy-mm-dd) to now; null when the date is missing or invalid.
+export function exportAgeDays(exportDate, now = new Date()) {
+  const start = new Date(`${exportDate}T12:00:00`);
+  if (!exportDate || Number.isNaN(start.getTime())) return null;
+  return Math.max(0, Math.floor((now.getTime() - start.getTime()) / 86400000));
+}
+
 export function csvCell(value, allowNumeric = false) {
   let text = value == null ? "" : String(value);
   if (!allowNumeric && /^[=+\-@]/.test(text)) text = `'${text}`;

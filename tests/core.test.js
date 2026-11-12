@@ -4,6 +4,7 @@ import {
   buildDataset,
   calculateStats,
   csvCell,
+  exportAgeDays,
   extractPartNumbers,
   findHeaderRow,
   isChargeLine,
@@ -11,8 +12,10 @@ import {
   normalizeText,
   parsePrice,
   parseRouterSteps,
+  parseSnapshotText,
   percentile,
   priceRuns,
+  rowsFromSnapshot,
   singlePartLabel,
 } from "../core.js";
 
@@ -146,6 +149,34 @@ test("price runs show the current price and how long it has held", () => {
   assert.equal(singlePartLabel([unlabeled("")]), "");
   assert.equal(singlePartLabel([...records, line("2026-01-01", 0, "OTHER-1")]), "19003-102");
   assert.equal(singlePartLabel([]), "");
+});
+
+test("a hosted export copy loads to the same records as the spreadsheet rows", () => {
+  const sheet = [
+    headers.concat("ROUTER FORMS"),
+    ["28152", "ACME", "12/18/2023", "10202", "P/N: TES15011-01 REV. -_x000D_\nGAS HANDLING SUBASSEMBLY", 231, "CLEAN PER X", "N/A", "", "10: PCL001 > 20: CLR001"],
+    ["28152", "ACME", "12/18/2023", "7330", "", 350, "CLEAN PER X", "N/A", "", ""],
+    ["28153", "ACME", "", "55", "****DUPLICATE WO****", "", "", "", "", ""],
+  ];
+  const text = [
+    { wo: "28152", customer: "ACME", receivedRaw: "2023-12-18T09:59:59", received: "2023-12-18", partId: "10202", descriptionRaw: "P/N: TES15011-01 REV. -_x000D_\nGAS HANDLING SUBASSEMBLY", description: "ignored", unitPriceRaw: "231", unitPrice: 231, process: "CLEAN PER X", endUser: "N/A", specialRaw: "", routerForms: "10: PCL001 > 20: CLR001" },
+    { wo: "28152", customer: "ACME", receivedRaw: "2023-12-18T09:59:59", received: "2023-12-18", partId: "7330", descriptionRaw: "", unitPriceRaw: "350", process: "CLEAN PER X", endUser: "N/A", specialRaw: "", routerForms: "" },
+    { wo: "28153", customer: "ACME", receivedRaw: "", received: "", partId: "55", descriptionRaw: "****DUPLICATE WO****", unitPriceRaw: "", process: "", endUser: "", specialRaw: "", routerForms: "" },
+  ].map((line) => JSON.stringify(line)).join("\n") + "\n";
+  const fromSheet = buildDataset(sheet);
+  const fromCopy = buildDataset(rowsFromSnapshot(parseSnapshotText(text)));
+  assert.deepEqual(fromCopy.records, fromSheet.records);
+  assert.equal(fromCopy.quality.duplicateRows, 1);
+  assert.deepEqual(fromCopy.records.map((record) => record.isCharge), [false, true]);
+});
+
+test("export age counts whole days and rejects a bad date", () => {
+  const now = new Date("2026-11-11T15:00:00");
+  assert.equal(exportAgeDays("2026-11-09", now), 2);
+  assert.equal(exportAgeDays("2026-11-11", now), 0);
+  assert.equal(exportAgeDays("2026-11-20", now), 0);
+  assert.equal(exportAgeDays("", now), null);
+  assert.equal(exportAgeDays("not-a-date", now), null);
 });
 
 test("median and percentiles interpolate correctly", () => {
